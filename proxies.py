@@ -1,4 +1,6 @@
 #!/bin/env python3
+import threading
+from queue import Queue
 from lxml.html import fromstring
 import requests
 # import json
@@ -19,6 +21,7 @@ class ProxyScanner():
         self.ua = ""
         self.http_proxies_set = set()
         self.proxy_ua_dict = {}
+        self.print_lock = threading.Lock()
     
     def get_proxies(self):
         """Returns a dict of validated IP:UA
@@ -42,7 +45,35 @@ class ProxyScanner():
 
             # test our pool of proxies and delete invalid ones from dict
             http_proxy_pool = cycle(self.http_proxies_set)
-            self.test_proxies(http_proxy_pool)
+
+            def threader():
+                while True:
+                    # gets an worker from the queue
+                    worker = q.get()
+
+                    # Run the example job with the avail worker in queue (thread)
+                    self.job_test_proxy(worker, next(http_proxy_pool))
+
+                    # completed with the job
+                    q.task_done()
+
+            q = Queue()
+            for x in range(10): #FIXME: harrcoded 10 threads
+                t = threading.Thread(target=threader)
+
+                # classifying as a daemon, so they will die when the main dies
+                t.daemon = True
+
+                # begins, must come after daemon definition
+                t.start()
+            
+            for proxy in self.http_proxies_set:
+                q.put(proxy)
+
+            # wait until the thread terminates.
+            q.join()
+
+            # self.test_proxies(http_proxy_pool)
             
             i += 1
         else: #executed if no break occured
@@ -51,8 +82,6 @@ class ProxyScanner():
         if len(self.http_proxies_set) == 0:
             print(BColors.FAIL + "WARNING: NO PROXIES FETCHED!" + BColors.ENDC)
             return None
-
-        
 
     def get_ua_set(self, maxlength):
         """Returns a set of random UAs, of size maxlength"""
@@ -109,6 +138,25 @@ class ProxyScanner():
 
         print("Number of proxies fetched:", len(proxies))
         return proxies
+
+    def job_test_proxy(self, worker, proxy):
+        url = 'https://httpbin.org/get'
+        headers = {'User-Agent': self.proxy_ua_dict[proxy]}
+        try:
+            with self.print_lock:
+                print("proxy / UA:", proxy, "/", self.proxy_ua_dict[proxy], " :")
+            response = requests.get(url,proxies={"http": proxy, "https": proxy}, headers=headers, timeout=15)
+            if response.status_code == 200:
+                json_data = response.json()
+                with self.print_lock:
+                    print(BColors.BLUEOK + BColors.OKGREEN + " origin: " + json_data['origin'] + "/ UA: " + json_data['headers']['User-Agent'] + BColors.ENDC )
+            # print(response.json())
+        except Exception as e:
+            # del self.proxy_ua_dict[proxy]
+            with self.print_lock:
+                print(BColors.FAIL + "Skipping. Connnection error:" + str(e) + BColors.ENDC + "\n")
+        with self.print_lock:
+            print(threading.current_thread().name,worker)
 
     def test_proxies(self, http_proxy_pool):
         url = 'https://httpbin.org/get'
