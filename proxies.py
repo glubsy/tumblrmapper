@@ -45,12 +45,14 @@ class ProxyScanner():
             self.test_proxies(http_proxy_pool)
             
             i += 1
-
+        else: #executed if no break occured
+            return self.proxy_ua_dict
+        # executed since break occured
         if len(self.http_proxies_set) == 0:
             print(BColors.FAIL + "WARNING: NO PROXIES FETCHED!" + BColors.ENDC)
             return None
 
-        return self.proxy_ua_dict
+        
 
     def get_ua_set(self, maxlength):
         """Returns a set of random UAs, of size maxlength"""
