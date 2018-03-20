@@ -1,61 +1,58 @@
 #!/bin/env python
-
 import os
 import sys
 import fdb
 
-def connect_DB(dbpath):
-    """Connect to DB through FDB, returns con object
-    dbpath is absolute path to fdb file"""
-    fdb.connect()
-
-
-class DBHandler():
+class Database():
     """handle the db file itself, creating everything"""
     
-    def __init__(self):
-        self.db_address = ""
+    def __init__(self, db_host, db_filepath, db_user, db_password):
+        self.db_host = db_host
+        self.db_filepath = db_filepath
+        self.username = db_user
+        self.userpassword = db_password
 
     def query_blog(self, queryobj):
         """query DB for blog status"""
-    
-    def create_blank_db_file(self, host, user, password):
-        """creates the db at host"""
-        dbpath = os.path.dirname(__file__) + "/" + "blank_db.fdb" #FIXME flexible initial db path (potitial permissions issue)
-        c = "create database " + host + ":" + dbpath + " " + user + " '" + user + " ' password '" + password + "'"" 
-        con = fdb.create_database("create database 'host:/temp/db.db' user 'sysdba' password 'pass'")
-    
-    def populate_db_with_tables(self)
-        """Create our tables and procedures here in the DB"""
-        con = connect_DB
-        with TransactionContext(con): #auto rollback if exception is raised, and no need to close() because automatic
-            cur = con.cursor()
-            cur.execute_immediate("create table BLOGS ( stff )")
-            cur.execute_immediate("create table OLD_1280 ( stff )")
 
     def populate_db_with_procedures(self):
         pass
 
 
-class ConnectedDB(db):
-    """Keeps connection to databes, passes requests"""
+class Connection(Database):
+    """Keeps connection to databases, passes requests"""
 
-    def __init__(self, db):
-        self.db_host_address = db.db_host_address
-        self.db_filepath = db.db_filepath
-        self.username = db.username
-        self.userpassword = db.userpassword
-        self.con = ""
+    def __init__(self, Database):
+        self.con = None #our connection
     
     def connect_to(self, object):
         """initialize connection to remote DB"""
-        self.con = fdb.connect(database=str(db.db_host_address + db.db_filepath), user=self.username, password=self.userpassword)
+        self.con = fdb.connect(database=str(self.db_host + self.db_filepath), user=self.username, password=self.userpassword)
         return self.con
 
     def close_connection(self, con):
         """close con"""
-        con.close()
+        self.con.close()
 
 
-    create_blank_db_file()
-    populate_db_with_tables()
+def create_blank_db_file(username, userpassword, dbpath=None):
+    """creates the db at host"""
+    if dbpath is None: #default file in script dir (permissions issues)
+        dbpath = os.path.dirname(__file__) + "/" + "blank_db.fdb"
+    # ("create database 'host:/temp/db.db' user 'sysdba' password 'pass'")
+    c = r"create database " + r"'" + dbpath + r"' user '" + username + r"' password '" + userpassword + r"'"
+    fdb.create_database(c)
+
+def populate_db_with_tables(username, userpassword, dbpath=None):
+    """Create our tables and procedures here in the DB"""
+    con = fdb.connect(database=dbpath, user=username, password=userpassword)
+    with fdb.TransactionContext(con): #auto rollback if exception is raised, and no need to close() because automatic
+        # cur = con.cursor()
+        con.execute_immediate("create table BLOGS ( ID varchar(255) NOT NULL PRIMARY KEY )")
+        con.execute_immediate("create table OLD_1280 ( FILENAME varchar(255) )")
+
+
+# test typical usage:
+# create_blank_db_file("sysdba", "masterkey", "/home/nupupun/test/test.fdb")
+populate_db_with_tables("sysdba", "masterkey", "/home/nupupun/test/test.fdb")
+the_db = Database(db_host="localhost", db_filepath="/home/nupupun/test/test.fdb", db_user="test", db_password="test")
