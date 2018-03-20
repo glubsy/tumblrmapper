@@ -21,7 +21,8 @@ class ProxyScanner():
         self.proxy_ua_dict = {}
     
     def get_proxies(self):
-        """Returns a dict of validated IP:UA"""
+        """Returns a dict of validated IP:UA
+        returns None if fetching free list failed"""
         # socks_proxies_list = get_free_socks_proxies("https://socks-proxy.net/", type=socks)
         i = 0
         while not self.proxy_ua_dict:
@@ -42,7 +43,12 @@ class ProxyScanner():
             # test our pool of proxies and delete invalid ones from dict
             http_proxy_pool = cycle(self.http_proxies_set)
             self.test_proxies(http_proxy_pool)
-            i += 1 
+            
+            i += 1
+
+        if len(self.http_proxies_set) == 0:
+            print(BColors.FAIL + "WARNING: NO PROXIES FETCHED!" + BColors.ENDC)
+            return None
 
         return self.proxy_ua_dict
 

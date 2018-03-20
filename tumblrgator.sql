@@ -1,16 +1,15 @@
 CREATE DATABASE blank_db.fdb
 
---  build a database for each blog, holding
---  post_id:
---    post_url: url 
---    content: buffer
---    images:
---        image1: url
---        image2: url
---        ...
---        image10: url
+/* DOMAINS */
 
+CREATE DOMAIN LONG_TEXT AS
+VARCHAR(500);
 
+CREATE DOMAIN SUPER_LONG_TEXT AS
+VARCHAR(32765)
+
+CREATE DOMAIN BOOLEAN AS smallint
+CHECK (VALUE IS NULL OR VALUE IN (0, 1));
 
 -- TABLE: BLOG
 -- ID or BLOG
@@ -43,7 +42,8 @@ CREATE TABLE CONTEXTS (
 CREATE TABLE BLOGS (
     ID varchar(255) NOT NULL PRIMARY KEY,
     TOTAL_POSTS int DEFAULT(0),
-    --SCRAPED_POSTS int 
+    SCRAPED_POSTS int,
+    STATUS varchar(50), --OK, DEAD, WIPED 
     LAST_SCRAPED SMALLDATETIME DEFAULT NOW()
 )
 

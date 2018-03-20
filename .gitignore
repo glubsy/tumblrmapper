@@ -1,0 +1,4 @@
+.clones/*
+.vscode/*
+.env/*
+__pycache__/*
