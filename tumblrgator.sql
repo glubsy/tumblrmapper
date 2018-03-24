@@ -1,3 +1,5 @@
+--Script to use with isql if needed 
+
 CREATE DATABASE blank_db.fdb
 
 /* DOMAINS */
