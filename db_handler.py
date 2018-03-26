@@ -4,6 +4,8 @@ import sys
 import fdb
 import time
 import re
+import json
+from pprint import pprint
 # import logging
 scriptdir = os.path.dirname(__file__) + "/"
 
@@ -60,61 +62,65 @@ def populate_db_with_tables(username, userpassword, dbpath=None):
 
         # Create tables with columns
         con.execute_immediate("CREATE TABLE BLOGS ( AUTO_ID SMALLINT PRIMARY KEY, \
-                                                    BLOG_NAME varchar(60) NOT NULL,\
-                                                    HEALTH varchar(5),\
-                                                    TOTAL_POSTS INTEGER,\
-                                                    STATUS varchar(10),\
-                                                    OFFSET INTEGER,\
-                                                    LAST_CHECKED TIMESTAMP, \
+                                                    BLOG_NAME       varchar(60) NOT NULL,\
+                                                    HEALTH          varchar(5),\
+                                                    TOTAL_POSTS     INTEGER,\
+                                                    STATUS          varchar(10) DEFAULT 'new',\
+                                                    OFFSET          INTEGER,\
+                                                    LAST_CHECKED    TIMESTAMP, \
                                                     CONSTRAINT blogs_unique UNIQUE (BLOG_NAME) using index ix_blogs \
                                                     );")
                                                     #FIXME: AUTO_ID not needed?
 
         con.execute_immediate("CREATE TABLE GATHERED_BLOGS ( \
-                               AUTO_ID SMALLINT PRIMARY KEY, \
-                               BLOG_NAME varchar(60) UNIQUE \
+                               AUTO_ID      SMALLINT PRIMARY KEY, \
+                               BLOG_NAME    varchar(60) UNIQUE \
                                );")
-                               # make constraint / trigger, to only create if not already in tBLOGS?
+                               # make constraint CHECK to only create if not already in tBLOGS?
     
         con.execute_immediate("CREATE TABLE POSTS ( \
-                                POST_ID BIGINT PRIMARY KEY, \
-                                REMOTE_ID BIGINT, \
-                                BLOG_ORIGIN SMALLINT NOT NULL, \
-                                BLOG_REBLOGGED SMALLINT, \
-                                POST_URL varchar(500) NOT NULL, \
-                                POST_DATE varchar(26), \
-                                FOREIGN KEY(BLOG_ORIGIN) REFERENCES BLOGS(AUTO_ID), \
-                                FOREIGN KEY(BLOG_REBLOGGED) REFERENCES GATHERED_BLOGS(AUTO_ID) \
+                                POST_ID             BIGINT PRIMARY KEY, \
+                                REMOTE_ID           BIGINT, \
+                                ORIGIN_BLOGNAME     SMALLINT NOT NULL, \
+                                REBLOGGED_BLOGNAME  SMALLINT, \
+                                POST_URL        varchar(500) NOT NULL, \
+                                POST_DATE       varchar(26), \
+                                FOREIGN KEY(ORIGIN_BLOGNAME) REFERENCES BLOGS(AUTO_ID), \
+                                FOREIGN KEY(REBLOGGED_BLOGNAME) REFERENCES GATHERED_BLOGS(AUTO_ID) \
                                 );")
+                                #BLOG_ORIGIN is the blog of the post_id (TID)
+                                #BLOG_REBLOGGED is name of blog in trail
 
         con.execute_immediate("CREATE TABLE REBLOGGED_POSTS ( \
-                               REMOTE_ID BIGINT PRIMARY KEY, \
-                               BLOG_NAME SMALLINT, \
-                               POST_ID BIGINT, \
-                               POST_URL varchar(500), \
+                               REMOTE_ID    BIGINT PRIMARY KEY, \
+                               BLOG_NAME    SMALLINT, \
+                               POST_ID      BIGINT, \
+                               POST_URL     varchar(500), \
                                FOREIGN KEY(BLOG_NAME) REFERENCES GATHERED_BLOGS(AUTO_ID), \
                                FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID) \
                                );")
+                               #FIXME: WHAT IS THIS TABLE FOR AGAIN?????????????????
                                # REMOTE_ID is the post id in the trail, in case of reblog for example
-                               # URL might need to be parsed from Caption
+                               # POST_URL might need to be parsed from Caption
 
         con.execute_immediate("CREATE TABLE CONTEXTS ( \
-                               AUTO_ID BIGINT PRIMARY KEY, \
-                               POST_ID BIGINT NOT NULL, \
-                               REMOTE_ID BIGINT, \
-                               CONTEXT LONG_TEXT UNIQUE, \
+                               AUTO_ID      BIGINT PRIMARY KEY, \
+                               POST_ID      BIGINT NOT NULL, \
+                               REMOTE_ID    BIGINT, \
+                               SLUG         VARCHAR(200),\
+                               CONTEXT      LONG_TEXT UNIQUE, \
                                FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID), \
                                FOREIGN KEY(REMOTE_ID) REFERENCES REBLOGGED_POSTS(REMOTE_ID) \
                                );") 
                                #FIXME: maybe not unique context for performance?
 
         con.execute_immediate("CREATE TABLE URLS ( \
-                               FILE_URL varchar(500) PRIMARY KEY, \
-                               POST_ID BIGINT NOT NULL, \
+                               FILE_URL             varchar(500) PRIMARY KEY, \
+                               POST_ID              BIGINT NOT NULL, \
                                FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID) \
                                ); ")
-
-
+                                #
+1
         con.execute_immediate("CREATE TABLE OLD_1280 ( FILENAME varchar(60), FILEBASENAME varchar(60) )")
 
         # Create triggers
@@ -135,8 +141,47 @@ def populate_db_with_tables(username, userpassword, dbpath=None):
                                 AS BEGIN NEW.AUTO_ID = next value for tGATHERED_BLOGS_id_sequence; END")
 
         # Create procedures
-        # con.execute_immediate("CREATE PROCEDURE insert_post ")
+        con.execute_immediate("CREATE or ALTER PROCEDURE insert_post \
+                                (   i_postid bigint, \
+                                    i_blog_origin varchar(50),\
+                                    i_post_url varchar(500),\
+                                    i_post_date varchar(26),\
+                                    i_remoteid bigint default null,\
+                                    i_blogname_reblogged varchar(60) default null\
+                                )\
+                                AS declare variable v_blog_origin_id smallint;\
+                                declare variable v_blogname_reblogged smallint;\
+                                declare variable v_b_update_gathered boolean default 0;\
+                                BEGIN\
+                                select AUTO_ID from BLOGS where BLOG_NAME = :i_blog_origin into :v_blog_origin_id;\
+                                select AUTO_ID from GATHERED_BLOGS where BLOG_NAME = :i_blogname_reblogged into :v_blogname_reblogged;\
+                                IF (:i_blogname_reblogged = :i_blog_origin) THEN v_b_update_gathered = 0;\
+                                IF (:v_blogname_reblogged is null) THEN v_b_update_gathered = 1;\
+                                IF (v_b_update_gathered = 1) THEN\
+                                INSERT into GATHERED_BLOGS (BLOG_NAME) values (:i_blogname_reblogged) returning (AUTO_ID) into :v_blogname_reblogged;\
+                                INSERT into POSTS (POST_ID, POST_URL, POST_DATE, REMOTE_ID, \
+                                BLOG_ORIGIN, BLOG_REBLOGGED)\
+                                values (:i_postid, :i_post_url, :i_post_date, :i_remoteid, \
+                                :v_blog_origin_id, :v_blogname_reblogged);\
+                                END")
+
+        con.execute_immediate("CREATE or ALTER PROCEDURE insert_context \
+        con.execute_immediate("CREATE or ALTER PROCEDURE insert_url \
+        con.execute_immediate("CREATE or ALTER PROCEDURE insert_url \
+
+
         # con.execute_immediate("CREATE PROCEDURE check_blog_status")
+
+
+        # Create views
+        # con.execute_immediate("CREATE VIEW v_posts ( \
+        #                         POST_ID, REMOTE_ID, BLOG_ORIGIN, BLOG_REBLOGGED, POST_URL, POST_DATE) \
+        #                         AS SELECT \
+        #                         POST_ID, REMOTE_ID, BLOG_ORIGIN, BLOG_REBLOGGED, POST_URL, POST_DATE, AUTO_ID, BLOG_NAME \
+        #                         FROM POSTS, GATHERED_BLOGS, BLOGS \
+        #                         WHERE POSTS.BLOG_ORIGIN = BLOGS.AUTO_ID, POSTS.BLOG_REBLOGGED = GATHERED_BLOGS.BLOG_NAME \
+        #                         );")
+
 
 def populate_db_with_archives(archivelist_path, username, userpassword, dbpath=None):
     """read archive list and populate the OLD_1280 table"""
@@ -192,13 +237,72 @@ def Create_blank_database(dbpath):
     # test typical usage:
     create_blank_db_file("sysdba", "masterkey", dbpath)
     populate_db_with_tables("sysdba", "masterkey", dbpath)
+    
     # populate_db_with_archives(scriptdir + "tools/1280_files_list.txt", "sysdba", "masterkey", dbpath)
+    
     # the_db = Database(db_host="localhost", db_filepath=dbpath, db_user="test", db_password="test")
+    
+    # test_update_table(dbpath, "sysdba", "masterkey")
 
-def temp_update_table(dbpath):
+class UpdatePayload(dict):
+    pass
+
+def test_update_table(dbpath, username, userpassword):
+    """feed testing data"""
+    update = parse_json_response(json.load(open\
+    ("/home/nupupun/Programming/tumblrgator/tools/test/videogame-fantasy_july_reblogfalse.json", 'r'))['response'])
+
     con = fdb.connect(database=dbpath, user=username, password=userpassword)
+    cur = con.cursor()
     with fdb.TransactionContext(con):
-        con.execute_immediate('')
+        for post in update.trimmed_posts_list:
+            try:
+                #TODO: add more arguments to the procedure, make more stored procedures
+                sql("execute procedure insert_post(?,?,?,?,?,?,?,?)")
+            except:
+                pass
+            cur.execute(sql, str)
+        con.commit()
+
+def parse_json_response(json): #TODO: move to client module when done testing
+    """returns a UpdatePayload() object that holds the fields to update in DB"""
+
+    update = UpdatePayload()
+    update.blogname = json['blog']['name']
+    update.totalposts = json['blog']['total_posts']
+    update.posts_response = json['posts'] #list of dicts
+    update.trimmed_posts_list = [] #list of dicts of posts
+
+    for post in update.posts_response: #dict in list
+        current_post_dict = {}
+        current_post_dict['id'] = post['id']
+        current_post_dict['date'] = post['date']
+        current_post_dict['post_url'] = post['post_url']
+        current_post_dict['slug'] = post['slug']
+        current_post_dict['blog_name'] = post['blog_name']
+        if 'trail' in post.keys() and len(post['trail']) > 0: # trail is not empty, it's a reblog
+            #FIXME: put this in a trail subdictionary
+            current_post_dict['reblogged_blog_name'] = post['trail'][0]['blog']['name']
+            current_post_dict['remote_id'] = post['trail'][0]['post']['id']
+            current_post_dict['remote_content'] = post['trail'][0]['content_raw']
+        else:
+            #trail empty
+            pass
+
+        if 'photos' in post.keys():
+            current_post_dict['photos'] = list()
+            for item in range(0, len(post['photos'])):
+                current_post_dict['photos'].append(post['photos'][item]['original_size']['url'])
+
+        update.trimmed_posts_list.append(current_post_dict)
+
+    for post in update.trimmed_posts_list:
+        print("===============================\n\
+POST number: " + str(update.trimmed_posts_list.index(post)))
+        for key, value in post.items():
+            print("key: " + str(key) + "\nvalue: " + str(value) + "\n--")
+
+    return update
 
 
 if __name__ == "__main__":
