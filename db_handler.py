@@ -9,16 +9,20 @@ from pprint import pprint
 from constants import BColors
 import traceback
 # import logging
-scriptdir = os.path.dirname(__file__) + "/"
+SCRIPTDIR = os.path.dirname(__file__) + os.sep
 
 class Database():
-    """handle the db file itself, creating everything"""
+    """handle the db file itself, creating everything  
+    Args are: filepath, user, password, bloglist, archives, host=None"""
     
-    def __init__(self, db_host, db_filepath, db_user, db_password):
-        self.db_host = db_host
-        self.db_filepath = db_filepath
-        self.username = db_user
-        self.userpassword = db_password
+    def __init__(self, *args, **kwargs):
+        """initialize with environment"""
+        self.db_host = kwargs.get('db_host') #not implemented
+        self.db_filepath = kwargs.get('filepath', SCRIPTDIR + "blank_db.fdb")
+        self.username = kwargs.get('username', "sysdba")
+        self.password = kwargs.get('password', "masterkey")
+        self.bloglist = kwargs.get('bloglist', SCRIPTDIR + "tools/blogs_toscrape.txt")
+        self.archivelist = kwargs.get('archivelist', SCRIPTDIR + "tools/1280_files_list.txt")
 
     def query_blog(self, queryobj):
         """query DB for blog status"""
@@ -43,17 +47,16 @@ class Connection(Database):
         self.con.close()
 
 
-def create_blank_db_file(dbpath, username, userpassword):
+def create_blank_db_file(database):
     """creates the db at host"""
-    if dbpath is None: #FIXME: default file in script dir (permissions issues)
-        dbpath = os.path.dirname(__file__) + "/" + "blank_db.fdb"
+
     # ("create database 'host:/temp/db.db' user 'sysdba' password 'pass'")
-    c = r"create database " + r"'" + dbpath + r"' user '" + username + r"' password '" + userpassword + r"'"
+    c = r"create database " + r"'" + database.db_filepath + r"' user '" + database.username + r"' password '" + database.password + r"'"
     fdb.create_database(c)
 
-def populate_db_with_tables(dbpath, username, userpassword):
+def populate_db_with_tables(database):
     """Create our tables and procedures here in the DB"""
-    con = fdb.connect(database=dbpath, user=username, password=userpassword)
+    con = fdb.connect(database=database.db_filepath, user=database.username, password=database.password)
     with fdb.TransactionContext(con): #auto rollback if exception is raised, and no need to close() because automatic
         # cur = con.cursor()
         # Create domains
@@ -66,151 +69,240 @@ def populate_db_with_tables(dbpath, username, userpassword):
                                CHECK (VALUE IS NULL OR VALUE IN (0, 1));")
 
         # Create tables with columns
-        con.execute_immediate("CREATE TABLE BLOGS ( AUTO_ID         D_AUTO_ID PRIMARY KEY,\
-                                                    BLOG_NAME       D_BLOG_NAME,\
-                                                    HEALTH          varchar(5),\
-                                                    TOTAL_POSTS     INTEGER,\
-                                                    STATUS          varchar(10) DEFAULT 'new',\
-                                                    OFFSET          INTEGER,\
-                                                    LAST_CHECKED    TIMESTAMP, \
-                                                    CONSTRAINT blognames_unique UNIQUE (BLOG_NAME) using index ix_blognames\
-                                                    );")
+        con.execute_immediate(
+            "CREATE TABLE BLOGS ( \
+            AUTO_ID         D_AUTO_ID PRIMARY KEY,\
+            BLOG_NAME       D_BLOG_NAME,\
+            HEALTH          varchar(5),\
+            TOTAL_POSTS     INTEGER,\
+            CRAWL_STATUS    varchar(10) DEFAULT 'new',\
+            POST_OFFSET     INTEGER,\
+            POSTS_SCRAPED   INTEGER,\
+            LAST_CHECKED    TIMESTAMP, \
+            CONSTRAINT blognames_unique UNIQUE (BLOG_NAME) using index ix_blognames\
+            );")
 
-        con.execute_immediate("CREATE TABLE GATHERED_BLOGS (\
-                               AUTO_ID      D_AUTO_ID PRIMARY KEY, \
-                               BLOG_NAME    D_BLOG_NAME );")
-                               #TODO: make constraint CHECK to only create if not already in tBLOGS?
+        con.execute_immediate(
+            "CREATE TABLE GATHERED_BLOGS (\
+            AUTO_ID      D_AUTO_ID PRIMARY KEY, \
+            BLOG_NAME    D_BLOG_NAME );")
+            #TODO: make constraint CHECK to only create if not already in tBLOGS?
     
-        con.execute_immediate("CREATE TABLE POSTS ( \
-                                POST_ID             D_POST_NO PRIMARY KEY, \
-                                REMOTE_ID           D_POST_NO, \
-                                ORIGIN_BLOGNAME     D_AUTO_ID NOT NULL, \
-                                REBLOGGED_BLOGNAME  D_AUTO_ID, \
-                                POST_URL            D_LONG_TEXT NOT NULL, \
-                                POST_DATE           varchar(26), \
-                                FOREIGN KEY(ORIGIN_BLOGNAME) REFERENCES BLOGS(AUTO_ID), \
-                                FOREIGN KEY(REBLOGGED_BLOGNAME) REFERENCES GATHERED_BLOGS(AUTO_ID) \
-                                );")
-                                #BLOG_ORIGIN is the blog of the post_id (TID)
-                                #BLOG_REBLOGGED is name of blog in trail
+        con.execute_immediate(
+            "CREATE TABLE POSTS ( \
+            POST_ID             D_POST_NO PRIMARY KEY, \
+            REMOTE_ID           D_POST_NO, \
+            ORIGIN_BLOGNAME     D_AUTO_ID NOT NULL, \
+            REBLOGGED_BLOGNAME  D_AUTO_ID, \
+            POST_URL            D_LONG_TEXT NOT NULL, \
+            POST_DATE           varchar(26), \
+            FOREIGN KEY(ORIGIN_BLOGNAME) REFERENCES BLOGS(AUTO_ID), \
+            FOREIGN KEY(REBLOGGED_BLOGNAME) REFERENCES GATHERED_BLOGS(AUTO_ID) \
+            );")
+            #BLOG_ORIGIN is the blog of the post_id (TID)
+            #BLOG_REBLOGGED is name of blog in trail
 
-        con.execute_immediate("CREATE TABLE REBLOGGED_POSTS ( \
-                               REMOTE_ID    D_POST_NO PRIMARY KEY, \
-                               BLOG_NAME    D_AUTO_ID, \
-                               POST_ID      D_POST_NO, \
-                               POST_URL     D_LONG_TEXT, \
-                               FOREIGN KEY(BLOG_NAME) REFERENCES GATHERED_BLOGS(AUTO_ID), \
-                               FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID) \
-                               );")
-                               # MEMO: this is to keep track of which bloggers reblogged that post
-                               # REMOTE_ID is the post id in the trail, in case of reblog for example
-                               # POST_URL might need to be parsed from Caption
+        con.execute_immediate(
+            "CREATE TABLE REBLOGGED_POSTS ( \
+            REMOTE_ID    D_POST_NO, \
+            POST_ID      D_POST_NO, \
+            BLOG_NAME    D_AUTO_ID, \
+            POST_URL     D_LONG_TEXT, \
+            PRIMARY KEY(REMOTE_ID, POST_ID),\
+            FOREIGN KEY(BLOG_NAME) REFERENCES GATHERED_BLOGS(AUTO_ID), \
+            FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID) \
+            );")
+            # FIXME: need testing on the unique constraints, can we have a null and still have one of two PK columns?
+            # MEMO: this is to keep track of which bloggers reblogged that post, from the TRAIL node
+            # REMOTE_ID is the post id in the trail, in case of reblog for example, we don't necessarily have the corresponding (non reblogged) TID
+            # BLOG_NAME is the original poster's name (not the reblogger's)
+            # POST_URL might need to be parsed from Caption
 
-        con.execute_immediate("CREATE TABLE CONTEXTS ( \
-                               AUTO_ID      BIGINT PRIMARY KEY, \
-                               POST_ID      D_POST_NO NOT NULL, \
-                               REMOTE_ID    D_POST_NO, \
-                               SLUG         VARCHAR(200),\
-                               CONTEXT      D_LONG_TEXT, \
-                               FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID), \
-                               FOREIGN KEY(REMOTE_ID) REFERENCES REBLOGGED_POSTS(REMOTE_ID) \
-                               );")
+        con.execute_immediate(
+            "CREATE TABLE CONTEXTS ( \
+            POST_ID         D_POST_NO,\
+            REMOTE_ID       D_POST_NO UNIQUE, \
+            TTIMESTAMP      integer, \
+            CONTEXT         D_LONG_TEXT, \
+            LATEST_REBLOG   D_POST_NO,\
+            PRIMARY KEY(POST_ID),\
+            FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID), \
+            FOREIGN KEY(REMOTE_ID) REFERENCES REBLOGGED_POSTS(REMOTE_ID) \
+            );")
+            # to update
+            # if remote_id is null, then it's an original post, not reblogged, we store everything no problem
+            # if we already have that remote_id, we don't want to store context again -> we skip
+            # otherwise only IF the timestamp we hold is newer, then we UPDATE the context
+            # LATEST_REBLOG is the latest reblog that we used to update the timestamp and context fields of an original post
+            # that we had recorded. 
+            # REMOTE_ID can be NULL! (allowed with unique)  
 
-        con.execute_immediate("CREATE TABLE URLS ( \
-                               FILE_URL             D_LONG_TEXT PRIMARY KEY, \
-                               POST_ID              D_POST_NO NOT NULL, \
-                               FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID) \
-                               ); ")
-                                #
+        con.execute_immediate(
+            "CREATE TABLE URLS ( \
+            FILE_URL             D_LONG_TEXT PRIMARY KEY, \
+            POST_ID              D_POST_NO NOT NULL, \
+            FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID) \
+            ); ")
+            #
 
-        con.execute_immediate("CREATE TABLE OLD_1280 ( FILENAME varchar(60), \
-                            FILEBASENAME varchar(60) );")
+        con.execute_immediate(
+            "CREATE TABLE OLD_1280 ( FILENAME varchar(60), FILEBASENAME varchar(60) );")
 
-        # Create triggers
+        # CREATE generators and triggers
         con.execute_immediate("CREATE SEQUENCE tBLOGS_autoid_sequence;")
         con.execute_immediate("CREATE SEQUENCE tGATHERED_BLOGS_autoid_sequence;")
-        con.execute_immediate("CREATE SEQUENCE tCONTEXTS_autoid_sequence;")
-    
-        con.execute_immediate("CREATE TRIGGER tGATHERED_BLOGS_AUTOINC FOR GATHERED_BLOGS \
-                                ACTIVE BEFORE INSERT POSITION 0 \
-                                AS BEGIN NEW.AUTO_ID = next value for tGATHERED_BLOGS_autoid_sequence; END")
-        con.execute_immediate("CREATE TRIGGER tCONTEXTS_AUTOINC FOR CONTEXTS \
-                                ACTIVE BEFORE INSERT POSITION 0 \
-                                AS BEGIN NEW.AUTO_ID = next value for tCONTEXTS_autoid_sequence; END")
+        con.execute_immediate(
+            "CREATE TRIGGER tGATHERED_BLOGS_AUTOINC FOR GATHERED_BLOGS \
+            ACTIVE BEFORE INSERT POSITION 0 \
+            AS BEGIN NEW.AUTO_ID = next value for tGATHERED_BLOGS_autoid_sequence; END")
 
-        # Create procedures
-        # records given blogname into BLOG table, increments auto_id
-        con.execute_immediate(  "CREATE OR ALTER PROCEDURE insert_blogname \
-                                ( i_blogname d_blog_name ) \
-                                AS declare variable v_generated_auto_id d_auto_id;\
-\
-                                BEGIN \
-                                v_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence, 1);\
-\
-                                INSERT into BLOGS (AUTO_ID, BLOG_NAME) values (:v_generated_auto_id, :i_blogname);\
-\
-                                WHEN ANY \
-                                DO \
-                                v_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence, -1);\
-                                END ")
-                                # decrements auto_id in case an exception occured (on non unique inputs)
+        # CREATE procedures
+        # Records given blogname into BLOG table, increments auto_id,
+        # decrements auto_id in case an exception occured (on non unique inputs)
+        con.execute_immediate(  
+            "CREATE OR ALTER PROCEDURE insert_blogname \
+            ( i_blogname d_blog_name ) \
+            AS declare variable v_generated_auto_id d_auto_id;\
+            BEGIN \
+            v_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence, 1);\
+            INSERT into BLOGS (AUTO_ID, BLOG_NAME) values (:v_generated_auto_id, :i_blogname);\
+            WHEN ANY \
+            DO \
+            v_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence, -1);\
+            END ")
 
-        # updates
-        con.execute_immediate(  "CREATE OR ALTER PROCEDURE insert_post \
-                                (   i_postid d_post_no, \
-                                    i_blog_origin d_blog_name,\
-                                    i_post_url varchar(500),\
-                                    i_post_date varchar(26),\
-                                    i_remoteid d_post_no default null,\
-                                    i_reblogged_blog_name d_blog_name default null\
-                                )\
-                                AS declare variable v_blog_origin_id d_auto_id;\
-                                declare variable v_fetched_reblogged_blog_id d_auto_id default null;\
-                                declare variable v_b_update_gathered d_boolean default 0;\
-                                BEGIN\
-                                select AUTO_ID from BLOGS where BLOG_NAME = :i_blog_origin into :v_blog_origin_id;\
+        # Inserts a post and all its metadata
+        con.execute_immediate(  
+            "CREATE OR ALTER PROCEDURE insert_post \
+            (   i_postid d_post_no, \
+                i_blog_origin d_blog_name,\
+                i_post_url varchar(500),\
+                i_post_date varchar(26),\
+                i_remoteid d_post_no default null,\
+                i_reblogged_blog_name d_blog_name default null\
+            )\
+            AS declare variable v_blog_origin_id d_auto_id;\
+            declare variable v_fetched_reblogged_blog_id d_auto_id default null;\
+            declare variable v_b_update_gathered d_boolean default 0;\
+            BEGIN\
+            select AUTO_ID from BLOGS where BLOG_NAME = :i_blog_origin into :v_blog_origin_id;\
 \
-                                if (:i_reblogged_blog_name is not null) THEN \
-                                select AUTO_ID from GATHERED_BLOGS where BLOG_NAME = :i_reblogged_blog_name into :v_fetched_reblogged_blog_id;\
+            if (:i_reblogged_blog_name is not null) THEN \
+            select AUTO_ID from GATHERED_BLOGS where BLOG_NAME = :i_reblogged_blog_name into :v_fetched_reblogged_blog_id;\
 \
-                                if ((:i_reblogged_blog_name is distinct from :i_blog_origin) and (:v_fetched_reblogged_blog_id is null)) \
-                                THEN v_b_update_gathered = 1;\
+            if ((:i_reblogged_blog_name is distinct from :i_blog_origin) and (:v_fetched_reblogged_blog_id is null)) \
+            THEN v_b_update_gathered = 1;\
 \
-                                if ((v_b_update_gathered = 1) and (:i_reblogged_blog_name is not null)) THEN\
-                                INSERT into GATHERED_BLOGS (BLOG_NAME) values (:i_reblogged_blog_name)\
-                                returning (AUTO_ID) into :v_fetched_reblogged_blog_id;\
+            if ((v_b_update_gathered = 1) and (:i_reblogged_blog_name is not null)) THEN\
+            INSERT into GATHERED_BLOGS (BLOG_NAME) values (:i_reblogged_blog_name)\
+            returning (AUTO_ID) into :v_fetched_reblogged_blog_id;\
 \
-                                INSERT into POSTS (POST_ID, POST_URL, POST_DATE, REMOTE_ID, \
-                                ORIGIN_BLOGNAME, REBLOGGED_BLOGNAME)\
-                                values (:i_postid, :i_post_url, :i_post_date, :i_remoteid, \
-                                :v_blog_origin_id, :v_fetched_reblogged_blog_id);\
-\
-                                END"\
-                                )
+            INSERT into POSTS (POST_ID, POST_URL, POST_DATE, REMOTE_ID, \
+            ORIGIN_BLOGNAME, REBLOGGED_BLOGNAME)\
+            values (:i_postid, :i_post_url, :i_post_date, :i_remoteid, \
+            :v_blog_origin_id, :v_fetched_reblogged_blog_id);\
+            END"\
+            )
 
-        # con.execute_immediate("CREATE or ALTER PROCEDURE insert_context \
+        # Inserts context, update if already present with latest reblog's values
+        con.execute_immediate("\
+            CREATE OR ALTER PROCEDURE insert_context(\
+                i_post_id d_post_no not null, \
+                i_timestamp integer,\
+                i_context d_long_text default null,\
+                i_remote_id d_post_no default null)\
+            as \
+            declare variable v_remote_id d_post_no default null;\
+            declare variable v_timestamp integer default null;\
+\
+            BEGIN\
+            if (:i_remote_id is not null) then /* we might not want to keep it*/\
+            select (POST_ID) from CONTEXTS where (POST_ID = :i_remote_id) into :v_remote_id;\
+\
+            if (:v_remote_id is null) then /* we did not find it*/\
+            insert into CONTEXTS (POST_ID, TTIMESTAMP, CONTEXT, REMOTE_ID ) values\
+            (:i_post_id, :i_timestamp, :i_context, :i_remote_id );\
+            else /*remote id is already stored as its original post_id, we check timestamp*/\
+\
+            begin\
+                select (TTIMESTAMP) from CONTEXTS where (POST_ID = :i_remote_id) into :v_timestamp;\
+                if (:i_timestamp > :v_timestamp) /* what we hold is more recent, we update*/\
+                then\
+\
+                update CONTEXTS set CONTEXT = :i_context, \
+                TTIMESTAMP = :i_timestamp, \
+                LATEST_REBLOG = :i_post_id\
+                where (POST_ID = :i_remote_id);\
+            end\
+            END;")
+
         # con.execute_immediate("CREATE or ALTER PROCEDURE insert_url \
-        # con.execute_immediate("CREATE or ALTER PROCEDURE insert_url \
 
 
-        # con.execute_immediate("CREATE PROCEDURE check_blog_status")
+        # con.execute_immediate(
+            # "CREATE PROCEDURE check_blog_status")
+            # retrieve health check: 
+            # if health is "alive" and status not "crawling"
+            # THEN retrieve total_posts check: if null, go http test it and update total_posts, if 0 change health to wiped
+            # if health is "dead" THEN return dead
+            # if health is wiped, keep wiped (but crawl still)
+            # if status is null: not initialized, can start -> fetch_blog_info(blog)
+            # if status is DONE: all scraped, skip
+            # if status is CRAWL: skip
+            # if total_post > posts_scraped: start crawling at offset
 
+
+        # con.execute_immediate(
+        # "CREATE PROCEDURE update_blog_status")
+            # on table BLOGS:
+            # when total_posts = posts_scraped -> set status to "DONE"
+            # update timestamp on post insert_post committed
+            # update last post done on insert_post committed
+            # update offset on each post insert_post committed (last offset done)
+                                
 
         # Create views
-        # con.execute_immediate("CREATE VIEW v_posts ( \
-        #                         POST_ID, REMOTE_ID, BLOG_ORIGIN, BLOG_REBLOGGED, POST_URL, POST_DATE) \
-        #                         AS SELECT \
-        #                         POST_ID, REMOTE_ID, BLOG_ORIGIN, BLOG_REBLOGGED, POST_URL, POST_DATE, AUTO_ID, BLOG_NAME \
-        #                         FROM POSTS, GATHERED_BLOGS, BLOGS \
-        #                         WHERE POSTS.BLOG_ORIGIN = BLOGS.AUTO_ID, POSTS.BLOG_REBLOGGED = GATHERED_BLOGS.BLOG_NAME \
-        #                         );")
+        # con.execute_immediate(
+        # "CREATE VIEW v_posts ( \
+        # POST_ID, REMOTE_ID, BLOG_ORIGIN, BLOG_REBLOGGED, POST_URL, POST_DATE) \
+        # AS SELECT \
+        # POST_ID, REMOTE_ID, BLOG_ORIGIN, BLOG_REBLOGGED, POST_URL, POST_DATE, AUTO_ID, BLOG_NAME \
+        # FROM POSTS, GATHERED_BLOGS, BLOGS \
+        # WHERE POSTS.BLOG_ORIGIN = BLOGS.AUTO_ID, POSTS.BLOG_REBLOGGED = GATHERED_BLOGS.BLOG_NAME \
+        # );")
+
+def insert_post_context(database, post):
+    """inserts context and its meta data into table contexts"""
+    pass
 
 
-def populate_db_with_archives(dbpath, username, userpassword, archivelist_path):
+def update_blog_status(database, dictionary):
+    """updates blog name in blogs table with values from dictionary"""
+    # if dictionary.getitems('health') is OK
+    #     stmt = cur.prep("execute procedure update_blog_status(?)")
+    #     con.execute(stmt, )
+    pass
+
+def fetch_blog_status(database):
+    """retrieves info about blog status in Database"""
+    # cur.prep("execute procedure check_blog_status(?)")
+    # return db_blog_status 
+    pass
+
+
+def ping_blog_status(blog):
+    """retrieves info from tumblr API concerning blog"""
+    # fetch_blog_info(blog) returns:
+    #     404 or any error -> dead or unknown (if only network error)
+    #     lastupdated, total_posts, wiped if 0 post (or less than 10 posts?)
+    # return status
+    pass
+
+def populate_db_with_archives(database):
     """read archive list and populate the OLD_1280 table"""
-    con = fdb.connect(database=dbpath, user=username, password=userpassword)
+    con = fdb.connect(database=database.db_filepath, user=database.username, password=database.password)
     cur = con.cursor()
-    oldfiles = readlines(archivelist_path)
+    oldfiles = readlines(database.archivelist)
     repattern_tumblr = re.compile(r'(tumblr_.*)_.*\..*', re.I) #eliminate '_size.ext'
     repattern_revisions = re.compile(r'(tumblr_.*)(?:_r\d)', re.I) #elimitane '_r\d'
     t0 = time.time()
@@ -231,11 +323,11 @@ def populate_db_with_archives(dbpath, username, userpassword, archivelist_path):
     print('Inserting records into OLD_1280 Took %.2f ms' % (1000*(t1-t0)))
 
 
-def populate_db_with_blogs(dbpath, username, userpassword, blogslist_path):
+def populate_db_with_blogs(database):
     """read archive list and populate the OLD_1280 table"""
-    con = fdb.connect(database=dbpath, user=username, password=userpassword)
+    con = fdb.connect(database=database.db_filepath, user=database.username, password=database.password)
     cur = con.cursor()
-    data = readlines(blogslist_path)
+    data = readlines(database.bloglist)
     t0 = time.time()
     with fdb.TransactionContext(con):
         insert_statement = cur.prep("execute procedure insert_blogname(?)")
@@ -260,30 +352,26 @@ def readlines(filepath):
     return data
 
 
-def Create_blank_database(dbpath, user, userpassword):
-    # test typical usage:
-    scriptpath = os.path.dirname(__file__) + os.sep
-    blogs_toscrape = scriptpath + "tools/blogs_toscrape.txt"
-    archives_toload = scriptpath +  "tools/1280_files_list.txt"
+def Create_blank_database(database):
 
-    create_blank_db_file(dbpath, user, userpassword)
-    populate_db_with_tables(dbpath, user, userpassword)
-    populate_db_with_blogs(dbpath, user, userpassword, blogs_toscrape)
-    # populate_db_with_archives(dbpath, user, userpassword, archives_toload)
+    create_blank_db_file(database)
+    populate_db_with_tables(database)
+    populate_db_with_blogs(database)
+    # populate_db_with_archives(database)
     
-    # the_db = Database(db_host="localhost", db_filepath=dbpath, db_user="test", db_password="test")
+    # the_db = Database(database)
     
-    test_update_table(dbpath, user, userpassword)
+    test_update_table(database)
 
 class UpdatePayload(dict):
     pass
 
-def test_update_table(dbpath, username, userpassword):
+def test_update_table(database):
     """feed testing data"""
     update = parse_json_response(json.load(open\
-    ("/home/nupupun/Programming/tumblrgator/tools/test/videogame-fantasy_july_reblogfalse.json", 'r'))['response'])
+    (SCRIPTDIR + "/tools/test/videogame-fantasy_july_reblogfalse_dupe.json", 'r'))['response'])
     t0 = time.time()
-    con = fdb.connect(database=dbpath, user=username, password=userpassword)
+    con = fdb.connect(database=database.db_filepath, user=database.username, password=database.password)
     cur = con.cursor()
 
     with fdb.TransactionContext(con):
@@ -316,7 +404,6 @@ def parse_json_response(json): #TODO: move to client module when done testing
         current_post_dict['id'] = (post['id'])
         current_post_dict['date'] = post['date']
         current_post_dict['post_url'] = post['post_url']
-        current_post_dict['slug'] = post['slug']
         current_post_dict['blog_name'] = post['blog_name']
         if 'trail' in post.keys() and len(post['trail']) > 0: # trail is not empty, it's a reblog
             #FIXME: put this in a trail subdictionary
@@ -346,5 +433,8 @@ POST number: " + str(update.trimmed_posts_list.index(post)))
 
 
 if __name__ == "__main__":
-    Create_blank_database("/home/nupupun/test/tumblrgator_test.fdb", "sysdba", "masterkey")
-    # populate_db_with_blogs(scriptdir + "tools/blogs_toscrape.txt", "sysdba", "masterkey", "/home/nupupun/test/tumblrgator_test.fdb")
+    blogs_toscrape = SCRIPTDIR + "tools/blogs_toscrape.txt"
+    archives_toload = SCRIPTDIR +  "tools/1280_files_list.txt"
+    database = Database(filepath="/home/nupupun/test/tumblrgator_test.fdb", username="sysdba", password="masterkey", bloglist=blogs_toscrape, archivelist=archives_toload)
+
+    Create_blank_database(database)
