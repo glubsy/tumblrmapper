@@ -1,0 +1,44 @@
+SET TERM ^;
+
+CREATE OR ALTER PROCEDURE insert_context(
+    i_post_id d_post_no not null, 
+    i_timestamp integer,
+    i_context d_long_text default null,
+    i_remote_id d_post_no default null)
+as 
+declare variable v_remote_id d_post_no default null;
+declare variable v_remote_id_in_remote_id d_post_no default null;
+declare variable v_timestamp integer default null;
+
+BEGIN
+if (:i_remote_id is not null) then /* we might not want to keep it*/
+    begin
+    select (POST_ID) from CONTEXTS where (POST_ID = :i_remote_id) into :v_remote_id;
+    select (REMOTE_ID) from CONTEXTS where (REMOTE_ID = :i_remote_id) into :v_remote_id_in_remote_id;
+    select (TTIMESTAMP) from CONTEXTS where (REMOTE_ID = :i_remote_id) into :v_timestamp;
+    if ((:v_remote_id_in_remote_id is not null) and (:i_timestamp > :v_timestamp)) then 
+        update CONTEXTS set CONTEXT = :i_context, 
+        TTIMESTAMP = :i_timestamp,
+        LATEST_REBLOG = :i_post_id
+        where (REMOTE_ID = :i_remote_id);
+        exit;
+    end
+
+if (:v_remote_id is null) then /* we did not find it*/
+insert into CONTEXTS (POST_ID, TTIMESTAMP, CONTEXT, REMOTE_ID ) values
+(:i_post_id, :i_timestamp, :i_context, :i_remote_id );
+else /*remote id is already stored as its original post_id, we check timestamp*/
+
+begin
+    select (TTIMESTAMP) from CONTEXTS where (POST_ID = :i_remote_id) into :v_timestamp;
+    if (:i_timestamp > :v_timestamp) /* what we hold is more recent, we update*/
+    then
+
+    update CONTEXTS set CONTEXT = :i_context, 
+    TTIMESTAMP = :i_timestamp,
+    LATEST_REBLOG = :i_post_id
+    where (POST_ID = :i_remote_id);
+end
+END^
+
+set term ; ^

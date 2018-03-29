@@ -103,22 +103,6 @@ def populate_db_with_tables(database):
             #BLOG_REBLOGGED is name of blog in trail
 
         con.execute_immediate(
-            "CREATE TABLE REBLOGGED_POSTS ( \
-            REMOTE_ID    D_POST_NO, \
-            POST_ID      D_POST_NO, \
-            BLOG_NAME    D_AUTO_ID, \
-            POST_URL     D_LONG_TEXT, \
-            PRIMARY KEY(REMOTE_ID, POST_ID),\
-            FOREIGN KEY(BLOG_NAME) REFERENCES GATHERED_BLOGS(AUTO_ID), \
-            FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID) \
-            );")
-            # FIXME: need testing on the unique constraints, can we have a null and still have one of two PK columns?
-            # MEMO: this is to keep track of which bloggers reblogged that post, from the TRAIL node
-            # REMOTE_ID is the post id in the trail, in case of reblog for example, we don't necessarily have the corresponding (non reblogged) TID
-            # BLOG_NAME is the original poster's name (not the reblogger's)
-            # POST_URL might need to be parsed from Caption
-
-        con.execute_immediate(
             "CREATE TABLE CONTEXTS ( \
             POST_ID         D_POST_NO,\
             REMOTE_ID       D_POST_NO UNIQUE, \
@@ -126,8 +110,7 @@ def populate_db_with_tables(database):
             CONTEXT         D_LONG_TEXT, \
             LATEST_REBLOG   D_POST_NO,\
             PRIMARY KEY(POST_ID),\
-            FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID), \
-            FOREIGN KEY(REMOTE_ID) REFERENCES REBLOGGED_POSTS(REMOTE_ID) \
+            FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID) \
             );")
             # to update
             # if remote_id is null, then it's an original post, not reblogged, we store everything no problem
@@ -136,6 +119,7 @@ def populate_db_with_tables(database):
             # LATEST_REBLOG is the latest reblog that we used to update the timestamp and context fields of an original post
             # that we had recorded. 
             # REMOTE_ID can be NULL! (allowed with unique)  
+            # if we input an existing REMOTE_ID (with a new POST_ID, because reblogged by many POST_ID), then EXCEPTION!
 
         con.execute_immediate(
             "CREATE TABLE URLS ( \
@@ -213,11 +197,22 @@ def populate_db_with_tables(database):
                 i_remote_id d_post_no default null)\
             as \
             declare variable v_remote_id d_post_no default null;\
+            declare variable v_remote_id_in_remote_id d_post_no default null;\
             declare variable v_timestamp integer default null;\
 \
             BEGIN\
             if (:i_remote_id is not null) then /* we might not want to keep it*/\
-            select (POST_ID) from CONTEXTS where (POST_ID = :i_remote_id) into :v_remote_id;\
+                begin\
+                select (POST_ID) from CONTEXTS where (POST_ID = :i_remote_id) into :v_remote_id;\
+                select (REMOTE_ID) from CONTEXTS where (REMOTE_ID = :i_remote_id) into :v_remote_id_in_remote_id;\
+                select (TTIMESTAMP) from CONTEXTS where (REMOTE_ID = :i_remote_id) into :v_timestamp;\
+                if ((:v_remote_id_in_remote_id is not null) and (:i_timestamp > :v_timestamp)) then \
+                    update CONTEXTS set CONTEXT = :i_context, \
+                    TTIMESTAMP = :i_timestamp,\
+                    LATEST_REBLOG = :i_post_id\
+                    where (REMOTE_ID = :i_remote_id);\
+                    exit;\
+                end\
 \
             if (:v_remote_id is null) then /* we did not find it*/\
             insert into CONTEXTS (POST_ID, TTIMESTAMP, CONTEXT, REMOTE_ID ) values\
@@ -230,7 +225,7 @@ def populate_db_with_tables(database):
                 then\
 \
                 update CONTEXTS set CONTEXT = :i_context, \
-                TTIMESTAMP = :i_timestamp, \
+                TTIMESTAMP = :i_timestamp,\
                 LATEST_REBLOG = :i_post_id\
                 where (POST_ID = :i_remote_id);\
             end\
