@@ -9,6 +9,7 @@ from pprint import pprint
 from constants import BColors
 import traceback
 # import logging
+from operator import itemgetter
 SCRIPTDIR = os.path.dirname(__file__) + os.sep
 
 class Database():
@@ -61,6 +62,8 @@ def populate_db_with_tables(database):
         # cur = con.cursor()
         # Create domains
         con.execute_immediate("CREATE DOMAIN D_LONG_TEXT AS VARCHAR(500);")
+        con.execute_immediate("CREATE DOMAIN D_URL AS VARCHAR(150);")
+        con.execute_immediate("CREATE DOMAIN D_POSTURL AS VARCHAR(300);")
         con.execute_immediate("CREATE DOMAIN D_AUTO_ID AS smallint;")
         con.execute_immediate("CREATE DOMAIN D_BLOG_NAME AS VARCHAR(60);")
         con.execute_immediate("CREATE DOMAIN D_POST_NO AS BIGINT;")
@@ -94,7 +97,7 @@ def populate_db_with_tables(database):
             REMOTE_ID           D_POST_NO, \
             ORIGIN_BLOGNAME     D_AUTO_ID NOT NULL, \
             REBLOGGED_BLOGNAME  D_AUTO_ID, \
-            POST_URL            D_LONG_TEXT NOT NULL, \
+            POST_URL            D_POSTURL NOT NULL, \
             POST_DATE           varchar(26), \
             FOREIGN KEY(ORIGIN_BLOGNAME) REFERENCES BLOGS(AUTO_ID), \
             FOREIGN KEY(REBLOGGED_BLOGNAME) REFERENCES GATHERED_BLOGS(AUTO_ID) \
@@ -107,7 +110,7 @@ def populate_db_with_tables(database):
             POST_ID         D_POST_NO,\
             REMOTE_ID       D_POST_NO UNIQUE, \
             TTIMESTAMP      integer, \
-            CONTEXT         D_LONG_TEXT, \
+            CONTEXT         D_SUPER_LONG_TEXT, \
             LATEST_REBLOG   D_POST_NO,\
             PRIMARY KEY(POST_ID),\
             FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID) \
@@ -123,11 +126,13 @@ def populate_db_with_tables(database):
 
         con.execute_immediate(
             "CREATE TABLE URLS ( \
-            FILE_URL             D_LONG_TEXT PRIMARY KEY, \
+            FILE_URL             D_URL PRIMARY KEY, \
             POST_ID              D_POST_NO NOT NULL, \
+            REMOTE_ID            D_POST_NO, \
             FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID) \
             ); ")
-            #
+            # if remote_id is null, it means it was not a reblog
+            # if it's not null, it's from a reblog,
 
         con.execute_immediate(
             "CREATE TABLE OLD_1280 ( FILENAME varchar(60), FILEBASENAME varchar(60) );")
@@ -160,7 +165,7 @@ def populate_db_with_tables(database):
             "CREATE OR ALTER PROCEDURE insert_post \
             (   i_postid d_post_no, \
                 i_blog_origin d_blog_name,\
-                i_post_url varchar(500),\
+                i_post_url d_posturl,\
                 i_post_date varchar(26),\
                 i_remoteid d_post_no default null,\
                 i_reblogged_blog_name d_blog_name default null\
@@ -193,7 +198,7 @@ def populate_db_with_tables(database):
             CREATE OR ALTER PROCEDURE insert_context(\
                 i_post_id d_post_no not null, \
                 i_timestamp integer,\
-                i_context d_long_text default null,\
+                i_context d_super_long_text default null,\
                 i_remote_id d_post_no default null)\
             as \
             declare variable v_remote_id d_post_no default null;\
@@ -368,16 +373,30 @@ def test_update_table(database):
     t0 = time.time()
     con = fdb.connect(database=database.db_filepath, user=database.username, password=database.password)
     cur = con.cursor()
-
+    insertstmt = cur.prep('insert into URLS (file_url,post_id,remote_id) values (?,?,?)')
     with fdb.TransactionContext(con):
         for post in update.trimmed_posts_list:
             try:
-                #TODO: add more arguments to the procedure, make more stored procedures
-                operation = cur.prep("execute procedure insert_post(?,?,?,?,?,?)")
-                params = (post['id'], post['blog_name'], post['post_url'], post['date'], post['remote_id'], post['reblogged_blog_name'])
-                cur.execute(operation, params)
+                # operation = cur.prep("execute procedure insert_post(?,?,?,?,?,?)")
+                # params = (post['id'], post['blog_name'], post['post_url'], post['date'], \
+                # post['remote_id'], post['reblogged_blog_name'])
+                # cur.execute(operation, params)
+
+                params = (post['id'], post['blog_name'], post['post_url'], \
+                post['date'], post['timestamp'], post['remote_id'], post['reblogged_blog_name'], \
+                post['remote_content'], post['photos'])
+
+                cur.callproc('insert_post', itemgetter(0,1,2,3,5,6)(params))
+                cur.callproc('insert_context', itemgetter(0,4,7,5)(params))
+                for photo in post['photos']:
+                    paramlist = (photo, post['id'], post['remote_id'])
+                    try:
+                        cur.execute(insertstmt, paramlist)
+                    except Exception as e:
+                        print(BColors.BLUEOK + BColors.FAIL + "ERROR inserting url:" + str(e) + BColors.ENDC)
+                        continue
             except Exception as e:
-                print(BColors.FAIL + "ERROR in loop:" + str(e) + BColors.ENDC)
+                print(BColors.FAIL + "ERROR executing procedures for post and context:" + str(e) + BColors.ENDC)
                 break
         else:
             print("NO BREAK OCCURED IN FOR LOOP")
@@ -400,6 +419,7 @@ def parse_json_response(json): #TODO: move to client module when done testing
         current_post_dict['date'] = post['date']
         current_post_dict['post_url'] = post['post_url']
         current_post_dict['blog_name'] = post['blog_name']
+        current_post_dict['timestamp'] = post['timestamp']
         if 'trail' in post.keys() and len(post['trail']) > 0: # trail is not empty, it's a reblog
             #FIXME: put this in a trail subdictionary
             current_post_dict['reblogged_blog_name'] = post['trail'][0]['blog']['name']
@@ -410,9 +430,8 @@ def parse_json_response(json): #TODO: move to client module when done testing
             current_post_dict['remote_id'] = None
             current_post_dict['remote_content'] = None
             pass
-
+        current_post_dict['photos'] = []
         if 'photos' in post.keys():
-            current_post_dict['photos'] = list()
             for item in range(0, len(post['photos'])):
                 current_post_dict['photos'].append(post['photos'][item]['original_size']['url'])
 
