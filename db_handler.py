@@ -201,40 +201,21 @@ def populate_db_with_tables(database):
                 i_context d_super_long_text default null,\
                 i_remote_id d_post_no default null)\
             as \
-            declare variable v_remote_id d_post_no default null;\
-            declare variable v_remote_id_in_remote_id d_post_no default null;\
-            declare variable v_timestamp integer default null;\
-\
             BEGIN\
             if (:i_remote_id is not null) then /* we might not want to keep it*/\
-                begin\
-                select (POST_ID) from CONTEXTS where (POST_ID = :i_remote_id) into :v_remote_id;\
-                select (REMOTE_ID) from CONTEXTS where (REMOTE_ID = :i_remote_id) into :v_remote_id_in_remote_id;\
-                select (TTIMESTAMP) from CONTEXTS where (REMOTE_ID = :i_remote_id) into :v_timestamp;\
-                if ((:v_remote_id_in_remote_id is not null) and (:i_timestamp > :v_timestamp)) then \
-                    update CONTEXTS set CONTEXT = :i_context, \
-                    TTIMESTAMP = :i_timestamp,\
-                    LATEST_REBLOG = :i_post_id\
-                    where (REMOTE_ID = :i_remote_id);\
-                    exit;\
-                end\
-\
-            if (:v_remote_id is null) then /* we did not find it*/\
+                    if (exists (select (REMOTE_ID) from CONTEXTS where (REMOTE_ID = :i_remote_id))) then\
+                    begin\
+                        if (:i_timestamp > (select (TTIMESTAMP) from CONTEXTS where (REMOTE_ID = :i_remote_id))) then\
+                            update CONTEXTS set CONTEXT = :i_context, \
+                            TTIMESTAMP = :i_timestamp,\
+                            LATEST_REBLOG = :i_post_id\
+                            where (REMOTE_ID = :i_remote_id);\
+                            exit;\
+                    end\
+            else /* we store everything, it's an original post*/\
             insert into CONTEXTS (POST_ID, TTIMESTAMP, CONTEXT, REMOTE_ID ) values\
-            (:i_post_id, :i_timestamp, :i_context, :i_remote_id );\
-            else /*remote id is already stored as its original post_id, we check timestamp*/\
-\
-            begin\
-                select (TTIMESTAMP) from CONTEXTS where (POST_ID = :i_remote_id) into :v_timestamp;\
-                if (:i_timestamp > :v_timestamp) /* what we hold is more recent, we update*/\
-                then\
-\
-                update CONTEXTS set CONTEXT = :i_context, \
-                TTIMESTAMP = :i_timestamp,\
-                LATEST_REBLOG = :i_post_id\
-                where (POST_ID = :i_remote_id);\
-            end\
-            END;")
+                                (:i_post_id, :i_timestamp, :i_context, :i_remote_id );\
+            END")
 
         # con.execute_immediate("CREATE or ALTER PROCEDURE insert_url \
 
@@ -386,8 +367,12 @@ def test_update_table(database):
                 post['date'], post['timestamp'], post['remote_id'], post['reblogged_blog_name'], \
                 post['remote_content'], post['photos'])
 
+                print("post_id: " + BColors.OKGREEN + str(params))
+
                 cur.callproc('insert_post', itemgetter(0,1,2,3,5,6)(params))
+
                 cur.callproc('insert_context', itemgetter(0,4,7,5)(params))
+
                 for photo in post['photos']:
                     paramlist = (photo, post['id'], post['remote_id'])
                     try:
@@ -399,10 +384,11 @@ def test_update_table(database):
                 print(BColors.FAIL + "ERROR executing procedures for post and context:" + str(e) + BColors.ENDC)
                 break
         else:
-            print("NO BREAK OCCURED IN FOR LOOP")
+            print("NO BREAK OCCURED IN FOR LOOP, COMMITTING")
             con.commit()
+
     t1 = time.time()
-    print('Procedure insert_post took %.2f ms' % (1000*(t1-t0)))
+    print('Procedures to insert took %.2f ms' % (1000*(t1-t0)))
 
 def parse_json_response(json): #TODO: move to client module when done testing
     """returns a UpdatePayload() object that holds the fields to update in DB"""
@@ -424,7 +410,7 @@ def parse_json_response(json): #TODO: move to client module when done testing
             #FIXME: put this in a trail subdictionary
             current_post_dict['reblogged_blog_name'] = post['trail'][0]['blog']['name']
             current_post_dict['remote_id'] = int(post['trail'][0]['post']['id'])
-            current_post_dict['remote_content'] = post['trail'][0]['content_raw']
+            current_post_dict['remote_content'] = post['trail'][0]['content_raw'].replace('\n', '')
         else: #trail is an empty list
             current_post_dict['reblogged_blog_name'] = None
             current_post_dict['remote_id'] = None
