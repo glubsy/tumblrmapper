@@ -253,10 +253,6 @@ def populate_db_with_tables(database):
         # WHERE POSTS.BLOG_ORIGIN = BLOGS.AUTO_ID, POSTS.BLOG_REBLOGGED = GATHERED_BLOGS.BLOG_NAME \
         # );")
 
-def insert_post_context(database, post):
-    """inserts context and its meta data into table contexts"""
-    pass
-
 
 def update_blog_status(database, dictionary):
     """updates blog name in blogs table with values from dictionary"""
@@ -270,7 +266,6 @@ def fetch_blog_status(database):
     # cur.prep("execute procedure check_blog_status(?)")
     # return db_blog_status 
     pass
-
 
 def ping_blog_status(blog):
     """retrieves info from tumblr API concerning blog"""
@@ -336,17 +331,14 @@ def readlines(filepath):
 
 def Create_blank_database(database):
 
-    # create_blank_db_file(database)
-    # populate_db_with_tables(database)
-    # populate_db_with_blogs(database)
+    create_blank_db_file(database)
+    populate_db_with_tables(database)
+    populate_db_with_blogs(database)
     # populate_db_with_archives(database)
     
     # the_db = Database(database)
     
-    # test_update_table(database)
-    response = json.load(open(SCRIPTDIR + "/tools/test/videogame-fantasy_july_reblogfalse_dupe.json", 'r'))['response']
-    cProfile.runctx('parse_json_response(reponse)', {'reponse': response, 'parse_json_response': parse_json_response}, {})
-    cProfile.runctx('parse_json_response_list(reponse)', {'reponse': response, 'parse_json_response_list': parse_json_response_list}, {})
+    test_update_table(database)
 
 class UpdatePayload(dict):
     pass
@@ -359,7 +351,6 @@ def test_update_table(database):
     cur = con.cursor()
     insertstmt = cur.prep('insert into URLS (file_url,post_id,remote_id) values (?,?,?)')
     t0 = time.time()
-    t1 = t0
     with fdb.TransactionContext(con):
         for post in update.trimmed_posts_list:
             try:
@@ -375,7 +366,6 @@ def test_update_table(database):
                 cur.callproc('insert_post', itemgetter(0,1,2,3,5,6)(params))
 
                 cur.callproc('insert_context', itemgetter(0,4,7,5)(params))
-                t1 = time.time()
                 for photo in post['photos']:
                     paramlist = (photo, post['id'], post['remote_id'])
                     try:
@@ -390,7 +380,7 @@ def test_update_table(database):
             print("NO BREAK OCCURED IN FOR LOOP, COMMITTING")
             con.commit()
 
-    # t1 = time.time()
+    t1 = time.time()
     print('Procedures to insert took %.2f ms' % (1000*(t1-t0)))
 
 def parse_json_response(json): #TODO: move to client module when done testing
@@ -435,87 +425,6 @@ def parse_json_response(json): #TODO: move to client module when done testing
 # POST number: " + str(update.trimmed_posts_list.index(post)))
 #         for key, value in post.items():
 #             print("key: " + str(key) + "\nvalue: " + str(value) + "\n--")
-
-    return update
-
-def test_update_table_list(database):
-    """feed testing data"""
-    update = parse_json_response_list(json.load(open\
-    (SCRIPTDIR + "/tools/test/videogame-fantasy_july_reblogfalse_dupe.json", 'r'))['response'])
-    
-    con = fdb.connect(database=database.db_filepath, user=database.username, password=database.password)
-    cur = con.cursor()
-    insertstmt = cur.prep('insert into URLS (file_url,post_id,remote_id) values (?,?,?)')
-    t0 = time.time()
-    t1 = t0
-    with fdb.TransactionContext(con):
-        for post in update.trimmed_posts_list:
-            try:
-                # operation = cur.prep("execute procedure insert_post(?,?,?,?,?,?)")
-                # params = (post['id'], post['blog_name'], post['post_url'], post['date'], \
-                # post['remote_id'], post['reblogged_blog_name'])
-                # cur.execute(operation, params)
-
-                cur.callproc('insert_post', itemgetter(0,4,3,2,7,6)(post))
-
-                cur.callproc('insert_context', itemgetter(0,5,8,7)(post))
-                t1 = time.time()
-                for photo in post[9]:
-                    paramlist = (photo, post[0], post[7])
-                    try:
-                        cur.execute(insertstmt, paramlist)
-                    except Exception as e:
-                        print(BColors.BLUEOK + BColors.FAIL + "ERROR inserting url:" + str(e) + BColors.ENDC)
-                        continue
-            except Exception as e:
-                print(BColors.FAIL + "ERROR executing procedures for post and context:" + str(e) + BColors.ENDC)
-                break
-        else:
-            print("NO BREAK OCCURED IN FOR LOOP, COMMITTING")
-            con.commit()
-
-    # t1 = time.time()
-    print('Procedures to insert as list took %.2f ms' % (1000*(t1-t0)))
-
-def parse_json_response_list(json): #TODO: move to client module when done testing
-    """returns a UpdatePayload() object that holds the fields to update in DB"""
-    t0 = time.time()
-    update = UpdatePayload()
-    update.blogname = json['blog']['name']
-    update.totalposts = json['blog']['total_posts']
-    update.posts_response = json['posts'] #list of dicts
-    update.trimmed_posts_list = [] #list of dicts of posts
-
-    for post in update.posts_response: #dict in list
-        current_post_list = list()
-        current_post_list.append(post.get('id'))
-        current_post_list.append(post.get('date'))
-        current_post_list.append(post.get('updated'))
-        current_post_list.append(post.get('post_url'))
-        current_post_list.append(post.get('blog_name'))
-        current_post_list.append(post.get('timestamp'))
-        if 'trail' in post.keys() and len(post['trail']) > 0: # trail is not empty, it's a reblog
-            #FIXME: put this in a trail subdictionary
-            current_post_list.append(post['trail'][0]['blog']['name'])
-            current_post_list.append(int(post['trail'][0]['post']['id']))
-            current_post_list.append(post['trail'][0]['content_raw'].replace('\n', ''))
-        else: #trail is an empty list
-            current_post_list.append(None)
-            current_post_list.append(None)
-            current_post_list.append(None)
-        current_post_list.append([])
-        if 'photos' in post.keys():
-            for item in range(0, len(post['photos'])):
-                current_post_list[-1].append(post['photos'][item]['original_size']['url'])
-
-        update.trimmed_posts_list.append(current_post_list)
-
-    t1 = time.time()
-    print('Building list of posts as list took %.2f ms' % (1000*(t1-t0)))
-
-#     for post in update.trimmed_posts_list:
-#         print("===============================\n\
-# POST number: " + str(post))
 
     return update
 
