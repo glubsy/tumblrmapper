@@ -33,20 +33,23 @@ class Database():
         pass
 
 
-class Connection(Database):
+class Connection():
     """Keeps connection to databases, passes requests"""
 
     def __init__(self, Database):
-        self.con = None #our connection
+        self.con = None
+        self.host = None
+        self.db_filepath = Database.db_filepath
+        self.username = Database.username
+        self.password = Database.password
     
     def connect_to(self, object):
         """initialize connection to remote DB"""
-        self.con = fdb.connect(database=str(self.db_host + self.db_filepath), user=self.username, password=self.userpassword)
+        self.con = fdb.connect(database=str(self.host + self.db_filepath), user=self.username, password=self.password)
         return self.con
 
     def close_connection(self, con):
-        """close con"""
-        self.con.close()
+        return self.con.close()
 
 
 def create_blank_db_file(database):
@@ -85,6 +88,8 @@ def populate_db_with_tables(database):
             LAST_CHECKED    TIMESTAMP, \
             CONSTRAINT blognames_unique UNIQUE (BLOG_NAME) using index ix_blognames\
             );")
+            # HEALTH:  
+            # CRAWL STATUS
 
         con.execute_immediate(
             "CREATE TABLE GATHERED_BLOGS (\

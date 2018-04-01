@@ -11,17 +11,24 @@ import requests
 import threading
 import queue
 #import json
+import csv
+from itertools import cycle
+
 from constants import BColors
 import proxies, db_handler
 import tumblr_client
-import tumbdlr_classes
+import tumdlr_classes
 import tumblr_client
 import db_handler
+
+from rate_limiter import RateLimiter
 # try:
 #     from tqdm import tqdm
 #     TQDM_AVAILABLE = True
 # except ImportError:
 #     TQDM_AVAILABLE = False
+SCRIPTDIR = os.path.dirname(__file__) + os.sep
+
 
 def parse_args():
     """Parse command-line arguments."""
@@ -65,7 +72,7 @@ def parse_config(config_path, data_path):
                         "blank_db": data_path + "blank_db.fdb", #blank initial DB file
                         "api_version": "2", #use api v2 by default
                         "proxies": False #use random proxies, or not
-                        } 
+                        }
 
     config = configparser.SafeConfigParser(config_defaults)
     config.add_section('tumblrgator')
@@ -83,8 +90,9 @@ def parse_config(config_path, data_path):
     return config
 
 
+
 def main():
-    """main loop"""
+    """Entry point"""
     # parse command-line arguments
     args = parse_args()
 
@@ -94,10 +102,134 @@ def main():
 
     config = parse_config(args.config_path, args.data_path)
 
-    #start looping through blogs scrapers
-    TumblrBlog(config).
+    # === API KEY ===
+    # list of APIKey objects
+    api_keys = get_api_key_object_list(SCRIPTDIR + "api_keys.txt")
+
+    # === PROXIES ===
+    # Get proxies from free proxies site
+    scanner = proxies.ProxyScanner()
+    # fresh_proxy_dict = scanner.get_proxies()
+    fresh_proxy_dict = {'96.220.96.35': 'Mozilla/5.0 (Windows NT 6.2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/28.0.1464.0 Safari/537.36',
+                        '104.236.175.94': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17',
+                        '89.236.17.108': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1985.67 Safari/537.36' }
+
+    # Associate api_key to each proxy in fresh list
+    definitive_proxy_list = gen_list_of_proxies_with_api_keys(fresh_proxy_dict, api_keys)
+    print(definitive_proxy_list)
+
+    # === DATABASE ===
+    db = db_handler.Database()
+    db_connection = db_handler.Connection(db)
+
+    # === BLOG ===
+    # blog = fetch_random_blog(TumblrBlog)
+    # ping_test_blog(blog)
+
+    # fetch first blog in DB that is unchecked
+    # - fetch info from API about health
+    # - populate total_posts, validate health, and crawling status
+    # - on result from procedure, pass the resulting TumblrBlog object to next function
+    # add to queue
+    # start fetching tumblr API from offset
+    # populate DB, update Blog crawling status, posts scraped so far
+    # display progress (total_posts / done_posts)
+    # handle keyboard interrupt
 
 
+
+
+def gen_list_of_proxies_with_api_keys(fresh_proxy_dict, api_keys):
+    """Returns list of proxies with their api key and secret key"""
+    newlist = list()
+    for ip, ua in fresh_proxy_dict.items():
+        random_apik = get_random(api_keys)
+        key, secret = random_apik.api_key, random_apik.secret_key
+        newlist.append(Proxy(ip, ua, key, secret))
+    return newlist
+
+def get_random(mylist):
+    """returns a random item from list"""
+    return random.choice(mylist)
+
+
+class ProxyGenerator():
+    """Yields the next proxy in the list"""
+    def init(self, proxylist):
+        self._complete_proxy_list = proxylist
+
+    def __iter__(self):
+        """returns a Proxy() object from a stale list"""
+        while self.complete_proxy_list:
+            yield self._complete_proxy_list.pop()
+
+
+def get_api_key_object_list(api_keys_filepath):
+    """Returns a list of APIKey objects"""
+    api_key_list = list()
+
+    for key, secret in read_api_keys_from_csv(api_keys_filepath).items():
+        api_key_list.append(APIKey(key, secret))
+
+    return api_key_list
+
+
+def read_api_keys_from_csv(myfilepath):
+    """Returns dictionary of multiple {api_key: secret}"""
+    kvdict = dict()
+    with open(myfilepath, 'r') as f:
+        mycsv = csv.reader(f)
+        for row in mycsv:
+            key, secret = row
+            kvdict[key] = secret
+    return kvdict
+
+
+class APIKey:
+    """Api key object to keep track of requests per hour, day"""
+    request_max_hour = 1000
+    request_max_day = 5000
+    epoch_day = 86400
+    epoch_hour = 3600
+
+    def __init__(self, api_key=None, secret_key=None):
+        self.api_key = api_key
+        self.secret_key = secret_key
+        self.request_num = 0
+        self.first_used = float()
+        self.last_used = float()
+        self.disabled = False
+        self.disabled_until = float()
+
+    def disable_until(self):
+        """returns date until it's disabled"""
+        now = time.time()
+        pass #TODO: stub
+
+    def is_valid(self):
+        now = time.time()
+        if self.request_num >= requests_max_day:
+            return False
+
+        if self.request_num >= request_max_hour:
+            return False
+        return True
+        #TODO: stub
+
+    def use_once(self):
+        now = time.time()
+        if self.first_used == 0.0:
+            self.first_used = now
+        self.request_num += 1
+        self.last_used = now
+    #TODO: stub
+
+
+def fetch_random_blog(blog):
+    """Queries DB for a blog that is either new or needs update"""
+
+    blog.name, blog.total_posts, blog.health, blog.crawl_status, blog.post_scraped, blog.offset  = db_query_for_blog()
+    return blog
 
 
 class TumblrBlog:
@@ -105,15 +237,21 @@ class TumblrBlog:
 
     def __init__(self):
         self.name = None
-        self.totalpostcount = 0
-        self.post_offset = 0
+        self.total_posts = 0
+        self.post_scraped = 0
+        self.offset = 0
+        self.health = None
+        self.crawl_status = None
+
 
 class Proxy:
     """holds values to pass to proxy"""
 
-    def __init__(self):
-        self.ipaddress = None
-        self.apikey = None
+    def __init__(self, ip=None, ua=None, api_key=None, secret_key=None):
+        self.ip_address = ip
+        self.user_agent = ua
+        self.api_key = api_key
+        self.secret_key = secret_key
 
 class Process:
     """Processus fetching a Blog and writing to a DB with a Connection, with an optional Proxy"""
@@ -122,7 +260,7 @@ class Process:
 def get_with_proxies():
     """get API json with proxies"""
 
-def simple_get():
+def get_without_proxies():
     """get API json with own IP, throttled to not get banned, unique API key"""
 
 
@@ -131,4 +269,4 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        logging.debug("Error in Init:" + str(e))
+        logging.debug("Error in main():" + str(e))

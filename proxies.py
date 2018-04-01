@@ -27,15 +27,15 @@ class ProxyScanner():
         """Returns a dict of validated IP:UA
         returns None if fetching free list failed"""
         # socks_proxies_list = get_free_socks_proxies("https://socks-proxy.net/", type=socks)
-        i = 0
+        attempt = 0
         while not self.proxy_ua_dict:
-            if i > 10:
+            if attempt > 10:
                 break
 
             self.http_proxies_set = self.get_free_http_proxies(https_strict=False)
 
             if len(self.http_proxies_set) == 0:
-                i += 1
+                attempt += 1
                 continue
 
             useragents_cycle = cycle(self.get_ua_set(len(self.http_proxies_set)))
@@ -75,7 +75,7 @@ class ProxyScanner():
 
             # self.test_proxies(http_proxy_pool)
             
-            i += 1
+            attempt += 1
         else: #executed if no break occured
             return self.proxy_ua_dict
         # executed since break occured
@@ -144,7 +144,7 @@ class ProxyScanner():
         headers = {'User-Agent': self.proxy_ua_dict[proxy]}
         try:
             with self.print_lock:
-                print("proxy / UA:", proxy, "/", self.proxy_ua_dict[proxy], " :")
+                print("Testing proxy / UA:", proxy, "/", self.proxy_ua_dict[proxy], " :")
             response = requests.get(url,proxies={"http": proxy, "https": proxy}, headers=headers, timeout=15)
             if response.status_code == 200:
                 json_data = response.json()
@@ -155,8 +155,8 @@ class ProxyScanner():
             # del self.proxy_ua_dict[proxy]
             with self.print_lock:
                 print(BColors.FAIL + "Skipping. Connnection error:" + str(e) + BColors.ENDC + "\n")
-        with self.print_lock:
-            print(threading.current_thread().name,worker)
+        # with self.print_lock:
+        #     print(threading.current_thread().name,worker)
 
     def test_proxies(self, http_proxy_pool):
         url = 'https://httpbin.org/get'
@@ -166,7 +166,7 @@ class ProxyScanner():
             headers = {'User-Agent': self.proxy_ua_dict[proxy]}
             print(BColors.BOLD + "Testing proxies: " + str(i) + "/" + str(len(self.http_proxies_set)) + BColors.ENDC)
             try:
-                print("proxy / UA:", proxy, "/", self.proxy_ua_dict[proxy], " :")
+                print("testing proxy / UA:", proxy, "/", self.proxy_ua_dict[proxy], " :")
                 response = requests.get(url,proxies={"http": proxy, "https": proxy}, headers=headers, timeout=15)
                 # json_data = json.loads(response.text)
                 if response.status_code == 200:
