@@ -13,7 +13,6 @@ import queue
 #import json
 import csv
 from itertools import cycle
-
 from constants import BColors
 import proxies, db_handler
 import tumblr_client
@@ -58,20 +57,18 @@ def parse_args():
 def parse_config(config_path, data_path):
     """Configuration derived from defaults & file."""
 
-    script_dir = os.path.dirname(__file__) + os.sep
-    config_path = script_dir + "config" #FIXME: hardcoded configpath
-    data_path = script_dir  #FIXME: hardcoded datapath
+    config_path = SCRIPTDIR + "config" #FIXME: hardcoded configpath
+    data_path = SCRIPTDIR  #FIXME: hardcoded datapath
 
     # Set some config defaults
     config_defaults = { "config_path": config_path,
                         "data_path": data_path,
-                        "queue_toscrape": data_path + "queue_toscrape", #initial blog list to populate DB
-                        "queue_scraping": data_path + "queue_scraping", #currently processing blogs (for resuming)
-                        "queue_donescraped": data_path + "queue_donescraped", #blogs done scraped entirely ?
+                        "blogs_to_scrape": data_path + "blogs_to_scrape.txt", #initial blog list to populate DB
                         "scraper_log": data_path + "scraper.log", #log for downloads and proxies
                         "blank_db": data_path + "blank_db.fdb", #blank initial DB file
                         "api_version": "2", #use api v2 by default
-                        "proxies": False #use random proxies, or not
+                        "proxies": False, #use random proxies, or not
+                        "api_keys": "api_keys.txt"
                         }
 
     config = configparser.SafeConfigParser(config_defaults)
@@ -83,6 +80,9 @@ def parse_config(config_path, data_path):
     result = config.read(config_path)
     if not result:
         logging.debug("Unable to read config file: %s", config_path)
+
+    config.set('tumblrgator', 'blogs_to_scrape', SCRIPTDIR + config.get('tumblrgator', 'blogs_to_scrape'))
+    config.set('tumblrgator', 'archives', SCRIPTDIR + config.get('tumblrgator', 'archives'))
 
     logging.debug("Merged config: %s",
                 sorted(dict(config.items('tumblrgator')).items()))
@@ -102,9 +102,32 @@ def main():
 
     config = parse_config(args.config_path, args.data_path)
 
+    if args.create_blank_db: # we asked for a brand new DB file
+        blogs_toscrape = SCRIPTDIR + "tools/blogs_toscrape.txt"
+        archives_toload = SCRIPTDIR +  "tools/1280_files_list.txt"
+        temp_database_path = config.get('tumblrgator', 'blank_db')
+        temp_database = db_handler.Database(filepath=temp_database_path, \
+                                username="sysdba", password="masterkey")
+        
+        db_handler.create_blank_database(temp_database)
+        db_handler.populate_db_with_blogs(temp_database, blogs_toscrape)
+        # Optional archives too
+        # db_handler.populate_db_with_archives(temp_database, archives_toload)
+        print(BColors.BLUEOK + BColors.OKGREEN + "Done creating blank DB in: " + temp_database.db_filepath + BColors.ENDC)
+        return
+
+
+    # === DATABASE ===
+    db = db_handler.Database(config.get('tumblrgator', 'db_path'), \
+                            config.get('tumblrgator', 'username'),
+                            config.get('tumblrgator', 'password'))
+    db_connection = db_handler.Connection(db)
+    db_connection.connect_to()
+    db_connection.con
+
     # === API KEY ===
     # list of APIKey objects
-    api_keys = get_api_key_object_list(SCRIPTDIR + "api_keys.txt")
+    api_keys = get_api_key_object_list(SCRIPTDIR + config.get('tumblrgator', 'api_keys'))
 
     # === PROXIES ===
     # Get proxies from free proxies site
@@ -118,9 +141,6 @@ def main():
     definitive_proxy_list = gen_list_of_proxies_with_api_keys(fresh_proxy_dict, api_keys)
     print(definitive_proxy_list)
 
-    # === DATABASE ===
-    db = db_handler.Database()
-    db_connection = db_handler.Connection(db)
 
     # === BLOG ===
     # blog = fetch_random_blog(TumblrBlog)
@@ -153,7 +173,7 @@ def get_random(mylist):
     return random.choice(mylist)
 
 
-class ProxyGenerator():
+class ProxyGenerator(): #FIXME: delete?
     """Yields the next proxy in the list"""
     def init(self, proxylist):
         self._complete_proxy_list = proxylist
@@ -208,7 +228,7 @@ class APIKey:
 
     def is_valid(self):
         now = time.time()
-        if self.request_num >= requests_max_day:
+        if self.request_num >= request_max_day:
             return False
 
         if self.request_num >= request_max_hour:

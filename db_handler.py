@@ -23,8 +23,6 @@ class Database():
         self.db_filepath = kwargs.get('filepath', SCRIPTDIR + "blank_db.fdb")
         self.username = kwargs.get('username', "sysdba")
         self.password = kwargs.get('password', "masterkey")
-        self.bloglist = kwargs.get('bloglist', SCRIPTDIR + "tools/blogs_toscrape.txt")
-        self.archivelist = kwargs.get('archivelist', SCRIPTDIR + "tools/1280_files_list.txt")
 
     def query_blog(self, queryobj):
         """query DB for blog status"""
@@ -43,7 +41,7 @@ class Connection():
         self.username = Database.username
         self.password = Database.password
     
-    def connect_to(self, object):
+    def connect_to(self):
         """initialize connection to remote DB"""
         self.con = fdb.connect(database=str(self.host + self.db_filepath), user=self.username, password=self.password)
         return self.con
@@ -280,11 +278,11 @@ def ping_blog_status(blog):
     # return status
     pass
 
-def populate_db_with_archives(database):
+def populate_db_with_archives(database, archivepath):
     """read archive list and populate the OLD_1280 table"""
     con = fdb.connect(database=database.db_filepath, user=database.username, password=database.password)
     cur = con.cursor()
-    oldfiles = readlines(database.archivelist)
+    oldfiles = readlines(archivepath)
     repattern_tumblr = re.compile(r'(tumblr_.*)_.*\..*', re.I) #eliminate '_size.ext'
     repattern_revisions = re.compile(r'(tumblr_.*)(?:_r\d)', re.I) #elimitane '_r\d'
     t0 = time.time()
@@ -305,11 +303,11 @@ def populate_db_with_archives(database):
     print('Inserting records into OLD_1280 Took %.2f ms' % (1000*(t1-t0)))
 
 
-def populate_db_with_blogs(database):
+def populate_db_with_blogs(database, blogspath):
     """read archive list and populate the OLD_1280 table"""
     con = fdb.connect(database=database.db_filepath, user=database.username, password=database.password)
     cur = con.cursor()
-    data = readlines(database.bloglist)
+    data = readlines(blogspath)
     t0 = time.time()
     with fdb.TransactionContext(con):
         insert_statement = cur.prep("execute procedure insert_blogname(?)")
@@ -334,16 +332,11 @@ def readlines(filepath):
     return data
 
 
-def Create_blank_database(database):
-
+def create_blank_database(database):
+    """Creates a new blank DB file and populates with tables"""
     create_blank_db_file(database)
     populate_db_with_tables(database)
-    populate_db_with_blogs(database)
-    # populate_db_with_archives(database)
-    
-    # the_db = Database(database)
-    
-    test_update_table(database)
+
 
 class UpdatePayload(dict):
     pass
@@ -437,6 +430,10 @@ def parse_json_response(json): #TODO: move to client module when done testing
 if __name__ == "__main__":
     blogs_toscrape = SCRIPTDIR + "tools/blogs_toscrape.txt"
     archives_toload = SCRIPTDIR +  "tools/1280_files_list.txt"
-    database = Database(filepath="/home/nupupun/test/tumblrgator_test.fdb", username="sysdba", password="masterkey", bloglist=blogs_toscrape, archivelist=archives_toload)
+    database = Database(filepath="/home/nupupun/test/tumblrgator_test.fdb", username="sysdba", password="masterkey")
 
-    Create_blank_database(database)
+    create_blank_database(database)
+    populate_db_with_blogs(temp_database, blogs_toscrape)
+    # Optional archives too
+    populate_db_with_archives(temp_database, archives_toload)
+    test_update_table(database)
