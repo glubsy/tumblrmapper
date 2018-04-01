@@ -11,7 +11,7 @@ import traceback
 # import logging
 from operator import itemgetter
 SCRIPTDIR = os.path.dirname(__file__) + os.sep
-import cProfile
+# import cProfile
 
 class Database():
     """handle the db file itself, creating everything  
@@ -23,31 +23,21 @@ class Database():
         self.db_filepath = kwargs.get('filepath', SCRIPTDIR + "blank_db.fdb")
         self.username = kwargs.get('username', "sysdba")
         self.password = kwargs.get('password', "masterkey")
+        self.con = None
+
+    def connect(self):
+        """initialize connection to remote DB"""
+        self.con = fdb.connect(database=str(self.host + self.db_filepath), user=self.username, password=self.password)
+        return self.con
+
+    def close_connection(self):
+        return self.con.close()
 
     def query_blog(self, queryobj):
         """query DB for blog status"""
 
     def populate_db_with_procedures(self):
         pass
-
-
-class Connection():
-    """Keeps connection to databases, passes requests"""
-
-    def __init__(self, Database):
-        self.con = None
-        self.host = None
-        self.db_filepath = Database.db_filepath
-        self.username = Database.username
-        self.password = Database.password
-    
-    def connect_to(self):
-        """initialize connection to remote DB"""
-        self.con = fdb.connect(database=str(self.host + self.db_filepath), user=self.username, password=self.password)
-        return self.con
-
-    def close_connection(self, con):
-        return self.con.close()
 
 
 def create_blank_db_file(database):

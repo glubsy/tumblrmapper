@@ -121,9 +121,7 @@ def main():
     db = db_handler.Database(config.get('tumblrgator', 'db_path'), \
                             config.get('tumblrgator', 'username'),
                             config.get('tumblrgator', 'password'))
-    db_connection = db_handler.Connection(db)
-    db_connection.connect_to()
-    db_connection.con
+    con = db.connnect()
 
     # === API KEY ===
     # list of APIKey objects
@@ -143,7 +141,7 @@ def main():
 
 
     # === BLOG ===
-    # blog = fetch_random_blog(TumblrBlog)
+    # blog = fetch_random_blog(db)
     # ping_test_blog(blog)
 
     # fetch first blog in DB that is unchecked
