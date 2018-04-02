@@ -27,7 +27,7 @@ from rate_limiter import RateLimiter
 # except ImportError:
 #     TQDM_AVAILABLE = False
 SCRIPTDIR = os.path.dirname(__file__) + os.sep
-
+THREADS = 10
 
 def parse_args():
     """Parse command-line arguments."""
@@ -68,7 +68,8 @@ def parse_config(config_path, data_path):
                         "blank_db": data_path + "blank_db.fdb", #blank initial DB file
                         "api_version": "2", #use api v2 by default
                         "proxies": False, #use random proxies, or not
-                        "api_keys": "api_keys.txt"
+                        "api_keys": "api_keys.txt",
+                        "threads": 10
                         }
 
     config = configparser.SafeConfigParser(config_defaults)
@@ -83,7 +84,8 @@ def parse_config(config_path, data_path):
 
     config.set('tumblrgator', 'blogs_to_scrape', SCRIPTDIR + config.get('tumblrgator', 'blogs_to_scrape'))
     config.set('tumblrgator', 'archives', SCRIPTDIR + config.get('tumblrgator', 'archives'))
-
+    config.set('tumblrgator', 'db_filepath', os.path.expanduser(config.get('tumblrgator', 'db_filepath')))
+    
     logging.debug("Merged config: %s",
                 sorted(dict(config.items('tumblrgator')).items()))
 
@@ -102,6 +104,8 @@ def main():
 
     config = parse_config(args.config_path, args.data_path)
 
+    THREADS = config.getint('tumblrgator', 'threads')
+
     if args.create_blank_db: # we asked for a brand new DB file
         blogs_toscrape = SCRIPTDIR + "tools/blogs_toscrape.txt"
         archives_toload = SCRIPTDIR +  "tools/1280_files_list.txt"
@@ -115,13 +119,6 @@ def main():
         # db_handler.populate_db_with_archives(temp_database, archives_toload)
         print(BColors.BLUEOK + BColors.OKGREEN + "Done creating blank DB in: " + temp_database.db_filepath + BColors.ENDC)
         return
-
-
-    # === DATABASE ===
-    db = db_handler.Database(config.get('tumblrgator', 'db_path'), \
-                            config.get('tumblrgator', 'username'),
-                            config.get('tumblrgator', 'password'))
-    con = db.connnect()
 
     # === API KEY ===
     # list of APIKey objects
@@ -137,12 +134,37 @@ def main():
 
     # Associate api_key to each proxy in fresh list
     definitive_proxy_list = gen_list_of_proxies_with_api_keys(fresh_proxy_dict, api_keys)
-    print(definitive_proxy_list)
+    definitive_proxy_cycle = cycle(definitive_proxy_list)
+    # print(definitive_proxy_list)
 
+    # === DATABASE ===
+    db = db_handler.Database(db_filepath=config.get('tumblrgator', 'db_filepath'), \
+                            username=config.get('tumblrgator', 'username'),
+                            password=config.get('tumblrgator', 'password'))
+    con = db.connect()
 
     # === BLOG ===
-    # blog = fetch_random_blog(db)
-    # ping_test_blog(blog)
+    blog_object_queue = queue.Queue()
+
+
+    for i in range(0, THREADS):
+        blog = fetch_random_blog(db)
+        blog.proxy_object = next(definitive_proxy_cycle)
+        blog_object_queue.put(blog)
+
+        # ping_test_blog(blog_object_queue[i])
+
+
+    
+    # blog_testing_queue.put(TumblrBlog('videogame-fantasy'))
+    # definitive_proxy_list[0]
+    # blog_object_queue.put(TumblrBlog()) #FIXME: hardcoded index for testing
+
+
+    # === Start async procedures here === 
+
+
+
 
     # fetch first blog in DB that is unchecked
     # - fetch info from API about health
@@ -157,8 +179,12 @@ def main():
 
 
 
+def Requester(url, proxy):
+    """ Does a request """
+
+
 def gen_list_of_proxies_with_api_keys(fresh_proxy_dict, api_keys):
-    """Returns list of proxies with their api key and secret key"""
+    """Returns list of proxy objects, with their api key and secret key populated"""
     newlist = list()
     for ip, ua in fresh_proxy_dict.items():
         random_apik = get_random(api_keys)
@@ -243,10 +269,13 @@ class APIKey:
     #TODO: stub
 
 
-def fetch_random_blog(blog):
-    """Queries DB for a blog that is either new or needs update"""
-
-    blog.name, blog.total_posts, blog.health, blog.crawl_status, blog.post_scraped, blog.offset  = db_query_for_blog()
+def fetch_random_blog(database):
+    """Queries DB for a blog that is either new or needs update. 
+    Returns a TumblrBlog() object instance with no proxy attached to it."""
+    blog = TumblrBlog()
+    blog.name, blog.total_posts, blog.health, \
+    blog.crawl_status, blog.post_scraped, \
+    blog.offset, blog.last_checked = db_handler.fetch_random_blog(database)
     return blog
 
 
@@ -260,6 +289,8 @@ class TumblrBlog:
         self.offset = 0
         self.health = None
         self.crawl_status = None
+        self.last_checked = None
+        self.proxy_object = None
 
 
 class Proxy:
@@ -284,7 +315,8 @@ def get_without_proxies():
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        logging.debug("Error in main():" + str(e))
+    main()
+    # try:
+    #     main()
+    # except Exception as e:
+    #     logging.debug("Error in main():" + str(e))

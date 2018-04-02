@@ -19,15 +19,18 @@ class Database():
     
     def __init__(self, *args, **kwargs):
         """initialize with environment"""
-        self.db_host = kwargs.get('db_host') #not implemented
-        self.db_filepath = kwargs.get('filepath', SCRIPTDIR + "blank_db.fdb")
+        self.host = kwargs.get('db_host', 'localhost') #not implemented
+        self.db_filepath = kwargs.get('db_filepath', SCRIPTDIR + "blank_db.fdb")
         self.username = kwargs.get('username', "sysdba")
         self.password = kwargs.get('password', "masterkey")
         self.con = None
 
     def connect(self):
         """initialize connection to remote DB"""
-        self.con = fdb.connect(database=str(self.host + self.db_filepath), user=self.username, password=self.password)
+        if self.host == 'localhost':
+            self.con = fdb.connect(database=self.db_filepath, user=self.username, password=self.password)
+        else:
+            self.con = fdb.connect(database=str(self.host + ":" + self.db_filepath), user=self.username, password=self.password)
         return self.con
 
     def close_connection(self):
@@ -211,8 +214,29 @@ def populate_db_with_tables(database):
                                 (:i_post_id, :i_timestamp, :i_context, :i_remote_id );\
             END")
 
-        # con.execute_immediate("CREATE or ALTER PROCEDURE insert_url \
-
+        con.execute_immediate("\
+            CREATE or ALTER PROCEDURE fetch_blogname \
+            RETURNS \
+            ( o_name d_blog_name, \
+            o_offset integer,\
+            o_health varchar(5),\
+            o_status varchar(10),\
+            o_total integer,\
+            o_scraped integer,\
+            o_checked timestamp)\
+            AS \
+            BEGIN\
+            if (exists (select (BLOG_NAME) from BLOGS where (CRAWL_STATUS = 'resume') ROWS 1 )) then begin\
+                select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED\
+                from BLOGS where (CRAWL_STATUS = 'resume') ROWS 1 \
+                into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked;\
+                suspend;\
+                end\
+            if (exists (select (BLOG_NAME) from BLOGS where (CRAWL_STATUS = 'new') ROWS 1 )) then begin\
+                select BLOG_NAME, CRAWL_STATUS from BLOGS where (CRAWL_STATUS = 'new') ROWS 1 into :o_name, :o_status;\
+                suspend;\
+                end\
+            END")
 
         # con.execute_immediate(
             # "CREATE PROCEDURE check_blog_status")
@@ -224,6 +248,7 @@ def populate_db_with_tables(database):
             # if status is null: not initialized, can start -> fetch_blog_info(blog)
             # if status is DONE: all scraped, skip
             # if status is CRAWL: skip
+            # if status is RESUME: fetch offset
             # if total_post > posts_scraped: start crawling at offset
 
 
@@ -267,6 +292,19 @@ def ping_blog_status(blog):
     #     lastupdated, total_posts, wiped if 0 post (or less than 10 posts?)
     # return status
     pass
+
+def fetch_random_blog(database):
+    """ Queries DB for a blog that is available """
+    cur = database.con.cursor()
+    cur.execute("execute procedure fetch_one_blogname;")
+    blog_fields = list()
+    fieldIndices = range(len(cur.description))
+    for row in cur:
+        for fieldIndex in fieldIndices:
+            blog_fields.append(str(row[fieldIndex]))
+    return blog_fields
+        
+
 
 def populate_db_with_archives(database, archivepath):
     """read archive list and populate the OLD_1280 table"""
