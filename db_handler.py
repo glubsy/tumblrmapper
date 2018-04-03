@@ -245,7 +245,8 @@ def populate_db_with_tables(database):
             # THEN retrieve total_posts check: if null, go http test it and update total_posts, if 0 change health to wiped
             # if health is "dead" THEN return dead
             # if health is wiped, keep wiped (but crawl still)
-            # if status is null: not initialized, can start -> fetch_blog_info(blog)
+            
+            # if status is new: not initialized, can start -> fetch_blog_info(blog)
             # if status is DONE: all scraped, skip
             # if status is CRAWL: skip
             # if status is RESUME: fetch offset
