@@ -366,9 +366,6 @@ def create_blank_database(database):
     populate_db_with_tables(database)
 
 
-class UpdatePayload(dict):
-    pass
-
 def test_update_table(database):
     """feed testing data"""
     update = parse_json_response(json.load(open\
@@ -409,50 +406,8 @@ def test_update_table(database):
     t1 = time.time()
     print('Procedures to insert took %.2f ms' % (1000*(t1-t0)))
 
-def parse_json_response(json): #TODO: move to client module when done testing
-    """returns a UpdatePayload() object that holds the fields to update in DB"""
-    t0 = time.time()
-    update = UpdatePayload()
-    update.blogname = json['blog']['name']
-    update.totalposts = json['blog']['total_posts']
-    update.posts_response = json['posts'] #list of dicts
-    update.trimmed_posts_list = [] #list of dicts of posts
 
-    for post in update.posts_response: #dict in list
-        current_post_dict = {}
-        current_post_dict['id'] = post.get('id')
-        current_post_dict['date'] = post.get('date')
-        current_post_dict['updated'] = post.get('updated')
-        current_post_dict['post_url'] = post.get('post_url')
-        current_post_dict['blog_name'] = post.get('blog_name')
-        current_post_dict['timestamp'] = post.get('timestamp')
-        if 'trail' in post.keys() and len(post['trail']) > 0: # trail is not empty, it's a reblog
-            #FIXME: put this in a trail subdictionary
-            current_post_dict['reblogged_blog_name'] = post['trail'][0]['blog']['name']
-            current_post_dict['remote_id'] = int(post['trail'][0]['post']['id'])
-            current_post_dict['remote_content'] = post['trail'][0]['content_raw'].replace('\n', '')
-        else: #trail is an empty list
-            current_post_dict['reblogged_blog_name'] = None
-            current_post_dict['remote_id'] = None
-            current_post_dict['remote_content'] = None
-            pass
-        current_post_dict['photos'] = []
-        if 'photos' in post.keys():
-            for item in range(0, len(post['photos'])):
-                current_post_dict['photos'].append(post['photos'][item]['original_size']['url'])
 
-        update.trimmed_posts_list.append(current_post_dict)
-
-    t1 = time.time()
-    print('Building list of posts took %.2f ms' % (1000*(t1-t0)))
-
-#     for post in update.trimmed_posts_list:
-#         print("===============================\n\
-# POST number: " + str(update.trimmed_posts_list.index(post)))
-#         for key, value in post.items():
-#             print("key: " + str(key) + "\nvalue: " + str(value) + "\n--")
-
-    return update
 
 
 if __name__ == "__main__":

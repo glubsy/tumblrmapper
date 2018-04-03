@@ -19,6 +19,7 @@ import tumblr_client
 import tumdlr_classes
 import tumblr_client
 import db_handler
+from concurrent import futures
 
 from rate_limiter import RateLimiter
 # try:
@@ -128,14 +129,13 @@ def main():
     # Get proxies from free proxies site
     scanner = proxies.ProxyScanner()
     # fresh_proxy_dict = scanner.get_proxies()
-    fresh_proxy_dict = {'96.220.96.35': 'Mozilla/5.0 (Windows NT 6.2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/28.0.1464.0 Safari/537.36',
-                        '104.236.175.94': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17',
-                        '89.236.17.108': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1985.67 Safari/537.36' }
+    # print(fresh_proxy_dict)
+    fresh_proxy_dict = {'92.53.73.138:8118': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.124 Safari/537.36', '122.183.139.104:8080': 'Mozilla/5.0 (Windows NT 4.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', '122.183.243.68:8080': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', '119.42.87.147:3128': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/29.0.1547.62 Safari/537.36', '103.74.245.12:65301': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/30.0.1599.17 Safari/537.36', '143.202.208.133:53281': 'Mozilla/5.0 (Windows NT 6.4; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2225.0 Safari/537.36', '192.116.142.153:8080': 'Mozilla/5.0 (Windows NT 6.1;WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', '80.211.4.187:8080': 'Mozilla/5.0 (X11; CrOS i686 4319.74.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/29.0.1547.57 Safari/537.36', '59.106.215.9:3128': 'Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:25.0) Gecko/20100101 Firefox/29.0', '5.35.2.235:3128': 'Opera/9.80 (X11; Linux i686; U; ja) Presto/2.7.62 Version/11.01', '122.183.137.190:8080': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:21.0) Gecko/20130401 Firefox/21.0', '42.104.84.106:8080':'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', '128.68.87.239:8080': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.124 Safari/537.36', '41.190.33.162:8080': 'Mozilla/5.0 (Windows NT 4.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', '212.237.34.18:8888': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36'}
 
     # Associate api_key to each proxy in fresh list
     definitive_proxy_list = gen_list_of_proxies_with_api_keys(fresh_proxy_dict, api_keys)
     definitive_proxy_cycle = cycle(definitive_proxy_list)
-    # print(definitive_proxy_list)
+    print(definitive_proxy_list)
 
     # === DATABASE ===
     db = db_handler.Database(db_filepath=config.get('tumblrgator', 'db_filepath'), \
@@ -145,17 +145,27 @@ def main():
 
     # === BLOG ===
     blog_object_queue = queue.Queue()
-
-
+    blog_object_list = list()
+    # == Fetch 10 available blogs from DB ==
     for i in range(0, THREADS):
         blog = fetch_random_blog(db)
+        # attach a proxy 
         blog.proxy_object = next(definitive_proxy_cycle)
-        blog_object_queue.put(blog)
+        print(blog.proxy_object)
+        # # put in a queue
+        # blog_object_queue.put(blog)
+        # # fetch from queue one
+        # current_blog = blog_object_queue.get()
+        # spawn one TEST Process 
+        request = Request()
 
-        # ping_test_blog(blog_object_queue[i])
+        blog.init_session()
+        blog_object_list.append(blog)
+
+        with futures.ThreadPoolExecutor(THREADS) as executor:
+            info_jobs = [executor.submit(request.api_get_blog_health, blog) for blog in blog_object_list]
 
 
-    
     # blog_testing_queue.put(TumblrBlog('videogame-fantasy'))
     # definitive_proxy_list[0]
     # blog_object_queue.put(TumblrBlog()) #FIXME: hardcoded index for testing
@@ -163,6 +173,15 @@ def main():
 
     # === Start async procedures here === 
 
+    # When prerequisite is completed
+    with futures.ThreadPoolExecutor(THREADS) as executor:
+        jobs = [executor.submit(get_posts, blog) for blog in blogs] #"blog" is an iterable of single arguments
+        if keyboard_interrupt:
+            for job in jobs:
+                jobs.cancel()
+        for comp_job in futures.as_completed(jobs):
+            response = comp_job.result()
+            executor.submit(insert_into_db, response)
 
 
 
@@ -178,9 +197,42 @@ def main():
 
 
 
+class Request:
+    """Processus fetching a Blog and writing to a DB with a Connection, with an optional Proxy"""
 
-def Requester(url, proxy):
-    """ Does a request """
+    def __init__(self):
+        self.request_session = None
+
+
+    def requester(self, url, proxy_object, request_session=None):
+        """ Does a request, returns json """
+        # url = 'https://httpbin.org/get'
+        print("Requesting with proxy:", proxy_object.ip_address)
+        if not request_session:
+            request_session = requests.Session()
+            request_session.headers.update({'User-Agent': proxy_object.user_agent})
+        self.request_session = request_session
+        response = request_session.get(url, proxies={"http": proxy_object.ip_address, "https": proxy_object.ip_address}, timeout=15)
+
+        if response.status_code == 200:
+            json_data = response.json()
+            print("200 JSON:", json_data)
+            return json_data
+        return None
+
+
+    def api_get_blog_health(self, blog):
+        attempt = 0
+        apiv2_url = 'https://api.tumblr.com/v2/blog/{0}/info'format(blog.name)
+        # renew proxy 4 times if it fails
+        while attempt < 4: 
+            try: 
+                json_response = self.requester(apiv2_url, blog.proxy_object)
+            except requests.exceptions.ProxyError as e:
+                blog.proxy_object = next(definitive_proxy_cycle)
+                print("Object:", blog.proxy_object)
+                continue
+
 
 
 def gen_list_of_proxies_with_api_keys(fresh_proxy_dict, api_keys):
@@ -291,7 +343,14 @@ class TumblrBlog:
         self.crawl_status = None
         self.last_checked = None
         self.proxy_object = None
-
+        self.requests_session = None
+    
+    def init_session(self, requests_session=None): #FIXME: 
+        if not self.requests_session:
+            requests_session = requests.Session()
+            requests_session.headers.update({'User-Agent': self.user_agent})
+            requests_session.proxies.update(self.proxy_object.ip_address)
+        self.requests_session = requests_session
 
 class Proxy:
     """holds values to pass to proxy"""
@@ -302,8 +361,6 @@ class Proxy:
         self.api_key = api_key
         self.secret_key = secret_key
 
-class Process:
-    """Processus fetching a Blog and writing to a DB with a Connection, with an optional Proxy"""
 
 
 def get_with_proxies():
