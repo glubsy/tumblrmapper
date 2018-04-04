@@ -9,6 +9,7 @@ from pprint import pprint
 from constants import BColors
 import traceback
 import csv
+import tumblr_client
 # import logging
 from operator import itemgetter
 SCRIPTDIR = os.path.dirname(__file__) + os.sep
@@ -62,7 +63,7 @@ def populate_db_with_tables(database):
         con.execute_immediate("CREATE DOMAIN D_POSTURL AS VARCHAR(300);")
         con.execute_immediate("CREATE DOMAIN D_AUTO_ID AS smallint;")
         con.execute_immediate("CREATE DOMAIN D_BLOG_NAME AS VARCHAR(60);")
-        con.execute_immediate("CREATE DOMAIN D_EPOCH AS integer;")
+        con.execute_immediate("CREATE DOMAIN D_EPOCH AS BIGINT;")
         con.execute_immediate("CREATE DOMAIN D_POST_NO AS BIGINT;")
         con.execute_immediate("CREATE DOMAIN D_SUPER_LONG_TEXT AS VARCHAR(32765)")
         con.execute_immediate("CREATE DOMAIN D_BOOLEAN AS smallint default 0 \
@@ -249,17 +250,31 @@ def populate_db_with_tables(database):
                 end\
             END")
 
+        # Update info fetched from API
+        # args:  (blogname, health(UP,DEAD,WIPED), totalposts, updated_timestamp, status(resume, dead) )
         con.execute_immediate("\
-            CREATE PROCEDURE insert_blog_init_info (\
-                update HEALTH (and info)
-                update posts, total, updated 
-                update LAST_CHECKED now()
-                update CRAWLING and CRAWL_STATUS to 0 if dead
-            
+            CREATE OR ALTER PROCEDURE insert_blog_init_info (\
+                i_name D_BLOG_NAME,\
+                i_health varchar(5),\
+                i_total integer, \
+                i_updated d_epoch,\
+                i_status varchar(10) default null,\
+                i_crawling d_boolean default 0)\
+                AS declare variable v_checked d_epoch;\
+                BEGIN\
+                select DATEDIFF(second FROM timestamp '1/1/1970 00:00:00' TO current_timestamp)\
+            from rdb$database into :v_checked;\
+                update BLOGS set \
+                HEALTH = :i_health, \
+                TOTAL_POSTS = :i_total, \
+                CRAWL_STATUS = :i_status, \
+                CRAWLING = :i_crawling, \
+                LAST_UPDATED = :i_updated,\
+                LAST_CHECKED = :v_checked\
+                where BLOG_NAME = :i_name;\
+            END")
 
 
-
-            
         # called when quitting script, or done scaping total_posts
         con.execute_immediate("\
             CREATE PROCEDURE update_crawling_blog_status(\
@@ -308,7 +323,7 @@ def populate_db_with_tables(database):
         # );")
 
 
-def update_blog_status(database, dictionary):
+def update_blog_info(database, dictionary):
     """updates blog name in blogs table with values from dictionary"""
     # if dictionary.getitems('health') is OK
     #     stmt = cur.prep("execute procedure update_blog_status(?)")
@@ -367,7 +382,7 @@ def populate_db_with_archives(database, archivepath):
     print('Inserting records into OLD_1280 Took %.2f ms' % (1000*(t1-t0)))
 
 
-def populate_db_with_blogs(database, blogspath):
+def populate_db_with_blogs(database, blogpath):
     """read csv list or blog, priority and insert them into BLOGS table """
     con = fdb.connect(database=database.db_filepath, user=database.username, password=database.password)
     cur = con.cursor()
@@ -419,7 +434,7 @@ def create_blank_database(database):
 
 def test_update_table(database):
     """feed testing data"""
-    update = parse_json_response(json.load(open\
+    update = tumblr_client.parse_json_response(json.load(open\
     (SCRIPTDIR + "/tools/test/videogame-fantasy_july_reblogfalse_dupe.json", 'r'))['response'])
     con = fdb.connect(database=database.db_filepath, user=database.username, password=database.password)
     cur = con.cursor()
@@ -467,7 +482,7 @@ if __name__ == "__main__":
     database = Database(filepath="/home/nupupun/test/tumblrgator_test.fdb", username="sysdba", password="masterkey")
 
     create_blank_database(database)
-    populate_db_with_blogs(temp_database, blogs_toscrape)
+    populate_db_with_blogs(database, blogs_toscrape)
     # Optional archives too
-    populate_db_with_archives(temp_database, archives_toload)
+    # populate_db_with_archives(database, archives_toload)
     test_update_table(database)

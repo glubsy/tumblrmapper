@@ -4,7 +4,6 @@ import sys
 import argparse
 import signal
 import time
-import random
 import logging
 import configparser
 import requests
@@ -14,7 +13,7 @@ import queue
 import csv
 from itertools import cycle
 from constants import BColors
-import proxies, db_handler
+import proxies, db_handler 
 import tumblr_client
 import tumdlr_classes
 import tumblr_client
@@ -29,7 +28,7 @@ from rate_limiter import RateLimiter
 #     TQDM_AVAILABLE = False
 SCRIPTDIR = os.path.dirname(__file__) + os.sep
 THREADS = 10
-global_proxy_cycle = None
+proxy_scanner = None
 
 def parse_args():
     """Parse command-line arguments."""
@@ -128,17 +127,17 @@ def main():
 
     # === PROXIES ===
     # Get proxies from free proxies site
-    scanner = proxies.ProxyScanner()
-    # fresh_proxy_dict = scanner.get_proxies()
+    global proxy_scanner
+    proxy_scanner = proxies.ProxyScanner()
+    # fresh_proxy_dict = proxy_scanner.get_proxies()
     # print(fresh_proxy_dict)
+
     # fresh_proxy_dict = {'92.53.73.138:8118': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.124 Safari/537.36', '122.183.139.104:8080': 'Mozilla/5.0 (Windows NT 4.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', '122.183.243.68:8080': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', '119.42.87.147:3128': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/29.0.1547.62 Safari/537.36', '103.74.245.12:65301': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/30.0.1599.17 Safari/537.36', '143.202.208.133:53281': 'Mozilla/5.0 (Windows NT 6.4; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2225.0 Safari/537.36', '192.116.142.153:8080': 'Mozilla/5.0 (Windows NT 6.1;WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', '80.211.4.187:8080': 'Mozilla/5.0 (X11; CrOS i686 4319.74.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/29.0.1547.57 Safari/537.36', '59.106.215.9:3128': 'Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:25.0) Gecko/20100101 Firefox/29.0', '5.35.2.235:3128': 'Opera/9.80 (X11; Linux i686; U; ja) Presto/2.7.62 Version/11.01', '122.183.137.190:8080': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:21.0) Gecko/20130401 Firefox/21.0', '42.104.84.106:8080':'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', '128.68.87.239:8080': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.124 Safari/537.36', '41.190.33.162:8080': 'Mozilla/5.0 (Windows NT 4.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', '212.237.34.18:8888': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36'}
     fresh_proxy_dict = {'5.53.73.138:8118': '10_10_1) AppleWebKit/537.36 (KHTML, like Ge', '92.53.73.138:8118': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.124 S'}
 
     # Associate api_key to each proxy in fresh list
-    definitive_proxy_list = gen_list_of_proxies_with_api_keys(fresh_proxy_dict, api_keys)
-    global global_proxy_cycle
-    global_proxy_cycle = cycle(definitive_proxy_list)
-    # print(definitive_proxy_list)
+    proxy_scanner.gen_list_of_proxies_with_api_keys(fresh_proxy_dict, api_keys)
+    proxy_scanner.gen_proxy_cycle()
 
     # === DATABASE ===
     db = db_handler.Database(db_filepath=config.get('tumblrgator', 'db_filepath'), \
@@ -153,7 +152,7 @@ def main():
     for i in range(0, THREADS):
         blog = fetch_random_blog(db)
         # attach a proxy 
-        blog.proxy_object = next(global_proxy_cycle)
+        blog.proxy_object = next(proxy_scanner.definitive_proxy_cycle)
         # print("current blog's proxy object: " + blog.proxy_object)
         
         # # put in a queue
@@ -257,16 +256,17 @@ class TumblrBlog:
         apiv2_url = 'https://api.tumblr.com/v2/blog/{0}/info'.format(self.name)
         print("getting api health: " + apiv2_url)
         # renew proxy 4 times if it fails
+        global proxy_scanner
         while attempt < 1:
             try: 
                 response = self.requester(apiv2_url, self.requests_session)
             except requests.exceptions.ProxyError as e:
-                self.proxy_object= get_new_proxy(self.proxy_object)
+                self.proxy_object = proxy_scanner.get_new_proxy(self.proxy_object)
                 print("ProxyError! Changing proxy in get health to:", self.proxy_object.ip_address)
                 attempt += 1
                 continue
             except requests.exceptions.Timeout as e:
-                self.proxy_object = get_new_proxy(self.proxy_object)
+                self.proxy_object = proxy_scanner.get_new_proxy(self.proxy_object)
                 print("Timeout! Changing proxy in get health to:", self.proxy_object.ip_address)
                 attempt += 1
                 continue
@@ -274,30 +274,12 @@ class TumblrBlog:
         return None
 
 
-def get_new_proxy(old_proxy): #TODO: move this to the wallet, to pop out the bad proxy
-    remove_bad_proxy(old_proxy)
-    global global_proxy_cycle
-    return next(global_proxy_cycle)
-
-def remove_bad_proxy(proxy):
-    print("DEBUG: removing old proxy " + str(proxy))
 
 
-def gen_list_of_proxies_with_api_keys(fresh_proxy_dict, api_keys):
-    """Returns list of proxy objects, with their api key and secret key populated"""
-    newlist = list()
-    for ip, ua in fresh_proxy_dict.items():
-        random_apik = get_random(api_keys)
-        key, secret = random_apik.api_key, random_apik.secret_key
-        newlist.append(Proxy(ip, ua, key, secret))
-    return newlist
-
-def get_random(mylist):
-    """returns a random item from list"""
-    return random.choice(mylist)
 
 
-class ProxyGenerator(): #FIXME: delete?
+#FIXME: delete?
+class ProxyGenerator():
     """Yields the next proxy in the list"""
     def init(self, proxylist):
         self._complete_proxy_list = proxylist

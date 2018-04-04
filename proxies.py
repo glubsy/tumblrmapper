@@ -4,10 +4,12 @@ from queue import Queue
 from lxml.html import fromstring
 import requests
 # import json
+import random
 from itertools import cycle
 import traceback
 from fake_useragent import UserAgent, errors
 from constants import BColors 
+import tumblrgator
 
 try:
     ua = UserAgent() # init database, retrieves UAs
@@ -22,7 +24,38 @@ class ProxyScanner():
         self.http_proxies_set = set()
         self.proxy_ua_dict = {}
         self.print_lock = threading.Lock()
-    
+        self.definitive_proxy_list = None
+        self.definitive_proxy_cycle = None
+
+
+    def get_new_proxy(self, old_proxy): #TODO: move this to the wallet, to pop out the bad proxy
+        self.remove_bad_proxy(old_proxy)
+        return next(self.definitive_proxy_cycle)
+
+
+    def remove_bad_proxy(self, proxy):
+        print("STUB: removing old proxy " + str(proxy))
+
+
+    def gen_proxy_cycle(self):
+        self.definitive_proxy_cycle = cycle(self.definitive_proxy_list)
+        return self.definitive_proxy_cycle
+
+    def get_random(self, mylist):
+        """returns a random item from list"""
+        return random.choice(mylist)
+
+    def gen_list_of_proxies_with_api_keys(self, fresh_proxy_dict, api_keys):
+        """Returns list of proxy objects, with their api key and secret key populated"""
+        newlist = list()
+        for ip, ua in fresh_proxy_dict.items():
+            random_apik = self.get_random(api_keys)
+            key, secret = random_apik.api_key, random_apik.secret_key
+            newlist.append(tumblrgator.Proxy(ip, ua, key, secret))
+        self.definitive_proxy_list = newlist
+        return self.definitive_proxy_list #FIXME: remove?
+
+
     def get_proxies(self):
         """Returns a dict of validated IP:UA
         returns None if fetching free list failed"""
