@@ -8,6 +8,7 @@ import json
 from pprint import pprint
 from constants import BColors
 import traceback
+import csv
 # import logging
 from operator import itemgetter
 SCRIPTDIR = os.path.dirname(__file__) + os.sep
@@ -61,9 +62,10 @@ def populate_db_with_tables(database):
         con.execute_immediate("CREATE DOMAIN D_POSTURL AS VARCHAR(300);")
         con.execute_immediate("CREATE DOMAIN D_AUTO_ID AS smallint;")
         con.execute_immediate("CREATE DOMAIN D_BLOG_NAME AS VARCHAR(60);")
+        con.execute_immediate("CREATE DOMAIN D_EPOCH AS integer;")
         con.execute_immediate("CREATE DOMAIN D_POST_NO AS BIGINT;")
         con.execute_immediate("CREATE DOMAIN D_SUPER_LONG_TEXT AS VARCHAR(32765)")
-        con.execute_immediate("CREATE DOMAIN D_BOOLEAN AS smallint \
+        con.execute_immediate("CREATE DOMAIN D_BOOLEAN AS smallint default 0 \
                                CHECK (VALUE IS NULL OR VALUE IN (0, 1));")
 
         # Create tables with columns
@@ -74,9 +76,12 @@ def populate_db_with_tables(database):
             HEALTH          varchar(5),\
             TOTAL_POSTS     INTEGER,\
             CRAWL_STATUS    varchar(10) DEFAULT 'new',\
+            CRAWLING        D_BOOLEAN default 0,\
             POST_OFFSET     INTEGER,\
             POSTS_SCRAPED   INTEGER,\
             LAST_CHECKED    TIMESTAMP, \
+            LAST_UPDATE     D_EPOCH,\
+            PRIORITY        smallint,\
             CONSTRAINT blognames_unique UNIQUE (BLOG_NAME) using index ix_blognames\
             );")
             # HEALTH:  
@@ -106,7 +111,7 @@ def populate_db_with_tables(database):
             "CREATE TABLE CONTEXTS ( \
             POST_ID         D_POST_NO,\
             REMOTE_ID       D_POST_NO UNIQUE, \
-            TTIMESTAMP      integer, \
+            TTIMESTAMP      D_EPOCH, \
             CONTEXT         D_SUPER_LONG_TEXT, \
             LATEST_REBLOG   D_POST_NO,\
             PRIMARY KEY(POST_ID),\
@@ -147,11 +152,11 @@ def populate_db_with_tables(database):
         # decrements auto_id in case an exception occured (on non unique inputs)
         con.execute_immediate(  
             "CREATE OR ALTER PROCEDURE insert_blogname \
-            ( i_blogname d_blog_name ) \
+            ( i_blogname d_blog_name, i_prio smallint default null ) \
             AS declare variable v_generated_auto_id d_auto_id;\
             BEGIN \
             v_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence, 1);\
-            INSERT into BLOGS (AUTO_ID, BLOG_NAME) values (:v_generated_auto_id, :i_blogname);\
+            INSERT into BLOGS (AUTO_ID, BLOG_NAME, PRIORITY) values (:v_generated_auto_id, :i_blogname, :i_prio);\
             WHEN ANY \
             DO \
             v_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence, -1);\
@@ -215,28 +220,58 @@ def populate_db_with_tables(database):
             END")
 
         con.execute_immediate("\
-            CREATE or ALTER PROCEDURE fetch_blogname \
-            RETURNS \
-            ( o_name d_blog_name, \
-            o_offset integer,\
-            o_health varchar(5),\
-            o_status varchar(10),\
-            o_total integer,\
-            o_scraped integer,\
-            o_checked timestamp)\
-            AS \
+            CREATE OR ALTER PROCEDURE FETCH_ONE_BLOGNAME\
+            RETURNS (\
+                O_NAME D_BLOG_NAME,\
+                O_OFFSET INTEGER,\
+                O_HEALTH VARCHAR(5),\
+                O_STATUS VARCHAR(10),\
+                O_TOTAL INTEGER,\
+                O_SCRAPED INTEGER,\
+                O_CHECKED TIMESTAMP )\
+            AS\
             BEGIN\
-            if (exists (select (BLOG_NAME) from BLOGS where (CRAWL_STATUS = 'resume') ROWS 1 )) then begin\
+            if (exists (select (BLOG_NAME) from BLOGS where ((CRAWL_STATUS = 'resume') and (CRAWLING != 1)))) then begin\
+                for \
                 select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED\
-                from BLOGS where (CRAWL_STATUS = 'resume') ROWS 1 \
-                into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked;\
+                from BLOGS where ((CRAWL_STATUS = 'resume') and (CRAWLING != 1)) order by PRIORITY desc nulls last ROWS 1\
+                into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked \
+                as cursor cur do\
+                    update BLOGS set CRAWLING = 1 where current of cur;\
                 suspend;\
                 end\
-            if (exists (select (BLOG_NAME) from BLOGS where (CRAWL_STATUS = 'new') ROWS 1 )) then begin\
-                select BLOG_NAME, CRAWL_STATUS from BLOGS where (CRAWL_STATUS = 'new') ROWS 1 into :o_name, :o_status;\
+            else\
+            if (exists (select (BLOG_NAME) from BLOGS where (CRAWL_STATUS = 'new'))) then begin\
+                for select BLOG_NAME, CRAWL_STATUS from BLOGS where (CRAWL_STATUS = 'new') \
+                    order by PRIORITY desc nulls last ROWS 1 into :o_name, :o_status as cursor tcur do\
+                    update BLOGS set CRAWL_STATUS = 'fetched' where current of tcur;\
                 suspend;\
                 end\
             END")
+
+        con.execute_immediate("\
+            CREATE PROCEDURE insert_blog_init_info (\
+                update HEALTH (and info)
+                update posts, total, updated 
+                update LAST_CHECKED now()
+                update CRAWLING and CRAWL_STATUS to 0 if dead
+            
+
+
+
+            
+        # called when quitting script, or done scaping total_posts
+        con.execute_immediate("\
+            CREATE PROCEDURE update_crawling_blog_status(\
+                i_name d_blog_nname, i_input d_boolean) AS BEGIN\
+                update BLOGS set (CRAWLING = 0) where (BLOG_NAME = i_name); END")
+
+
+        con.execute_immediate("\
+            CREATE PROCEDURE reset_all_crawling AS BEGIN\
+                update BLOGS set CRAWLING 0; END")\
+
+            #reset column CRAWLING on script startup in case we halted without cleaning
 
         # con.execute_immediate(
             # "CREATE PROCEDURE check_blog_status")
@@ -245,10 +280,10 @@ def populate_db_with_tables(database):
             # THEN retrieve total_posts check: if null, go http test it and update total_posts, if 0 change health to wiped
             # if health is "dead" THEN return dead
             # if health is wiped, keep wiped (but crawl still)
-            
+
             # if status is new: not initialized, can start -> fetch_blog_info(blog)
             # if status is DONE: all scraped, skip
-            # if status is CRAWL: skip
+            # if status is CRAWLING: skip
             # if status is RESUME: fetch offset
             # if total_post > posts_scraped: start crawling at offset
 
@@ -333,15 +368,16 @@ def populate_db_with_archives(database, archivepath):
 
 
 def populate_db_with_blogs(database, blogspath):
-    """read archive list and populate the OLD_1280 table"""
+    """read csv list or blog, priority and insert them into BLOGS table """
     con = fdb.connect(database=database.db_filepath, user=database.username, password=database.password)
     cur = con.cursor()
     data = readlines(blogspath)
     t0 = time.time()
     with fdb.TransactionContext(con):
         insert_statement = cur.prep("execute procedure insert_blogname(?)")
-        for item in data.splitlines():
-            params = (item,) # this is shit
+
+        for blog, priority in read_csv_bloglist(blogpath):
+            params = (blog, priority) # trim space on item first!
             try:
                 cur.execute(insert_statement, params)
             except fdb.fbcore.DatabaseError as e:
@@ -352,6 +388,20 @@ def populate_db_with_blogs(database, blogspath):
     t1 = time.time()
     print('Inserting records into BLOGS Took %.2f ms' % (1000*(t1-t0)))
 
+
+def read_csv_bloglist(blogpath):
+    """yields a tuple of blog, prio
+    prio is None if there is no comma"""
+
+    with open(blogpath, 'r') as f:
+        reader = csv.reader(f, delimiter=',')
+        for row in reader:
+            priority = None
+            blog = row[0]
+            if len(row) > 1:
+                priority = row[-1]
+                
+            yield (blog, priority)
 
 def readlines(filepath):
     """read a newline separated file list"""
