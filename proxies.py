@@ -9,7 +9,7 @@ from itertools import cycle
 import traceback
 from fake_useragent import UserAgent, errors
 from constants import BColors 
-import tumblrgator
+import tumblrmapper
 
 try:
     ua = UserAgent() # init database, retrieves UAs
@@ -51,7 +51,7 @@ class ProxyScanner():
         for ip, ua in fresh_proxy_dict.items():
             random_apik = self.get_random(api_keys)
             key, secret = random_apik.api_key, random_apik.secret_key
-            newlist.append(tumblrgator.Proxy(ip, ua, key, secret))
+            newlist.append(tumblrmapper.Proxy(ip, ua, key, secret))
         self.definitive_proxy_list = newlist
         return self.definitive_proxy_list #FIXME: remove?
 

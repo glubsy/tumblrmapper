@@ -269,7 +269,7 @@ def populate_db_with_tables(database):
                 TOTAL_POSTS = :i_total, \
                 CRAWL_STATUS = :i_status, \
                 CRAWLING = :i_crawling, \
-                LAST_UPDATED = :i_updated,\
+                LAST_UPDATE = :i_updated,\
                 LAST_CHECKED = :v_checked\
                 where BLOG_NAME = :i_name;\
             END")
@@ -277,14 +277,14 @@ def populate_db_with_tables(database):
 
         # called when quitting script, or done scaping total_posts
         con.execute_immediate("\
-            CREATE PROCEDURE update_crawling_blog_status(\
-                i_name d_blog_nname, i_input d_boolean) AS BEGIN\
-                update BLOGS set (CRAWLING = 0) where (BLOG_NAME = i_name); END")
+            CREATE OR ALTER PROCEDURE update_crawling_blog_status (\
+                i_name d_blog_name, i_input d_boolean) AS BEGIN\
+                update BLOGS set CRAWLING = 0 where BLOG_NAME = :i_name; END")
 
 
         con.execute_immediate("\
             CREATE PROCEDURE reset_all_crawling AS BEGIN\
-                update BLOGS set CRAWLING 0; END")\
+                update BLOGS set CRAWLING = 0; END")\
 
             #reset column CRAWLING on script startup in case we halted without cleaning
 
@@ -328,7 +328,11 @@ def update_blog_info(database, dictionary):
     # if dictionary.getitems('health') is OK
     #     stmt = cur.prep("execute procedure update_blog_status(?)")
     #     con.execute(stmt, )
-    pass
+    cur = database.con.cursor()
+    # args: (blogname, UP|DEAD|WIPED, totalposts, updated, crawl_status(resume|dead))
+    params = dictionary
+    cur.execute(cur.prep('execute procedure insert_blog_init_info(?, ?, ?, ?, ?)'), params)
+    return
 
 def fetch_blog_status(database):
     """retrieves info about blog status in Database"""
@@ -386,18 +390,17 @@ def populate_db_with_blogs(database, blogpath):
     """read csv list or blog, priority and insert them into BLOGS table """
     con = fdb.connect(database=database.db_filepath, user=database.username, password=database.password)
     cur = con.cursor()
-    data = readlines(blogspath)
     t0 = time.time()
     with fdb.TransactionContext(con):
         insert_statement = cur.prep("execute procedure insert_blogname(?)")
 
         for blog, priority in read_csv_bloglist(blogpath):
-            params = (blog, priority) # trim space on item first!
+            params = (blog.rstrip() , priority)
             try:
                 cur.execute(insert_statement, params)
             except fdb.fbcore.DatabaseError as e:
                 if "violation of PRIMARY or UNIQUE KEY" in e.__str__():
-                    print("Error when inserting blog: " + item + " is already recorded.")
+                    print("Error when inserting blog: " + blog + " is already recorded.")
         con.commit()
 
     t1 = time.time()
@@ -477,9 +480,9 @@ def test_update_table(database):
 
 
 if __name__ == "__main__":
-    blogs_toscrape = SCRIPTDIR + "tools/blogs_toscrape.txt"
+    blogs_toscrape = SCRIPTDIR + "tools/blogs_toscrape_test.txt"
     archives_toload = SCRIPTDIR +  "tools/1280_files_list.txt"
-    database = Database(filepath="/home/nupupun/test/tumblrgator_test.fdb", username="sysdba", password="masterkey")
+    database = Database(filepath="/home/firebird/tumblrmapper_test.fdb", username="sysdba", password="masterkey")
 
     create_blank_database(database)
     populate_db_with_blogs(database, blogs_toscrape)
