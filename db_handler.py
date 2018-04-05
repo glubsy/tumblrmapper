@@ -323,14 +323,15 @@ def populate_db_with_tables(database):
         # );")
 
 
-def update_blog_info(database, dictionary):
+def update_blog_info(database, update):
     """updates blog name in blogs table with values from dictionary"""
     # if dictionary.getitems('health') is OK
     #     stmt = cur.prep("execute procedure update_blog_status(?)")
     #     con.execute(stmt, )
+    print(BColors.OKBLUE + "updating Blogs table wiht info:" + update + BColors.ENDC)
     cur = database.con.cursor()
-    # args: (blogname, UP|DEAD|WIPED, totalposts, updated, crawl_status(resume|dead))
-    params = dictionary
+    # args: (blogname, UP|DEAD|WIPED, total_posts, updated, crawl_status(resume|dead))
+    params = (update.name, update.health, update.total_posts, update.updated)
     cur.execute(cur.prep('execute procedure insert_blog_init_info(?, ?, ?, ?, ?)'), params)
     return
 

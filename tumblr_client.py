@@ -3,10 +3,12 @@ from builtins import object
 import urllib.parse
 import requests
 import sys
+import time
 PY3 = sys.version_info[0] == 3
 from requests_oauthlib import OAuth1
 from requests.exceptions import TooManyRedirects, HTTPError
 from functools import wraps
+from constants import BColors
 
 def validate_params(valid_options, params):
     """
@@ -211,44 +213,58 @@ class TumblrRestClient(object):
 
 
 class UpdatePayload(dict):
+    """ Container dictionary holding values from json to pass along """
     pass
 
-def parse_json_response(json): #TODO: move to client module when done testing
+def parse_json_response(json):
     """returns a UpdatePayload() object that holds the fields to update in DB"""
     t0 = time.time()
+    print(BColors.FAIL + "PARSING JSON:" + json + BColors.ENDC)
     update = UpdatePayload()
+    
+    if not 200 <= json['meta']['status'] <= 399:
+        update.errors = json['errors']
+        return update
+
+    if not json['response'] and "errors" in json.keys():
+        update.errors = json['errors']
+        return update
+
+    json = json['response']
     update.blogname = json['blog']['name']
-    update.totalposts = json['blog']['total_posts']
-    update.posts_response = json['posts'] #list of dicts
-    update.trimmed_posts_list = [] #list of dicts of posts
+    update.total_posts = json['blog']['total_posts']
+    update.updated = json['blog']['updated']
+    if json['posts']:
+        update.posts_response = json['posts'] #list of dicts
+        update.trimmed_posts_list = [] #list of dicts of posts
 
-    for post in update.posts_response: #dict in list
-        current_post_dict = {}
-        current_post_dict['id'] = post.get('id')
-        current_post_dict['date'] = post.get('date')
-        current_post_dict['updated'] = post.get('updated')
-        current_post_dict['post_url'] = post.get('post_url')
-        current_post_dict['blog_name'] = post.get('blog_name')
-        current_post_dict['timestamp'] = post.get('timestamp')
-        if 'trail' in post.keys() and len(post['trail']) > 0: # trail is not empty, it's a reblog
-            #FIXME: put this in a trail subdictionary
-            current_post_dict['reblogged_blog_name'] = post['trail'][0]['blog']['name']
-            current_post_dict['remote_id'] = int(post['trail'][0]['post']['id'])
-            current_post_dict['remote_content'] = post['trail'][0]['content_raw'].replace('\n', '')
-        else: #trail is an empty list
-            current_post_dict['reblogged_blog_name'] = None
-            current_post_dict['remote_id'] = None
-            current_post_dict['remote_content'] = None
-            pass
-        current_post_dict['photos'] = []
-        if 'photos' in post.keys():
-            for item in range(0, len(post['photos'])):
-                current_post_dict['photos'].append(post['photos'][item]['original_size']['url'])
+        for post in update.posts_response: #dict in list
+            current_post_dict = {}
+            current_post_dict['id'] = post.get('id')
+            current_post_dict['date'] = post.get('date')
+            current_post_dict['updated'] = post.get('updated')
+            current_post_dict['post_url'] = post.get('post_url')
+            current_post_dict['blog_name'] = post.get('blog_name')
+            current_post_dict['timestamp'] = post.get('timestamp')
+            if 'trail' in post.keys() and len(post['trail']) > 0: # trail is not empty, it's a reblog
+                #FIXME: put this in a trail subdictionary
+                current_post_dict['reblogged_blog_name'] = post['trail'][0]['blog']['name']
+                current_post_dict['remote_id'] = int(post['trail'][0]['post']['id'])
+                current_post_dict['remote_content'] = post['trail'][0]['content_raw'].replace('\n', '')
+            else: #trail is an empty list
+                current_post_dict['reblogged_blog_name'] = None
+                current_post_dict['remote_id'] = None
+                current_post_dict['remote_content'] = None
+                pass
+            current_post_dict['photos'] = []
+            if 'photos' in post.keys():
+                for item in range(0, len(post['photos'])):
+                    current_post_dict['photos'].append(post['photos'][item]['original_size']['url'])
 
-        update.trimmed_posts_list.append(current_post_dict)
+            update.trimmed_posts_list.append(current_post_dict)
 
-    t1 = time.time()
-    print('Building list of posts took %.2f ms' % (1000*(t1-t0)))
+        t1 = time.time()
+        print('Building list of posts took %.2f ms' % (1000*(t1-t0)))
 
 #     for post in update.trimmed_posts_list:
 #         print("===============================\n\

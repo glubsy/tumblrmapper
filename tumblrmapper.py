@@ -8,8 +8,8 @@ import logging
 import configparser
 import requests
 import threading
-import queue
-#import json
+import Queue
+import json
 import csv
 from itertools import cycle
 from constants import BColors
@@ -19,6 +19,7 @@ import tumdlr_classes
 import tumblr_client
 import db_handler
 from concurrent import futures
+import instances
 
 from rate_limiter import RateLimiter
 # try:
@@ -28,7 +29,7 @@ from rate_limiter import RateLimiter
 #     TQDM_AVAILABLE = False
 SCRIPTDIR = os.path.dirname(__file__)
 THREADS = 10
-proxy_scanner = None
+
 
 def parse_args():
     """Parse command-line arguments."""
@@ -97,7 +98,6 @@ def parse_config(config_path=SCRIPTDIR, data_path=None):
     return config
 
 
-
 def main():
     """Entry point"""
     # parse command-line arguments
@@ -122,25 +122,24 @@ def main():
         db_handler.populate_db_with_blogs(temp_database, blogs_toscrape)
         # Optional archives too
         # db_handler.populate_db_with_archives(temp_database, archives_toload)
-        print(BColors.BLUEOK + BColors.OKGREEN + "Done creating blank DB in: " + temp_database.db_filepath + BColors.ENDC)
+        print(BColors.BLUEOK + BColors.GREEN + "Done creating blank DB in: " + temp_database.db_filepath + BColors.ENDC)
         return
 
     # === API KEY ===
     # list of APIKey objects
-    api_keys = get_api_key_object_list(SCRIPTDIR + os.sep + config.get('tumblrmapper', 'api_keys'))
+    instances.api_keys = get_api_key_object_list(SCRIPTDIR + os.sep + config.get('tumblrmapper', 'api_keys'))
 
     # === PROXIES ===
     # Get proxies from free proxies site
-    global proxy_scanner
-    proxy_scanner = proxies.ProxyScanner()
+    instances.proxy_scanner = proxies.ProxyScanner()
     # fresh_proxy_dict = proxy_scanner.get_proxies()
     # print(fresh_proxy_dict)
 
-    fresh_proxy_dict = {'92.53.73.138:8118': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.124 Safari/537.36', '122.183.139.104:8080': 'Mozilla/5.0 (Windows NT 4.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', '122.183.243.68:8080': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', '119.42.87.147:3128': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/29.0.1547.62 Safari/537.36', '103.74.245.12:65301': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/30.0.1599.17 Safari/537.36', '143.202.208.133:53281': 'Mozilla/5.0 (Windows NT 6.4; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2225.0 Safari/537.36', '192.116.142.153:8080': 'Mozilla/5.0 (Windows NT 6.1;WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', '80.211.4.187:8080': 'Mozilla/5.0 (X11; CrOS i686 4319.74.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/29.0.1547.57 Safari/537.36', '59.106.215.9:3128': 'Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:25.0) Gecko/20100101 Firefox/29.0', '5.35.2.235:3128': 'Opera/9.80 (X11; Linux i686; U; ja) Presto/2.7.62 Version/11.01', '122.183.137.190:8080': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:21.0) Gecko/20130401 Firefox/21.0', '42.104.84.106:8080':'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', '128.68.87.239:8080': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.124 Safari/537.36', '41.190.33.162:8080': 'Mozilla/5.0 (Windows NT 4.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', '212.237.34.18:8888': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36'}
-
+    fresh_proxy_dict = {'128.199.198.79:8118': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_7_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', '142.0.72.77:808': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.124 Safari/537.36', '80.211.4.187:8080': 'Mozilla/5.0 (compatible; MSIE 8.0; Windows NT 5.1; Trident/4.0; SLCC1; .NET CLR 3.0.4506.2152; .NET CLR 3.5.30729; .NET CLR 1.1.4322)', '188.166.68.38:3128': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', '196.220.96.39:3128': 'Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 6.1; WOW64; Trident/4.0; SLCC2; .NET CLR 2.0.50727; Media Center PC 6.0; .NET CLR 3.5.30729; .NET CLR 3.0.30729; .NET4.0C)', '176.53.2.122:8080': 'Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2228.0 Safari/537.36', '147.75.113.108:8080': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/34.0.1847.137 Safari/4E423F', '163.172.175.210:3128': 'Mozilla/5.0 (Macintosh; U; Intel Mac OS X 10_6_6; en-us) AppleWebKit/533.20.25 (KHTML, like Gecko) Version/5.0.4 Safari/533.20.27', '5.9.107.34:3128': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2227.1 Safari/537.36', '115.249.145.202:80': 'Mozilla/5.0 (Windows NT 6.2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/28.0.1467.0 Safari/537.36', '36.74.18.249:8080': 'Mozilla/5.0 (Windows NT 6.2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/28.0.1464.0 Safari/537.36', '41.190.33.162:8080': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/29.0.1547.2 Safari/537.36', '80.48.119.28:8080': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36', '94.177.247.162:8118': 'Mozilla/5.0 (X11; NetBSD) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.116 Safari/537.36', '89.236.17.108:3128': 'Mozilla/5.0 (Windows NT 5.1; rv:21.0) Gecko/20130401 Firefox/21.0', '196.220.96.34:3128': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/33.0.1750.517 Safari/537.36', '5.189.133.231:80': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_2) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1309.0 Safari/537.17', '173.212.202.65:443': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/30.0.1599.17 Safari/537.36', '59.106.215.9:3128': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', '35.185.39.27:6969': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/32.0.1664.3 Safari/537.36', '217.194.255.217:3128': 'Mozilla/5.0 (Windows NT 4.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', '119.11.240.152:3128': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_7_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36'}
+    
     # Associate api_key to each proxy in fresh list
-    proxy_scanner.gen_list_of_proxies_with_api_keys(fresh_proxy_dict, api_keys)
-    proxy_scanner.gen_proxy_cycle()
+    instances.proxy_scanner.gen_list_of_proxies_with_api_keys(fresh_proxy_dict, instances.api_keys)
+    instances.proxy_scanner.gen_proxy_cycle()
 
     # === DATABASE ===
     db = db_handler.Database(db_filepath=config.get('tumblrmapper', 'db_filepath'), \
@@ -149,39 +148,69 @@ def main():
     con = db.connect()
 
     # === BLOG ===
-    # blog_object_queue = queue.Queue()
-    blog_object_list = list()
+    blog_object_queue = queue.Queue(maxsize=THREADS)
+    
+    # while True:
     # == Fetch 10 available blogs from DB ==
-    for i in range(0, THREADS):
+
+    with ThreadPoolExecutor(max_workers=THREADS) as executor:
+        executor.map(do_work, source())
+
+    def blog_generator():
+        """ Returns a blog """
         blog = fetch_random_blog(db)
         # attach a proxy 
-        blog.proxy_object = next(proxy_scanner.definitive_proxy_cycle)
+        blog.proxy_object = next(instances.proxy_scanner.definitive_proxy_cycle)
         # print("current blog's proxy object: " + blog.proxy_object)
-        
-        # # put in a queue
-        # blog_object_queue.put(blog)
-        # # fetch from queue one
-        # current_blog = blog_object_queue.get()
-        # spawn one TEST Process 
-
         blog.init_session()
-        blog_object_list.append(blog)
+        yield blog
+
+    def worker_blog_queue_feeder():
+        """ Keeps trying to get a new blog to put in the queue blog_object_queue"""
+        isfull = None
+        while not isfull:
+            try:
+                isfull = blog_object_queue.put(blog_generator())
+            except:
+                pass
+
+    def worker_get_from_queue(q):
+        while True:
+            item = q.get()
+            if item is end_of_queue:
+                q.task_done()
+                break
+            do_work(item)
+            q.task_done()
 
 
+    isfull = None
+    while not isfull:
+        try:
+            current_blog = blog_object_queue.get()
+        except:
+            pass
+    
+
+    worker_threads = []
+    for blog in blog_object_queue.get()
+        t = threading.Thread(target=worker_get_blog_info,args=(blog))
+        worker_threads.append(t)
+        t.start()
+
+    for t in worker_threads:
+        t.join()
+
+
+
+    # ============= FUTURES TEST =======================
     with futures.ThreadPoolExecutor(THREADS) as executor:
-        info_jobs = [executor.submit(blog.api_get_blog_health) for blog in blog_object_list]
-        futures.wait(info_jobs)
-        result = info_jobs[0].result()
-        process_job = executor.submit(update_blog_health_db, blog, result)
+        info_jobs = [executor.submit(blog.api_get_blog_json_health) for blog in blog_object_list]
+        futures.wait(info_jobs, timeout=10, return_when=futures.ALL_COMPLETED)
+        results = [job.result() for job in info_jobs]
+        process_job = [executor.submit(update_blog_health_db, blog, result) for result in results]
         # process_job.add_done_callback()
-
-
-    # blog_testing_queue.put(TumblrBlog('videogame-fantasy'))
-    # definitive_proxy_list[0]
-    # blog_object_queue.put(TumblrBlog()) #FIXME: hardcoded index for testing
-
-
-    # === Start async procedures here === 
+    # ============= FUTURES TEST =======================
 
     # # When prerequisite is completed
     # with futures.ThreadPoolExecutor(THREADS) as executor:
@@ -195,22 +224,41 @@ def main():
 
 
 
-    # fetch first blog in DB that is unchecked
-    # - fetch info from API about health
-    # - populate total_posts, validate health, and crawling status
-    # - on result from procedure, pass the resulting TumblrBlog object to next function
-    # add to queue
-    # start fetching tumblr API from offset
-    # populate DB, update Blog crawling status, posts scraped so far
-    # display progress (total_posts / done_posts)
-    # handle keyboard interrupt
+def worker_get_blog_info(blog_object):
+    """ get info from API """
+
+    api_get_blog_json_health
 
 def update_blog_health_db(blog, response):
-    print("STUB updating DB with:", str(response))
+    """ Last checks before updating BLOG table with info"""
+    
+    print(BColors.GREEN + "Updating DB with:", str(response) + BColors.ENDC)
+    # TESTING: 
+    # update = tumblr_client.parse_json_response(json.load(open\
+    # (SCRIPTDIR + "/tools/test/videogame-fantasy_july_reblogfalse_dupe.json", 'r')))
+    
+    update = tumblr_client.parse_json_response(json.load(response))
+    print("UPDATE:" + update)
 
-    parse_json_health(response)
 
-    update_blog_health_db
+    if "error" in update and "404" in update:
+        print("Error in json response!")
+        update.health = "DEAD"
+        db_handler.update_blog_info(blog, update)
+        return
+    if "error" in update and "Unauthorized" in update.errors['title']:
+        print("Unauthorized! Missing API key?")
+        #FIXME: reroll API KEY?
+        return 
+
+    update.health = "UP"
+
+    #FIXME: arbitrary value
+    if update.total_posts < 20: 
+        update.health = "WIPED"
+
+    print(BColors.BLUEOK + "no problem, updating" + BColors.ENDC)
+    db_handler.update_blog_info(blog, update)
 
     return
 
@@ -242,7 +290,7 @@ class TumblrBlog:
         """ Does a request, returns json """
         # url = 'https://httpbin.org/get'
 
-        print("Requesting with a session: " + str(requests_session.proxies) + str(requests_session.headers) + "\n")
+        print("---\nRequested new session for {0}: {1} {2}\n----".format(self.name, requests_session.proxies, requests_session.headers))
         if not requests_session:
             self.init_session()
 
@@ -252,28 +300,30 @@ class TumblrBlog:
             if response.status_code > 0:
                 json_data = response.json()
                 return json_data
+            return response.json() #FIXME: TESTING 
         except Exception as e:
             raise
         return None
 
 
-    def api_get_blog_health(self):
+    def api_get_blog_json_health(self):
         attempt = 0
-        apiv2_url = 'https://api.tumblr.com/v2/blog/{0}/info'.format(self.name)
-        print("getting api health: " + apiv2_url)
+        apiv2_url = 'https://api.tumblr.com/v2/blog/{0}/info?api_key={1}'.format(self.name, self.proxy_object.api_key)
+        print("api_get_blog_json_health({0})".format(apiv2_url))
         # renew proxy n times if it fails
-        global proxy_scanner
         while attempt < 3:
             try: 
                 response = self.requester(apiv2_url, self.requests_session)
             except requests.exceptions.ProxyError as e:
-                self.proxy_object = proxy_scanner.get_new_proxy(self.proxy_object)
-                print("ProxyError! Changing proxy in get health to:", self.proxy_object.ip_address)
+                self.proxy_object = instances.proxy_scanner.get_new_proxy(self.proxy_object)
+                print(BColors.FAIL + "ProxyError on {0}! Changing proxy in get health to: {1}"\
+                .format(self.name, self.proxy_object.ip_address) + BColors.ENDC)
                 attempt += 1
                 continue
             except requests.exceptions.Timeout as e:
-                self.proxy_object = proxy_scanner.get_new_proxy(self.proxy_object)
-                print("Timeout! Changing proxy in get health to:", self.proxy_object.ip_address)
+                self.proxy_object = instances.proxy_scanner.get_new_proxy(self.proxy_object)
+                print(BColors.FAIL + "Timeout on {0}! Changing proxy in get health to: {1}"\
+                .format(self.name, self.proxy_object.ip_address) + BColors.ENDC )
                 attempt += 1
                 continue
             return response
@@ -366,17 +416,6 @@ def fetch_random_blog(database):
     blog.offset, blog.last_checked = db_handler.fetch_random_blog(database)
     return blog
 
-
-
-
-class Proxy:
-    """holds values to pass to proxy"""
-
-    def __init__(self, ip=None, ua=None, api_key=None, secret_key=None):
-        self.ip_address = ip
-        self.user_agent = ua
-        self.api_key = api_key
-        self.secret_key = secret_key
 
 
 

@@ -10,6 +10,8 @@ import traceback
 from fake_useragent import UserAgent, errors
 from constants import BColors 
 import tumblrmapper
+import time
+import instances
 
 try:
     ua = UserAgent() # init database, retrieves UAs
@@ -29,12 +31,12 @@ class ProxyScanner():
 
 
     def get_new_proxy(self, old_proxy): #TODO: move this to the wallet, to pop out the bad proxy
-        self.remove_bad_proxy(old_proxy)
+        print("Removing proxy {0} and getting new one.".format(old_proxy))
+        self.definitive_proxy_list.remove(old_proxy)
+        if not len(self.definitive_proxy_list):
+            self.gen_list_of_proxies_with_api_keys(self.get_proxies, instances.api_keys)
+        self.gen_proxy_cycle()
         return next(self.definitive_proxy_cycle)
-
-
-    def remove_bad_proxy(self, proxy):
-        print("STUB: removing old proxy " + str(proxy))
 
 
     def gen_proxy_cycle(self):
@@ -51,7 +53,7 @@ class ProxyScanner():
         for ip, ua in fresh_proxy_dict.items():
             random_apik = self.get_random(api_keys)
             key, secret = random_apik.api_key, random_apik.secret_key
-            newlist.append(tumblrmapper.Proxy(ip, ua, key, secret))
+            newlist.append(Proxy(ip, ua, key, secret))
         self.definitive_proxy_list = newlist
         return self.definitive_proxy_list #FIXME: remove?
 
@@ -175,6 +177,7 @@ class ProxyScanner():
     def job_test_proxy(self, worker, proxy):
         url = 'https://httpbin.org/get'
         headers = {'User-Agent': self.proxy_ua_dict[proxy]}
+        time.sleep(1)
         try:
             with self.print_lock:
                 print("Testing proxy / UA:", proxy, "/", self.proxy_ua_dict[proxy], " :")
@@ -182,7 +185,7 @@ class ProxyScanner():
             if response.status_code == 200:
                 json_data = response.json()
                 with self.print_lock:
-                    print(BColors.BLUEOK + BColors.OKGREEN + " origin: " + json_data['origin'] + "/ UA: " + json_data['headers']['User-Agent'] + BColors.ENDC )
+                    print(BColors.BLUEOK + BColors.GREEN + " origin: " + json_data['origin'] + "/ UA: " + json_data['headers']['User-Agent'] + BColors.ENDC )
             # print(response.json())
         except Exception as e:
             # del self.proxy_ua_dict[proxy]
@@ -204,12 +207,25 @@ class ProxyScanner():
                 # json_data = json.loads(response.text)
                 if response.status_code == 200:
                     json_data = response.json()
-                    print(BColors.BLUEOK + BColors.OKGREEN + " origin: " + json_data['origin'] + "/ UA: " + json_data['headers']['User-Agent'] + BColors.ENDC )
+                    print(BColors.BLUEOK + BColors.GREEN + " origin: " + json_data['origin'] + "/ UA: " + json_data['headers']['User-Agent'] + BColors.ENDC )
                 # print(response.json())
             except Exception as e:
                 del self.proxy_ua_dict[proxy]
                 print(BColors.FAIL + "Skipping. Connnection error:" + str(e) + BColors.ENDC + "\n")
         return self.proxy_ua_dict
+
+
+
+
+
+class Proxy:
+    """holds values to pass to proxy"""
+
+    def __init__(self, ip=None, ua=None, api_key=None, secret_key=None):
+        self.ip_address = ip
+        self.user_agent = ua
+        self.api_key = api_key
+        self.secret_key = secret_key
 
 
 if __name__ == "__main__":
