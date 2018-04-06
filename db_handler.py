@@ -29,13 +29,16 @@ class Database():
 
     def connect(self):
         """initialize connection to remote DB"""
+        if self.con is not None:
+            print("Already connected to DB.")
+            return self.con
         if self.host == 'localhost':
             self.con = fdb.connect(database=self.db_filepath, user=self.username, password=self.password)
         else:
             self.con = fdb.connect(database=str(self.host + ":" + self.db_filepath), user=self.username, password=self.password)
         return self.con
 
-    def close_connection(self):
+    def close(self):
         return self.con.close()
 
     def query_blog(self, queryobj):
@@ -55,7 +58,7 @@ def create_blank_db_file(database):
 def populate_db_with_tables(database):
     """Create our tables and procedures here in the DB"""
     con = fdb.connect(database=database.db_filepath, user=database.username, password=database.password)
-    with fdb.TransactionContext(con): #auto rollback if exception is raised, and no need to close() because automatic
+    with fdb.TransactionContext(con): #auto rollback if exception is raised, and no need to con.close() because automatic
         # cur = con.cursor()
         # Create domains
         con.execute_immediate("CREATE DOMAIN D_LONG_TEXT AS VARCHAR(500);")
@@ -178,17 +181,17 @@ def populate_db_with_tables(database):
             declare variable v_b_update_gathered d_boolean default 0;\
             BEGIN\
             select AUTO_ID from BLOGS where BLOG_NAME = :i_blog_origin into :v_blog_origin_id;\
-\
+            \
             if (:i_reblogged_blog_name is not null) THEN \
             select AUTO_ID from GATHERED_BLOGS where BLOG_NAME = :i_reblogged_blog_name into :v_fetched_reblogged_blog_id;\
-\
+            \
             if ((:i_reblogged_blog_name is distinct from :i_blog_origin) and (:v_fetched_reblogged_blog_id is null)) \
             THEN v_b_update_gathered = 1;\
-\
+            \
             if ((v_b_update_gathered = 1) and (:i_reblogged_blog_name is not null)) THEN\
             INSERT into GATHERED_BLOGS (BLOG_NAME) values (:i_reblogged_blog_name)\
             returning (AUTO_ID) into :v_fetched_reblogged_blog_id;\
-\
+            \
             INSERT into POSTS (POST_ID, POST_URL, POST_DATE, REMOTE_ID, \
             ORIGIN_BLOGNAME, REBLOGGED_BLOGNAME)\
             values (:i_postid, :i_post_url, :i_post_date, :i_remoteid, \
@@ -243,8 +246,10 @@ def populate_db_with_tables(database):
                 end\
             else\
             if (exists (select (BLOG_NAME) from BLOGS where (CRAWL_STATUS = 'new'))) then begin\
-                for select BLOG_NAME, CRAWL_STATUS from BLOGS where (CRAWL_STATUS = 'new') \
-                    order by PRIORITY desc nulls last ROWS 1 into :o_name, :o_status as cursor tcur do\
+                for select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED\
+                     from BLOGS where (CRAWL_STATUS = 'new') \
+                    order by PRIORITY desc nulls last ROWS 1 \
+                    into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked as cursor tcur do\
                     update BLOGS set CRAWL_STATUS = 'fetched' where current of tcur;\
                 suspend;\
                 end\
@@ -258,7 +263,7 @@ def populate_db_with_tables(database):
                 i_health varchar(5),\
                 i_total integer, \
                 i_updated d_epoch,\
-                i_status varchar(10) default null,\
+                i_status varchar(10) default 'resume',\
                 i_crawling d_boolean default 0)\
                 AS declare variable v_checked d_epoch;\
                 BEGIN\
@@ -328,7 +333,7 @@ def update_blog_info(database, update):
     # if dictionary.getitems('health') is OK
     #     stmt = cur.prep("execute procedure update_blog_status(?)")
     #     con.execute(stmt, )
-    print(BColors.OKBLUE + "updating Blogs table wiht info:" + update + BColors.ENDC)
+    print(BColors.BLUE + "updating Blogs table with info:" + update + BColors.ENDC)
     cur = database.con.cursor()
     # args: (blogname, UP|DEAD|WIPED, total_posts, updated, crawl_status(resume|dead))
     params = (update.name, update.health, update.total_posts, update.updated)
@@ -351,14 +356,15 @@ def ping_blog_status(blog):
 
 def fetch_random_blog(database):
     """ Queries DB for a blog that is available """
-    cur = database.con.cursor()
-    cur.execute("execute procedure fetch_one_blogname;")
-    blog_fields = list()
-    fieldIndices = range(len(cur.description))
-    for row in cur:
-        for fieldIndex in fieldIndices:
-            blog_fields.append(str(row[fieldIndex]))
-    return blog_fields
+    con = database.con
+    cur = con.cursor()
+    with fdb.TransactionContext(con):
+        # sql = cur.prep("execute procedure fetch_one_blogname;")
+        cur.execute("execute procedure fetch_one_blogname;")
+        # cur.execute("select * from blogs;")
+
+        return cur.fetchone()
+
         
 
 
@@ -439,8 +445,9 @@ def create_blank_database(database):
 def test_update_table(database):
     """feed testing data"""
     update = tumblr_client.parse_json_response(json.load(open\
-    (SCRIPTDIR + "/tools/test/videogame-fantasy_july_reblogfalse_dupe.json", 'r'))['response'])
-    con = fdb.connect(database=database.db_filepath, user=database.username, password=database.password)
+    (SCRIPTDIR + "tools/test/vgf_july_reblogfalse_dupe.json", 'r')))
+    # con = fdb.connect(database=database.db_filepath, user=database.username, password=database.password)
+    con = database.con
     cur = con.cursor()
     insertstmt = cur.prep('insert into URLS (file_url,post_id,remote_id) values (?,?,?)')
     t0 = time.time()
@@ -455,6 +462,7 @@ def test_update_table(database):
                 params = (post['id'], post['blog_name'], post['post_url'], \
                 post['date'], post['timestamp'], post['remote_id'], post['reblogged_blog_name'], \
                 post['remote_content'], post['photos'])
+                print(post)
 
                 cur.callproc('insert_post', itemgetter(0,1,2,3,5,6)(params))
 
@@ -483,10 +491,12 @@ def test_update_table(database):
 if __name__ == "__main__":
     blogs_toscrape = SCRIPTDIR + "tools/blogs_toscrape_test.txt"
     archives_toload = SCRIPTDIR +  "tools/1280_files_list.txt"
-    database = Database(filepath="/home/firebird/tumblrmapper_test.fdb", username="sysdba", password="masterkey")
-
-    create_blank_database(database)
-    populate_db_with_blogs(database, blogs_toscrape)
+    database = Database(db_filepath="/home/firebird/tumblrmapper_test.fdb", username="sysdba", password="masterkey")
+    
+    # create_blank_database(database)
+    # populate_db_with_blogs(database, blogs_toscrape)
     # Optional archives too
     # populate_db_with_archives(database, archives_toload)
-    test_update_table(database)
+    database.connect()
+    # test_update_table(database)
+    fetch_random_blog(database)

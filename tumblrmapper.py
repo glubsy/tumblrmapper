@@ -8,7 +8,7 @@ import logging
 import configparser
 import requests
 import threading
-import Queue
+import queue
 import json
 import csv
 from itertools import cycle
@@ -145,70 +145,48 @@ def main():
     db = db_handler.Database(db_filepath=config.get('tumblrmapper', 'db_filepath'), \
                             username=config.get('tumblrmapper', 'username'),
                             password=config.get('tumblrmapper', 'password'))
-    con = db.connect()
+    db.connect()
 
     # === BLOG ===
     blog_object_queue = queue.Queue(maxsize=THREADS)
     
     # while True:
     # == Fetch 10 available blogs from DB ==
-
-    with ThreadPoolExecutor(max_workers=THREADS) as executor:
-        executor.map(do_work, source())
-
-    def blog_generator():
-        """ Returns a blog """
-        blog = fetch_random_blog(db)
-        # attach a proxy 
-        blog.proxy_object = next(instances.proxy_scanner.definitive_proxy_cycle)
-        # print("current blog's proxy object: " + blog.proxy_object)
-        blog.init_session()
-        yield blog
-
-    def worker_blog_queue_feeder():
-        """ Keeps trying to get a new blog to put in the queue blog_object_queue"""
-        isfull = None
-        while not isfull:
-            try:
-                isfull = blog_object_queue.put(blog_generator())
-            except:
-                pass
-
-    def worker_get_from_queue(q):
-        while True:
-            item = q.get()
-            if item is end_of_queue:
-                q.task_done()
-                break
-            do_work(item)
-            q.task_done()
-
-
-    isfull = None
-    while not isfull:
-        try:
-            current_blog = blog_object_queue.get()
-        except:
-            pass
-    
-
+    daemon_threads = []
     worker_threads = []
-    for blog in blog_object_queue.get()
-        t = threading.Thread(target=worker_get_blog_info,args=(blog))
+
+    for i in range(0,THREADS):
+        args = (db,)
+        t = threading.Thread(target=process, args=args)
         worker_threads.append(t)
         t.start()
+
+
+    with futures.ThreadPoolExecutor(max_workers=THREADS) as executor:
+        executor.map(worker_threads)
+
+
+
+    # def worker_get_from_queue(q):
+    #     while True:
+    #         item = q.get()
+    #         if item is end_of_queue:
+    #             q.task_done()
+    #             break
+    #         do_work(item)
+    #         q.task_done()
+    
+
 
     for t in worker_threads:
         t.join()
 
-
-
     # ============= FUTURES TEST =======================
-    with futures.ThreadPoolExecutor(THREADS) as executor:
-        info_jobs = [executor.submit(blog.api_get_blog_json_health) for blog in blog_object_list]
-        futures.wait(info_jobs, timeout=10, return_when=futures.ALL_COMPLETED)
-        results = [job.result() for job in info_jobs]
-        process_job = [executor.submit(update_blog_health_db, blog, result) for result in results]
+    # with futures.ThreadPoolExecutor(THREADS) as executor:
+    #     info_jobs = [executor.submit(blog.api_get_blog_json_health) for blog in blog_object_list]
+    #     futures.wait(info_jobs, timeout=10, return_when=futures.ALL_COMPLETED)
+    #     results = [job.result() for job in info_jobs]
+    #     process_job = [executor.submit(update_blog_health_db, blog, result) for result in results]
         # process_job.add_done_callback()
     # ============= FUTURES TEST =======================
 
@@ -222,12 +200,60 @@ def main():
     #         response = comp_job.result()
     #         executor.submit(insert_into_db, response)
 
+    # exit
+    db.close()
 
 
-def worker_get_blog_info(blog_object):
+def process(db):
+    blog = blog_generator(db)
+
+    if blog.crawl_status == 'new': # not yet updated
+        blog.api_get_blog_json_health()
+        update_blog_health_db(blog)
+        startcrawling(blog)
+    elif blog.crawl_status == 'resume': # refresh health info
+        api_get_blog_json_health(blog)
+        update_blog_health_db(blog)
+        offset = read_offset_from_DB(blog)
+        # startcrawling(blog, offset)
+        print("startcrawling at offset")
+
+
+    if blog.health == 'UP' or blog.health == 'WIPED':
+        startcrawling(blog)
+    elif blog.health == DEAD:
+        print("dead blog")
+        return
+
+def startcrawling(blog):
+    print("startcralwing")
+    pass
+    # update_crawl_status(blog, 1)
+    # crawl(blog)
+
+
+def worker_blog_queue_feeder():
+    """ Keeps trying to get a new blog to put in the queue blog_object_queue"""
+    isfull = None
+    while not isfull:
+        try:
+            isfull = blog_object_queue.put(blog_generator())
+        except:
+            pass
+
+def blog_generator(db):
+    """ Returns a blog """
+    blog = fetch_random_blog(db)
+    # attach a proxy 
+    blog.proxy_object = next(instances.proxy_scanner.definitive_proxy_cycle)
+    # print("current blog's proxy object: " + blog.proxy_object)
+    blog.init_session()
+    return blog
+
+def worker_get_blog_info(blog):
     """ get info from API """
 
-    api_get_blog_json_health
+    blog.api_get_blog_json_health()
 
 def update_blog_health_db(blog, response):
     """ Last checks before updating BLOG table with info"""

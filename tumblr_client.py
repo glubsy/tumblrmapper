@@ -219,18 +219,17 @@ class UpdatePayload(dict):
 def parse_json_response(json):
     """returns a UpdatePayload() object that holds the fields to update in DB"""
     t0 = time.time()
-    print(BColors.FAIL + "PARSING JSON:" + json + BColors.ENDC)
     update = UpdatePayload()
     
-    if not 200 <= json['meta']['status'] <= 399:
+    # if not 200 <= json['meta']['status'] <= 399:
+    #     update.errors = json['errors']
+    #     return update
+
+    if not json.get('response') and "errors" in json.keys():
         update.errors = json['errors']
         return update
 
-    if not json['response'] and "errors" in json.keys():
-        update.errors = json['errors']
-        return update
-
-    json = json['response']
+    json = json.get('response')
     update.blogname = json['blog']['name']
     update.total_posts = json['blog']['total_posts']
     update.updated = json['blog']['updated']
