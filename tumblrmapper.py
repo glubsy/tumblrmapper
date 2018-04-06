@@ -145,7 +145,7 @@ def main():
     db = db_handler.Database(db_filepath=config.get('tumblrmapper', 'db_filepath'), \
                             username=config.get('tumblrmapper', 'username'),
                             password=config.get('tumblrmapper', 'password'))
-    db.connect()
+    # db.connect()
 
     # === BLOG ===
     blog_object_queue = queue.Queue(maxsize=THREADS)
@@ -154,9 +154,9 @@ def main():
     # == Fetch 10 available blogs from DB ==
     daemon_threads = []
     worker_threads = []
-
+    lock = threading.Lock()
     for i in range(0,THREADS):
-        args = (db,)
+        args = (db, lock)
         t = threading.Thread(target=process, args=args)
         worker_threads.append(t)
         t.start()
@@ -201,27 +201,32 @@ def main():
     #         executor.submit(insert_into_db, response)
 
     # exit
-    db.close()
+    # db.close_connection()
 
 
-def process(db):
-    blog = blog_generator(db)
+def process(db, lock):
+    con = db.connect()
+    with lock:
+        blog = blog_generator(db, con)
+
+
 
     if blog.crawl_status == 'new': # not yet updated
-        blog.api_get_blog_json_health()
-        update_blog_health_db(blog)
+        response = blog.api_get_blog_json_health()
+        update_blog_health_db(db, con, response)
         startcrawling(blog)
     elif blog.crawl_status == 'resume': # refresh health info
-        api_get_blog_json_health(blog)
-        update_blog_health_db(blog)
-        offset = read_offset_from_DB(blog)
+        response = blog.api_get_blog_json_health()
+        update_blog_health_db(db, con, response)
+        # offset = read_offset_from_DB(blog)
         # startcrawling(blog, offset)
         print("startcrawling at offset")
 
 
     if blog.health == 'UP' or blog.health == 'WIPED':
-        startcrawling(blog)
-    elif blog.health == DEAD:
+        print("Startcrawling()")
+        # startcrawling(blog)
+    elif blog.health == 'DEAD':
         print("dead blog")
         return
 
@@ -241,21 +246,31 @@ def worker_blog_queue_feeder():
         except:
             pass
 
-def blog_generator(db):
-    """ Returns a blog """
-    blog = fetch_random_blog(db)
+def blog_generator(db, con):
+    """Queries DB for a blog that is either new or needs update. 
+    Returns a TumblrBlog() object instance with no proxy attached to it."""
+
+    blog = TumblrBlog()
+    blog.name, blog.total_posts, blog.health, \
+    blog.crawl_status, blog.post_scraped, \
+    blog.offset, blog.last_checked = db_handler.fetch_random_blog(db, con)
+
     # attach a proxy 
     blog.proxy_object = next(instances.proxy_scanner.definitive_proxy_cycle)
-    # print("current blog's proxy object: " + blog.proxy_object)
-    blog.init_session()
+    # init requests.session with headers
+    blog.init_session() 
+
+    print(BColors.CYAN + "Got blog from DB: {0}".format(blog.name) + BColors.ENDC)
+
     return blog
+
 
 def worker_get_blog_info(blog):
     """ get info from API """
 
     blog.api_get_blog_json_health()
 
-def update_blog_health_db(blog, response):
+def update_blog_health_db(blog, con, response):
     """ Last checks before updating BLOG table with info"""
     
     print(BColors.GREEN + "Updating DB with:", str(response) + BColors.ENDC)
@@ -263,19 +278,18 @@ def update_blog_health_db(blog, response):
     # update = tumblr_client.parse_json_response(json.load(open\
     # (SCRIPTDIR + "/tools/test/videogame-fantasy_july_reblogfalse_dupe.json", 'r')))
     
-    update = tumblr_client.parse_json_response(json.load(response))
-    print("UPDATE:" + update)
+    update = tumblr_client.parse_json_response(response)
 
-
-    if "error" in update and "404" in update:
-        print("Error in json response!")
-        update.health = "DEAD"
-        db_handler.update_blog_info(blog, update)
-        return
-    if "error" in update and "Unauthorized" in update.errors['title']:
-        print("Unauthorized! Missing API key?")
-        #FIXME: reroll API KEY?
-        return 
+    if update.errors is not None:
+        if update.error['meta']['status'] is not None:
+            print("Error in json response!")
+            update.health = "DEAD"
+            db_handler.update_blog_info(blog, con, update)
+            return
+        if "error" in update.errors and "Unauthorized" in update.errors['title']:
+            print("Unauthorized! Missing API key?")
+            #FIXME: reroll API KEY?
+            return 
 
     update.health = "UP"
 
@@ -284,7 +298,7 @@ def update_blog_health_db(blog, response):
         update.health = "WIPED"
 
     print(BColors.BLUEOK + "no problem, updating" + BColors.ENDC)
-    db_handler.update_blog_info(blog, update)
+    db_handler.update_blog_info(blog, con, update)
 
     return
 
@@ -329,24 +343,24 @@ class TumblrBlog:
             return response.json() #FIXME: TESTING 
         except Exception as e:
             raise
-        return None
+
 
 
     def api_get_blog_json_health(self):
         attempt = 0
         apiv2_url = 'https://api.tumblr.com/v2/blog/{0}/info?api_key={1}'.format(self.name, self.proxy_object.api_key)
-        print("api_get_blog_json_health({0})".format(apiv2_url))
+        print(BColors.YELLOW + "api_get_blog_json_health({0}): proxy: {1}".format(self.name, self.proxy_object.ip_address) + BColors.ENDC)
         # renew proxy n times if it fails
         while attempt < 3:
             try: 
                 response = self.requester(apiv2_url, self.requests_session)
-            except requests.exceptions.ProxyError as e:
+            except requests.exceptions.ProxyError:
                 self.proxy_object = instances.proxy_scanner.get_new_proxy(self.proxy_object)
                 print(BColors.FAIL + "ProxyError on {0}! Changing proxy in get health to: {1}"\
                 .format(self.name, self.proxy_object.ip_address) + BColors.ENDC)
                 attempt += 1
                 continue
-            except requests.exceptions.Timeout as e:
+            except requests.exceptions.Timeout:
                 self.proxy_object = instances.proxy_scanner.get_new_proxy(self.proxy_object)
                 print(BColors.FAIL + "Timeout on {0}! Changing proxy in get health to: {1}"\
                 .format(self.name, self.proxy_object.ip_address) + BColors.ENDC )
@@ -433,14 +447,6 @@ class APIKey:
     #TODO: stub
 
 
-def fetch_random_blog(database):
-    """Queries DB for a blog that is either new or needs update. 
-    Returns a TumblrBlog() object instance with no proxy attached to it."""
-    blog = TumblrBlog()
-    blog.name, blog.total_posts, blog.health, \
-    blog.crawl_status, blog.post_scraped, \
-    blog.offset, blog.last_checked = db_handler.fetch_random_blog(database)
-    return blog
 
 
 

@@ -25,27 +25,34 @@ class Database():
         self.db_filepath = kwargs.get('db_filepath', SCRIPTDIR + "blank_db.fdb")
         self.username = kwargs.get('username', "sysdba")
         self.password = kwargs.get('password', "masterkey")
-        self.con = None
+        self.con = []
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """ close all remaining connections"""
+        print("Closing connections to DB")
+        for con in self.con:
+            con.close()
 
     def connect(self):
         """initialize connection to remote DB"""
-        if self.con is not None:
-            print("Already connected to DB.")
-            return self.con
         if self.host == 'localhost':
-            self.con = fdb.connect(database=self.db_filepath, user=self.username, password=self.password)
+            con = fdb.connect(database=self.db_filepath, user=self.username, password=self.password)
         else:
-            self.con = fdb.connect(database=str(self.host + ":" + self.db_filepath), user=self.username, password=self.password)
-        return self.con
+            con = fdb.connect(database=str(self.host + ":" + self.db_filepath), user=self.username, password=self.password)
+        self.con.append(con)
+        return con
 
-    def close(self):
-        return self.con.close()
+    def close_connection(self, con):
+        self.con.remove(con)
+        return con.close()
 
     def query_blog(self, queryobj):
         """query DB for blog status"""
 
     def populate_db_with_procedures(self):
         pass
+
+    
 
 
 def create_blank_db_file(database):
@@ -239,6 +246,7 @@ def populate_db_with_tables(database):
                 for \
                 select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED\
                 from BLOGS where ((CRAWL_STATUS = 'resume') and (CRAWLING != 1)) order by PRIORITY desc nulls last ROWS 1\
+                with lock\
                 into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked \
                 as cursor cur do\
                     update BLOGS set CRAWLING = 1 where current of cur;\
@@ -248,7 +256,7 @@ def populate_db_with_tables(database):
             if (exists (select (BLOG_NAME) from BLOGS where (CRAWL_STATUS = 'new'))) then begin\
                 for select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED\
                      from BLOGS where (CRAWL_STATUS = 'new') \
-                    order by PRIORITY desc nulls last ROWS 1 \
+                    order by PRIORITY desc nulls last ROWS 1 with lock\
                     into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked as cursor tcur do\
                     update BLOGS set CRAWL_STATUS = 'fetched' where current of tcur;\
                 suspend;\
@@ -328,19 +336,19 @@ def populate_db_with_tables(database):
         # );")
 
 
-def update_blog_info(database, update):
+def update_blog_info(database, con, update):
     """updates blog name in blogs table with values from dictionary"""
     # if dictionary.getitems('health') is OK
     #     stmt = cur.prep("execute procedure update_blog_status(?)")
     #     con.execute(stmt, )
     print(BColors.BLUE + "updating Blogs table with info:" + update + BColors.ENDC)
-    cur = database.con.cursor()
+    cur = con.cursor()
     # args: (blogname, UP|DEAD|WIPED, total_posts, updated, crawl_status(resume|dead))
     params = (update.name, update.health, update.total_posts, update.updated)
     cur.execute(cur.prep('execute procedure insert_blog_init_info(?, ?, ?, ?, ?)'), params)
     return
 
-def fetch_blog_status(database):
+def fetch_blog_status(database, con):
     """retrieves info about blog status in Database"""
     # cur.prep("execute procedure check_blog_status(?)")
     # return db_blog_status 
@@ -354,9 +362,8 @@ def ping_blog_status(blog):
     # return status
     pass
 
-def fetch_random_blog(database):
+def fetch_random_blog(database, con):
     """ Queries DB for a blog that is available """
-    con = database.con
     cur = con.cursor()
     with fdb.TransactionContext(con):
         # sql = cur.prep("execute procedure fetch_one_blogname;")
@@ -442,12 +449,11 @@ def create_blank_database(database):
     populate_db_with_tables(database)
 
 
-def test_update_table(database):
+def test_update_table(database, con):
     """feed testing data"""
     update = tumblr_client.parse_json_response(json.load(open\
     (SCRIPTDIR + "tools/test/vgf_july_reblogfalse_dupe.json", 'r')))
     # con = fdb.connect(database=database.db_filepath, user=database.username, password=database.password)
-    con = database.con
     cur = con.cursor()
     insertstmt = cur.prep('insert into URLS (file_url,post_id,remote_id) values (?,?,?)')
     t0 = time.time()
@@ -497,6 +503,6 @@ if __name__ == "__main__":
     # populate_db_with_blogs(database, blogs_toscrape)
     # Optional archives too
     # populate_db_with_archives(database, archives_toload)
-    database.connect()
+    con = database.connect()
     # test_update_table(database)
-    fetch_random_blog(database)
+    print(fetch_random_blog(database, con))

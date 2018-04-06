@@ -214,7 +214,8 @@ class TumblrRestClient(object):
 
 class UpdatePayload(dict):
     """ Container dictionary holding values from json to pass along """
-    pass
+    def __init__(self):
+        self.errors = None
 
 def parse_json_response(json):
     """returns a UpdatePayload() object that holds the fields to update in DB"""
