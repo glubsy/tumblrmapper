@@ -281,7 +281,7 @@ def update_blog_health_db(blog, con, response):
     update = tumblr_client.parse_json_response(response)
 
     if update.errors is not None:
-        if update.error['meta']['status'] is not None:
+        if update.errors['meta']['status'] is not None:
             print("Error in json response!")
             update.health = "DEAD"
             db_handler.update_blog_info(blog, con, update)
@@ -318,21 +318,41 @@ class TumblrBlog:
         self.requests_session = None
     
 
-    def init_session(self, requests_session=None): #FIXME: 
-        if not self.requests_session:
+    def init_session(self): 
+        if not self.requests_session: # first time
             requests_session = requests.Session()
             requests_session.headers.update({'User-Agent': self.proxy_object.user_agent})
             requests_session.proxies.update({'http': self.proxy_object.ip_address, 'https': self.proxy_object.ip_address})
-        self.requests_session = requests_session
+            self.requests_session = requests_session
+        else: 
+            self.requests_session.headers.update({'User-Agent': self.proxy_object.user_agent})
+            self.requests_session.proxies.update({'http': self.proxy_object.ip_address, 'https': self.proxy_object.ip_address})
 
+    def attach_proxy(self, proxy_object):
+        """ attach proxy object, refresh session on update too"""
+        if not self.proxy_object: #first time
+            self.proxy_object = proxy_object
+        else: #we're updating
+            self.proxy_object = proxy_object
+            self.init_session() # refresh
+    
+    def get_new_proxy(self, old_proxy_object=None):
+        """ Pops old proxy gone bad from cycle, get a new one """
+        if not old_proxy_object:
+            old_proxy_object = self.proxy_object
+        self.proxy_object = instances.proxy_scanner.get_new_proxy(old_proxy_object)
+        self.init_session() # refresh session
+
+        print(BColors.FAIL + "Changed proxy for {0} to {1}"\
+        .format(self.name, self.proxy_object.ip_address) + BColors.ENDC)
 
     def requester(self, url, requests_session=None):
         """ Does a request, returns json """
         # url = 'https://httpbin.org/get'
 
-        print("---\nRequested new session for {0}: {1} {2}\n----".format(self.name, requests_session.proxies, requests_session.headers))
         if not requests_session:
             self.init_session()
+        print("---\nRequested new session for {0}: {1} {2}\n----".format(self.name, self.requests_session.proxies, self.requests_session.headers))
 
         try:
             response = self.requests_session.get(url, timeout=10)
@@ -345,7 +365,6 @@ class TumblrBlog:
             raise
 
 
-
     def api_get_blog_json_health(self):
         attempt = 0
         apiv2_url = 'https://api.tumblr.com/v2/blog/{0}/info?api_key={1}'.format(self.name, self.proxy_object.api_key)
@@ -354,16 +373,16 @@ class TumblrBlog:
         while attempt < 3:
             try: 
                 response = self.requester(apiv2_url, self.requests_session)
-            except requests.exceptions.ProxyError:
-                self.proxy_object = instances.proxy_scanner.get_new_proxy(self.proxy_object)
-                print(BColors.FAIL + "ProxyError on {0}! Changing proxy in get health to: {1}"\
-                .format(self.name, self.proxy_object.ip_address) + BColors.ENDC)
+            except requests.exceptions.ProxyError as e:
+                logging.debug(BColors.FAIL + "Proxy error for {0}: {1}"\
+                .format(self.name, e.__repr__()) + BColors.ENDC)
+                self.get_new_proxy()
                 attempt += 1
                 continue
-            except requests.exceptions.Timeout:
-                self.proxy_object = instances.proxy_scanner.get_new_proxy(self.proxy_object)
-                print(BColors.FAIL + "Timeout on {0}! Changing proxy in get health to: {1}"\
-                .format(self.name, self.proxy_object.ip_address) + BColors.ENDC )
+            except requests.exceptions.Timeout as e:
+                logging.debug(BColors.FAIL + "Proxy Timeout on {0}: {1}"\
+                .format(self.name, e.__repr__()) + BColors.ENDC )
+                self.get_new_proxy()
                 attempt += 1
                 continue
             return response
