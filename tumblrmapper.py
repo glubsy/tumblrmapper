@@ -1,27 +1,29 @@
 #!/bin/env python3
-import os
-import sys
 import argparse
-import signal
-import time
-import logging
 import configparser
-import requests
-import threading
-import queue
 import json
-import csv
+import logging
+import os
+import queue
+import random
+import signal
+import sys
+import threading
+import time
+from concurrent import futures
 from itertools import cycle
-from constants import BColors
-import proxies, db_handler 
+
+import requests
+
+import api_keys
+import db_handler
+import instances
+import proxies
 import tumblr_client
 import tumdlr_classes
-import tumblr_client
-import db_handler
-from concurrent import futures
-import instances
-
+from constants import BColors
 from rate_limiter import RateLimiter
+
 # try:
 #     from tqdm import tqdm
 #     TQDM_AVAILABLE = True
@@ -127,7 +129,8 @@ def main():
 
     # === API KEY ===
     # list of APIKey objects
-    instances.api_keys = get_api_key_object_list(SCRIPTDIR + os.sep + config.get('tumblrmapper', 'api_keys'))
+    instances.api_keys = api_keys.get_api_key_object_list(\
+    SCRIPTDIR + os.sep + config.get('tumblrmapper', 'api_keys'))
 
     # === PROXIES ===
     # Get proxies from free proxies site
@@ -203,36 +206,62 @@ def main():
     # exit
     # db.close_connection()
 
+def sleep_here(minwait=None, maxwait=None):
+    if not minwait and not maxwait:  
+        time.sleep(random.randrange(1, 5))
+    else:
+        time.sleep(random.randrange(minwait, maxwait))
 
 def process(db, lock):
     con = db.connect()
     with lock:
         blog = blog_generator(db, con)
 
+    sleep_here()
 
-
+    update = UpdatePayload()
     if blog.crawl_status == 'new': # not yet updated
-        response = blog.api_get_blog_json_health()
-        update_blog_health_db(db, con, response)
-        startcrawling(blog)
+
+        while not update.valid:
+            sleep_here()
+            try:
+                response = blog.api_get_blog_json_health()
+                check_response(db, con, response, update)
+
+        # update and retrieve blog info
+        db_blog_record = db_handler.update_blog_info(blog, con, update)
+
+        offset = db_blog_record['offset']
+
     elif blog.crawl_status == 'resume': # refresh health info
-        response = blog.api_get_blog_json_health()
-        update_blog_health_db(db, con, response)
-        # offset = read_offset_from_DB(blog)
-        # startcrawling(blog, offset)
-        print("startcrawling at offset")
+
+        while not update.valid:
+            sleep_here()
+            try:
+                response = blog.api_get_blog_json_health()
+                check_response(db, con, response, update)
+            except:
 
 
-    if blog.health == 'UP' or blog.health == 'WIPED':
-        print("Startcrawling()")
-        # startcrawling(blog)
-    elif blog.health == 'DEAD':
-        print("dead blog")
+        # update and retrieve blog info
+        db_blog_record = db_handler.update_blog_info(blog, con, update)
+
+        offset = read_offset_from_DB(db_blog_record)
+
+
+    if db_blog_record.health == 'DEAD':
+        print(BColors.FAIL + "WARNING! Blog {0} appears to be dead!".format(db_blog_record.name) + BColors.ENDC)
         return
 
-def startcrawling(blog):
-    print("startcralwing")
-    pass
+    startcrawling(blog, offset=offset)
+
+def read_offset_from_DB(blog):
+
+    return db_blog_record
+
+def startcrawling(blog, offset=None):
+    print("start crawling {0}, offsert: {1}".format(blog.name, offset))
+    return
     # update_crawl_status(blog, 1)
     # crawl(blog)
 
@@ -265,42 +294,45 @@ def blog_generator(db, con):
     return blog
 
 
-def worker_get_blog_info(blog):
-    """ get info from API """
-
-    blog.api_get_blog_json_health()
-
-def update_blog_health_db(blog, con, response):
-    """ Last checks before updating BLOG table with info"""
+def check_response(blog, con, response, update):
+    """ Reads the response object, updates the blog attributes accordingly.
+    Last checks before updating BLOG table with info
+    if unauthorized in response, change API key here, etc."""
     
     print(BColors.GREEN + "Updating DB with:", str(response) + BColors.ENDC)
     # TESTING: 
-    # update = tumblr_client.parse_json_response(json.load(open\
+    # update = parse_json_response(json.load(open\
     # (SCRIPTDIR + "/tools/test/videogame-fantasy_july_reblogfalse_dupe.json", 'r')))
     
-    update = tumblr_client.parse_json_response(response)
+    parse_json_response(response, update)
 
-    if update.errors is not None:
-        if update.errors['meta']['status'] is not None:
-            print("Error in json response!")
-            update.health = "DEAD"
-            db_handler.update_blog_info(blog, con, update)
-            return
-        if "error" in update.errors and "Unauthorized" in update.errors['title']:
-            print("Unauthorized! Missing API key?")
-            #FIXME: reroll API KEY?
-            return 
+    if update.errors_title is not None:
+        if update.meta_status == '404' and update.meta_msg == 'Not Found':
+            print(BColors.FAIL + "Blog {0} is apparently DEAD.".format(blog.name) + BColors.ENDC)
+            blog.health = "DEAD"
+            update.valid = True
+            return update
 
-    update.health = "UP"
+        if "error" in update.errors and "Unauthorized" in update.errors:
+            print(BColors.FAIL + "Blog {0} is unauthorized! Missing API key? REROLL!".format(blog.name) + BColors.ENDC)
+            # FIXME: that's assuming only the API key is responsible for unauthorized, might be the IP!
+            blog.renew_api_key_for_proxy()
+            update.valid = False
+            return update
 
-    #FIXME: arbitrary value
-    if update.total_posts < 20: 
-        update.health = "WIPED"
+        print(BColors.FAIL + "Blog {0} uncaught error in response: ".format(blog.name, str(update)) + BColors.ENDC)
+        update.valid = False
+        return update
 
-    print(BColors.BLUEOK + "no problem, updating" + BColors.ENDC)
-    db_handler.update_blog_info(blog, con, update)
+    blog.health = "UP"
 
-    return
+    if update.total_posts < 20:   #FIXME: arbitrary value
+        print(BColors.LIGHTYELLOW + "Warning: {0} seems to have been wiped.".format(blog.name) + BColors.ENDC)
+        blog.health = "WIPED"
+
+    print(BColors.BLUEOK + "No error in checking json response for {0}".format(blog.name) + BColors.ENDC)
+
+    return update
 
 
 class TumblrBlog:
@@ -316,7 +348,7 @@ class TumblrBlog:
         self.last_checked = None
         self.proxy_object = None
         self.requests_session = None
-    
+        self.current_json = None
 
     def init_session(self): 
         if not self.requests_session: # first time
@@ -328,6 +360,7 @@ class TumblrBlog:
             self.requests_session.headers.update({'User-Agent': self.proxy_object.user_agent})
             self.requests_session.proxies.update({'http': self.proxy_object.ip_address, 'https': self.proxy_object.ip_address})
 
+
     def attach_proxy(self, proxy_object):
         """ attach proxy object, refresh session on update too"""
         if not self.proxy_object: #first time
@@ -335,7 +368,8 @@ class TumblrBlog:
         else: #we're updating
             self.proxy_object = proxy_object
             self.init_session() # refresh
-    
+
+
     def get_new_proxy(self, old_proxy_object=None):
         """ Pops old proxy gone bad from cycle, get a new one """
         if not old_proxy_object:
@@ -343,9 +377,16 @@ class TumblrBlog:
         self.proxy_object = instances.proxy_scanner.get_new_proxy(old_proxy_object)
         self.init_session() # refresh session
 
-        print(BColors.FAIL + "Changed proxy for {0} to {1}"\
+        print(BColors.BLUEOK + "Changed proxy for {0} to {1}"\
         .format(self.name, self.proxy_object.ip_address) + BColors.ENDC)
 
+
+    def renew_api_key_for_proxy(self, old_api_key)
+        # mark as disabled from global list pool
+        api_keys.disable_api_key(old_api_key)
+        self.proxy_object.api_key = api_keys.get_random_api_key(instances.api_keys)
+
+    
     def requester(self, url, requests_session=None):
         """ Does a request, returns json """
         # url = 'https://httpbin.org/get'
@@ -366,6 +407,7 @@ class TumblrBlog:
 
 
     def api_get_blog_json_health(self):
+        """Returns requests.response object"""
         attempt = 0
         apiv2_url = 'https://api.tumblr.com/v2/blog/{0}/info?api_key={1}'.format(self.name, self.proxy_object.api_key)
         print(BColors.YELLOW + "api_get_blog_json_health({0}): proxy: {1}".format(self.name, self.proxy_object.ip_address) + BColors.ENDC)
@@ -391,82 +433,69 @@ class TumblrBlog:
 
 
 
+class UpdatePayload(requests.Response):
+    """ Container dictionary holding values from json to pass along """
+    def __init__(self):
+        self.errors_title = None
+        self.valid = False
 
+def parse_json_response(json, update):
+    """returns a UpdatePayload() object that holds the fields to update in DB"""
+    t0 = time.time()
+    
+    # if not 200 <= json['meta']['status'] <= 399:
+    #     update.errors = json['errors']
+    #     return update
+    update.meta_status = json.get('meta')['status']
+    update.meta_msg = json.get('meta')['msg']
 
-#FIXME: delete?
-class ProxyGenerator():
-    """Yields the next proxy in the list"""
-    def init(self, proxylist):
-        self._complete_proxy_list = proxylist
+    if not json.get('response') and json.get('errors'):
+        update.errors_title = json.get('errors')[0]['title']
+        return update
 
-    def __iter__(self):
-        """returns a Proxy() object from a stale list"""
-        while self.complete_proxy_list:
-            yield self._complete_proxy_list.pop()
+    json = json.get('response')
+    update.blogname = json['blog']['name']
+    update.total_posts = json['blog']['total_posts']
+    update.updated = json['blog']['updated']
+    if json['posts']:
+        update.posts_response = json['posts'] #list of dicts
+        update.trimmed_posts_list = [] #list of dicts of posts
 
+        for post in update.posts_response: #dict in list
+            current_post_dict = {}
+            current_post_dict['id'] = post.get('id')
+            current_post_dict['date'] = post.get('date')
+            current_post_dict['updated'] = post.get('updated')
+            current_post_dict['post_url'] = post.get('post_url')
+            current_post_dict['blog_name'] = post.get('blog_name')
+            current_post_dict['timestamp'] = post.get('timestamp')
+            if 'trail' in post.keys() and len(post['trail']) > 0: # trail is not empty, it's a reblog
+                #FIXME: put this in a trail subdictionary
+                current_post_dict['reblogged_blog_name'] = post['trail'][0]['blog']['name']
+                current_post_dict['remote_id'] = int(post['trail'][0]['post']['id'])
+                current_post_dict['remote_content'] = post['trail'][0]['content_raw'].replace('\n', '')
+            else: #trail is an empty list
+                current_post_dict['reblogged_blog_name'] = None
+                current_post_dict['remote_id'] = None
+                current_post_dict['remote_content'] = None
+                pass
+            current_post_dict['photos'] = []
+            if 'photos' in post.keys():
+                for item in range(0, len(post['photos'])):
+                    current_post_dict['photos'].append(post['photos'][item]['original_size']['url'])
 
-def get_api_key_object_list(api_keys_filepath):
-    """Returns a list of APIKey objects"""
-    api_key_list = list()
+            update.trimmed_posts_list.append(current_post_dict)
 
-    for key, secret in read_api_keys_from_csv(api_keys_filepath).items():
-        api_key_list.append(APIKey(key, secret))
+        t1 = time.time()
+        print('Building list of posts took %.2f ms' % (1000*(t1-t0)))
 
-    return api_key_list
+#     for post in update.trimmed_posts_list:
+#         print("===============================\n\
+# POST number: " + str(update.trimmed_posts_list.index(post)))
+#         for key, value in post.items():
+#             print("key: " + str(key) + "\nvalue: " + str(value) + "\n--")
 
-
-def read_api_keys_from_csv(myfilepath):
-    """Returns dictionary of multiple {api_key: secret}"""
-    kvdict = dict()
-    with open(myfilepath, 'r') as f:
-        mycsv = csv.reader(f)
-        for row in mycsv:
-            key, secret = row
-            kvdict[key] = secret
-    return kvdict
-
-
-class APIKey:
-    """Api key object to keep track of requests per hour, day"""
-    request_max_hour = 1000
-    request_max_day = 5000
-    epoch_day = 86400
-    epoch_hour = 3600
-
-    def __init__(self, api_key=None, secret_key=None):
-        self.api_key = api_key
-        self.secret_key = secret_key
-        self.request_num = 0
-        self.first_used = float()
-        self.last_used = float()
-        self.disabled = False
-        self.disabled_until = float()
-
-    def disable_until(self):
-        """returns date until it's disabled"""
-        now = time.time()
-        pass #TODO: stub
-
-    def is_valid(self):
-        now = time.time()
-        if self.request_num >= request_max_day:
-            return False
-
-        if self.request_num >= request_max_hour:
-            return False
-        return True
-        #TODO: stub
-
-    def use_once(self):
-        now = time.time()
-        if self.first_used == 0.0:
-            self.first_used = now
-        self.request_num += 1
-        self.last_used = now
-    #TODO: stub
-
-
-
+    return update
 
 
 

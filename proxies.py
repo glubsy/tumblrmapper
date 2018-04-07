@@ -215,6 +215,9 @@ class ProxyScanner():
         return self.proxy_ua_dict
 
 
+def write_proxies_to_json():
+    # TODO: write proxies by ping quality, disabled, etc.
+    pass
 
 
 
