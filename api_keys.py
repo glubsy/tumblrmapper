@@ -32,7 +32,7 @@ def read_api_keys_from_json(myfilepath):
 
     data = json.load(open(myfilepath, 'r')) 
     return data.get('api_keys')
-
+    
 
 def dump_api_keys_to_json(myfilepath):
     """ Saves all api keys attributes to disk for later use"""
@@ -140,7 +140,7 @@ def read_api_keys_from_csv(myfilepath):
 
 if __name__ == "__main__":
     SCRIPTDIR = os.path.dirname(__file__)
-    API_KEYS_FILE = SCRIPTDIR + os.sep + "api_keys"
+    API_KEYS_FILE = SCRIPTDIR + os.sep + "api_keys_proxies"
 
     instances.api_keys = get_api_key_object_list(API_KEYS_FILE)
 

@@ -1,3 +1,6 @@
+import random
+import time
+
 class BColors:
     """Color codes for stdout"""
     HEADER = '\033[95m'
@@ -24,3 +27,9 @@ class BColors:
     WHITE = '\033[97m'
     BLUEOK = LIGHTBLUE + "[OK]: " + ENDC
     GREENOK = GREEN + "[OK]: " + ENDC
+
+def sleep_here(minwait=None, maxwait=None):
+    if not minwait and not maxwait:  
+        time.sleep(random.randrange(1, 5))
+    else:
+        time.sleep(random.randrange(minwait, maxwait))

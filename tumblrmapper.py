@@ -141,7 +141,7 @@ def main():
     fresh_proxy_dict = {'128.199.198.79:8118': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_7_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', '142.0.72.77:808': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.124 Safari/537.36', '80.211.4.187:8080': 'Mozilla/5.0 (compatible; MSIE 8.0; Windows NT 5.1; Trident/4.0; SLCC1; .NET CLR 3.0.4506.2152; .NET CLR 3.5.30729; .NET CLR 1.1.4322)', '188.166.68.38:3128': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', '196.220.96.39:3128': 'Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 6.1; WOW64; Trident/4.0; SLCC2; .NET CLR 2.0.50727; Media Center PC 6.0; .NET CLR 3.5.30729; .NET CLR 3.0.30729; .NET4.0C)', '176.53.2.122:8080': 'Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2228.0 Safari/537.36', '147.75.113.108:8080': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/34.0.1847.137 Safari/4E423F', '163.172.175.210:3128': 'Mozilla/5.0 (Macintosh; U; Intel Mac OS X 10_6_6; en-us) AppleWebKit/533.20.25 (KHTML, like Gecko) Version/5.0.4 Safari/533.20.27', '5.9.107.34:3128': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2227.1 Safari/537.36', '115.249.145.202:80': 'Mozilla/5.0 (Windows NT 6.2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/28.0.1467.0 Safari/537.36', '36.74.18.249:8080': 'Mozilla/5.0 (Windows NT 6.2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/28.0.1464.0 Safari/537.36', '41.190.33.162:8080': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/29.0.1547.2 Safari/537.36', '80.48.119.28:8080': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36', '94.177.247.162:8118': 'Mozilla/5.0 (X11; NetBSD) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.116 Safari/537.36', '89.236.17.108:3128': 'Mozilla/5.0 (Windows NT 5.1; rv:21.0) Gecko/20130401 Firefox/21.0', '196.220.96.34:3128': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/33.0.1750.517 Safari/537.36', '5.189.133.231:80': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_2) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1309.0 Safari/537.17', '173.212.202.65:443': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/30.0.1599.17 Safari/537.36', '59.106.215.9:3128': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', '35.185.39.27:6969': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/32.0.1664.3 Safari/537.36', '217.194.255.217:3128': 'Mozilla/5.0 (Windows NT 4.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', '119.11.240.152:3128': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_7_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36'}
     
     # Associate api_key to each proxy in fresh list
-    instances.proxy_scanner.gen_list_of_proxies_with_api_keys(fresh_proxy_dict, instances.api_keys)
+    instances.proxy_scanner.gen_list_of_proxy_objects(fresh_proxy_dict)
     instances.proxy_scanner.gen_proxy_cycle()
 
     # === DATABASE ===
@@ -206,24 +206,20 @@ def main():
     # exit
     # db.close_connection()
 
-def sleep_here(minwait=None, maxwait=None):
-    if not minwait and not maxwait:  
-        time.sleep(random.randrange(1, 5))
-    else:
-        time.sleep(random.randrange(minwait, maxwait))
+
 
 def process(db, lock):
     con = db.connect()
     with lock:
         blog = blog_generator(db, con)
 
-    sleep_here()
+    constants.sleep_here()
 
     update = UpdatePayload()
     if blog.crawl_status == 'new': # not yet updated
 
         while not update.valid:
-            sleep_here()
+            constants.sleep_here()
             try:
                 response = blog.api_get_blog_json_health()
                 check_response(db, con, response, update)
@@ -236,7 +232,7 @@ def process(db, lock):
     elif blog.crawl_status == 'resume': # refresh health info
 
         while not update.valid:
-            sleep_here()
+            constants.sleep_here()
             try:
                 response = blog.api_get_blog_json_health()
                 check_response(db, con, response, update)
@@ -274,6 +270,7 @@ def worker_blog_queue_feeder():
             isfull = blog_object_queue.put(blog_generator())
         except:
             pass
+
 
 def blog_generator(db, con):
     """Queries DB for a blog that is either new or needs update. 
@@ -335,6 +332,7 @@ def check_response(blog, con, response, update):
     return update
 
 
+
 class TumblrBlog:
     """blog object, holding retrieved values to pass along"""
 
@@ -370,11 +368,22 @@ class TumblrBlog:
             self.init_session() # refresh
 
 
+    def attach_random_api_key_to_proxy(self):
+        """ attach api key fetched from global list to proxy object already attached"""
+
+        if not self.proxy_object:
+            self.get_new_proxy() 
+        temp_key = api_keys.get_random_api_key(instances.api_keys)
+        self.proxy_object.api_key = temp_key.api_key
+        self.proxy_object.secret_key =  temp_key.secret_key
+
+
     def get_new_proxy(self, old_proxy_object=None):
         """ Pops old proxy gone bad from cycle, get a new one """
         if not old_proxy_object:
             old_proxy_object = self.proxy_object
         self.proxy_object = instances.proxy_scanner.get_new_proxy(old_proxy_object)
+        self.attach_random_api_key_to_proxy()
         self.init_session() # refresh session
 
         print(BColors.BLUEOK + "Changed proxy for {0} to {1}"\
