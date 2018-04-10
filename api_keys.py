@@ -4,9 +4,20 @@ import time
 import os
 import random
 import threading
-import tumblrmapper
+# import tumblrmapper
 from constants import BColors
 import instances
+
+
+def count_api_requests(func):
+    def func_wrapper(*args, **kwargs):
+        api_key = kwargs.get("api_key")
+        api_key.use_once()
+        print(BColors.LIGHTPINK + "API key used: {0}. Number of request left: {1}/{2}"\
+        .format(api_key.api_key, api_key.bucket_hour, api_key.bucket_day) + BColors.ENDC)
+        return func(*args, **kwargs)
+    return func_wrapper
+
 
 
 def get_api_key_object_list(api_keys_filepath):
@@ -77,8 +88,12 @@ def disable_api_key(api_key_object_list):
     write_api_keys_to_json()
 
 
-def get_random_api_key(apikey_list):
+def get_random_api_key(apikey_list=None):
     """ get a random not disabled api key from instances.api_keys list"""
+    
+    if not apikey_list:
+        apikey_list = instances.api_keys
+    
     attempt = 0
     while True:
         keycheck = random.choice(apikey_list)

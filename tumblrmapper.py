@@ -16,6 +16,7 @@ from itertools import cycle
 import requests
 
 import api_keys
+from api_keys import count_api_requests
 import db_handler
 import instances
 import proxies
@@ -146,9 +147,7 @@ def main():
     # Associate api_key to each proxy in fresh list
     #FIXME remove the two next lines; deprecated
     # instances.proxy_scanner.gen_list_of_proxy_objects(fresh_proxy_dict)
-    instances.proxy_scanner.gen_proxy_cycle(fresh_proxy_dict.get('proxies'))
-    print(next(instances.proxy_scanner.definitive_proxy_cycle))
-    print(type(next(instances.proxy_scanner.definitive_proxy_cycle)))
+    instances.proxy_scanner.gen_proxy_cycle(fresh_proxy_dict.get('proxies')) # dictionaries
 
     # === DATABASE ===
     db = db_handler.Database(db_filepath=instances.config.get('tumblrmapper', 'db_filepath'), \
@@ -212,6 +211,9 @@ def process(db, lock):
     con = db.connect()
     with lock:
         blog = blog_generator(db, con)
+    
+    if blog.name is None:
+        return
 
     instances.sleep_here()
 
@@ -221,11 +223,11 @@ def process(db, lock):
 
         while not update.valid:
             instances.sleep_here()
-            try:
-                response = blog.api_get_blog_json_health(lock)
-                check_response(db, con, response, update)
-            except:
-                print("DEBUG STUB error in check_response()")
+            # try:
+            response = blog.api_get_blog_json_health(lock)
+            check_response(db, con, response, update)
+            # except Exception as e :
+            #     print("DEBUG STUB error in check_response(): {0}".format(e))
 
         # update and retrieve blog info
         db_handler.update_blog_info(blog, con, update)
@@ -239,8 +241,8 @@ def process(db, lock):
             try:
                 response = blog.api_get_blog_json_health(lock)
                 check_response(db, con, response, update)
-            except:
-                print("DEBUG STUB error in check_response()")
+            except Exception as e :
+                print("DEBUG STUB error in check_response(): {0}".format(e))
 
         # update and retrieve blog info
         db_handler.update_blog_info(blog, con, update)
@@ -276,14 +278,6 @@ def worker_blog_queue_feeder():
             pass
 
 
-def count_api_requests(func):
-    def func_wrapper(*args, **kwargs):
-        api_key = kwargs.get("api_key")
-        api_key.use_once()
-        print(BColors.LIGHTPINK + "API key used: {0}. Number of request: {1}"\
-        .format(api_key, api_key.request_num) + BColors.ENDC)
-    return func_wrapper
-
 
 def blog_generator(db, con):
     """Queries DB for a blog that is either new or needs update.
@@ -293,6 +287,10 @@ def blog_generator(db, con):
     blog.name, blog.total_posts, blog.health, \
     blog.crawl_status, blog.post_scraped, \
     blog.offset, blog.last_checked = db_handler.fetch_random_blog(db, con)
+
+    if not blog.name:
+        print(BColors.FAIL + "No blog fetched in blog_generator()!" + BColors.ENDC)
+        return blog
 
     # attach a proxy
     blog.attach_proxy(next(instances.proxy_scanner.definitive_proxy_cycle))
@@ -310,7 +308,7 @@ def check_response(blog, con, response, update):
     Last checks before updating BLOG table with info
     if unauthorized in response, change API key here, etc."""
 
-    print(BColors.GREEN + "Updating DB with:", str(response) + BColors.ENDC)
+    print(BColors.GREEN + "check_response({0}) Updating DB.".format(response) + BColors.ENDC)
     # TESTING:
     # update = parse_json_response(json.load(open\
     # (SCRIPTDIR + "/tools/test/videogame-fantasy_july_reblogfalse_dupe.json", 'r')))
@@ -387,6 +385,7 @@ class TumblrBlog:
         """ attach api key fetched from global list to proxy object already attached"""
 
         self.api_key_object_ref = api_keys.get_random_api_key(instances.api_keys)
+        # print("APIKEY attached: {0}".format(self.api_key_object_ref.api_key))
         # self.proxy_object.api_key = temp_key.api_key
         # self.proxy_object.secret_key =  temp_key.secret_key
 
@@ -419,17 +418,19 @@ class TumblrBlog:
 
 
     # @ratelimit(1000, 3600)
-    @count_api_requests
+    @api_keys.count_api_requests
     def requester(self, url, requests_session=None, api_key=None):
         """ Does a request, returns json """
         # url = 'https://httpbin.org/get'
 
         if not requests_session:
             self.init_session()
-        print("---\nRequested new session for {0}: {1} {2}\n----"\
-        .format(self.name, self.requests_session.proxies, self.requests_session.headers))
+            print("---\nRequested new session for {0}: {1} {2}\n----"\
+            .format(self.name, self.requests_session.proxies, self.requests_session.headers))
 
+        print(BColors.GREEN + "Getting:{0}".format(url) + BColors.ENDC)
         try:
+            
             response = self.requests_session.get(url, timeout=10)
             # if response.status_code == 200:
             if response.status_code > 0:
@@ -450,7 +451,7 @@ class TumblrBlog:
         # renew proxy n times if it fails
         while attempt < 3:
             try:
-                response = self.requester(apiv2_url, self.requests_session, api_key)
+                response = self.requester(url=apiv2_url, requests_session=self.requests_session, api_key=api_key)
             except requests.exceptions.ProxyError as e:
                 logging.debug(BColors.FAIL + "Proxy error for {0}: {1}"\
                 .format(self.name, e.__repr__()) + BColors.ENDC)
