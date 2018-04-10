@@ -17,7 +17,7 @@ from fake_useragent import UserAgent, errors
 from lxml.html import fromstring
 import instances
 # import tumblrmapper
-from constants import BColors, sleep_here
+from constants import BColors
 
 try:
     ua = UserAgent() # init database, retrieves UAs
@@ -42,29 +42,42 @@ fakeresponse = {\
 class ProxyScanner():
     """Gets proxies, associates UA"""
     def __init__(self):
-        self.ua = ""
-        self.http_proxies_set = set()
-        self.proxy_ua_dict = { "proxies" : [] }
+        self.http_proxies_set = set() #temp set of proxies from free site
+        self.proxy_ua_dict = { "proxies" : [] } # the big global dict
         self.print_lock = threading.Lock()
         self.proxy_ua_dict_lock = threading.Lock()
-        self.definitive_proxy_list = None
-        self.definitive_proxy_cycle = None
-        self.http_proxies_recovered = dict()
+        self.definitive_proxy_cycle = None #cycle of the list of dicts above
+        self.http_proxies_recovered = set() #dicts of proxies previously recorded on disk
 
 
-    def get_new_proxy(self, old_proxy=None): #TODO: move this to the wallet, to pop out the bad proxy
+    def get_new_proxy(self, old_proxy=None, remove=None): #TODO: move this to the wallet, to pop out the bad proxy
+        """ Returns a new proxy from the regenerated definitive_proxy_cycle
+        if remove="remove", remove proxy that is unresponsive from the list and regen cycle
+        if remove="blacklist", save proxy in json as blacklisted to never use it ever again"""
+
         print("Removing proxy {0} and getting new one.".format(old_proxy))
-        if old_proxy is not None:
-            self.definitive_proxy_list.remove(old_proxy)
-        if not len(self.definitive_proxy_list): # if list of proxy object is depleted
-            self.gen_list_of_proxy_objects(self.get_proxies) # no more api keys here, later on tumblrblog object
-        self.gen_proxy_cycle()
+
+        if remove == "remove" and old_proxy is not None:
+            self.proxy_ua_dict.get('proxies').remove(old_proxy)
+
+        elif remove == "blacklist" is not None: # no remove,
+            dict_index = self.proxy_ua_dict.get('proxies').index(old_proxy) #WARNING: assuming the dict is this exact value!
+            self.proxy_ua_dict.get('proxies')[dict_index].update({"blacklisted": True}) # add the property
+            self.write_proxies_to_json_on_disk(self.proxy_ua_dict)
+
+        if not len(self.proxy_ua_dict.get('proxies')): # if list of proxy dict is depleted
+            self.get_proxies_from_internet()
+            self.gen_proxy_cycle() #FIXME: move into get_proxies()?
+
         return next(self.definitive_proxy_cycle)
 
 
-    def gen_proxy_cycle(self):
-        self.definitive_proxy_cycle = cycle(self.definitive_proxy_list)
-        return self.definitive_proxy_cycle
+    def gen_proxy_cycle(self, solid_dict=None):
+        """ Regens the definitive_proxy_cycle"""
+        if not solid_dict:
+            solid_dict = self.proxy_ua_dict.get('proxies')
+
+        self.definitive_proxy_cycle = cycle(solid_dict)
 
 
     def get_random(self, mylist):
@@ -72,37 +85,43 @@ class ProxyScanner():
         return random.choice(mylist)
 
 
-    def gen_list_of_proxy_objects(self, fresh_proxy_dict):
-        """Returns list of proxy objects, without api_keys fields populated"""
-        newlist = list()
-        for ip, ua in fresh_proxy_dict.items():
-            newlist.append(Proxy(ip, ua))
-
-        self.definitive_proxy_list = newlist
-
-        return self.definitive_proxy_list #FIXME: remove?
-
-
     def get_proxies_from_json_on_disk(self, myfilepath=None):
+        """ Returns the list of proxy dictionaries found in proxies json"""
+
         if not myfilepath: #FIXME: default path for testing
             myfilepath = SCRIPTDIR + os.sep + 'proxies.json'
         data = json.load(open(myfilepath, 'r'))
-        self.http_proxies_recovered = data.get('proxies')
+
+        # self.http_proxies_recovered = data.get('proxies')
+
         return data.get('proxies')
 
 
     def write_proxies_to_json_on_disk(self, data=None, myfilepath=None):
+
         if not myfilepath: #FIXME: default path for testing
-            myfilepath = SCRIPTDIR + os.sep + 'proxies_saved.json'
+            myfilepath = SCRIPTDIR + os.sep + 'proxies.json'
         if not data:
             data = self.proxy_ua_dict
+
+        active_list = data.get('proxies')
+        newlist = active_list + self.http_proxies_recovered
+        data['proxies'] = newlist # merging with saved blacklisted proxies
+        print("New dict: {0}".format(data.get('proxies')))
         with open(myfilepath, "w") as f:
             json.dump(data, f, indent=True)
 
 
-    def get_proxies(self):
+    def get_proxies_from_internet(self):
         """Returns a dict of validated IP:UA
         returns None if fetching free list failed"""
+        big_dict = self.with_threads()
+        self.write_proxies_to_json_on_disk(big_dict)
+        return big_dict
+
+
+    def with_threads(self):
+        
         # socks_proxies_list = get_free_socks_proxies("https://socks-proxy.net/", type=socks)
         attempt = 0
         while not self.proxy_ua_dict.get('proxies'):
@@ -114,18 +133,20 @@ class ProxyScanner():
             # we got nothing!
             if len(self.http_proxies_set) == 0:
                 attempt += 1
-                continue
+                continue #re-run!
 
             useragents_cycle = cycle(self.get_ua_set(len(self.http_proxies_set)))
 
             # populate with our previously recorded proxies
-            self.get_proxies_from_json_on_disk()
+            self.http_proxies_recovered = self.get_proxies_from_json_on_disk()
             for proxy in self.http_proxies_recovered:
-                if proxy.get('disabled'):
-                    # print(BColors.YELLOW + "From disk, skipping {0} because disabled.".format(proxy.get('ip_address')) + BColors.ENDC)
+                if proxy.get('disabled', False) or proxy.get('blacklisted', False):
+                    # print(BColors.YELLOW + "From disk, skipping {0} because blacklisted.".format(proxy.get('ip_address')) + BColors.ENDC)
                     continue
                 # self.proxy_ua_dict[proxy.get('ip_address')] = proxy.get('user_agent')
                 self.proxy_ua_dict.get('proxies').append(proxy)
+
+            print("In_between: {0}\n".format(self.proxy_ua_dict))
 
             # populate with our fresh set of proxies
             for ip in self.http_proxies_set:
@@ -140,7 +161,6 @@ class ProxyScanner():
                     self.proxy_ua_dict.get('proxies').append(temp_dict)
 
             print(BColors.LIGHTCYAN + "proxy_ua_dict populated: {0} ".format(self.proxy_ua_dict) + BColors.ENDC)
-
 
             def threader():
                 while True:
@@ -162,7 +182,7 @@ class ProxyScanner():
 
                 # begins, must come after daemon definition
                 t.start()
-            
+
             for proxy in self.proxy_ua_dict.get('proxies'):
                 q.put(proxy)
 
@@ -236,43 +256,46 @@ class ProxyScanner():
         return proxies
 
 
-    def job_test_proxy(self, proxy_ua_dict):
-        url = 'https://httpbin.org/get'
-        proxy_ip = proxy_ua_dict.get('ip_address')
-        proxy_ua = proxy_ua_dict.get('user_agent')
-        headers = {'User-Agent': proxy_ua_dict.get('user_agent')}
-        sleep_here()
+    def job_test_proxy(self, proxy_dict, debug=False):
+        if debug:
+            url = 'https://httpbin.org/get'
+        else:
+            url = 'https://www.yahoo.com/'
+        proxy_ip = proxy_dict.get('ip_address')
+        proxy_ua = proxy_dict.get('user_agent')
+        headers = {'User-Agent': proxy_dict.get('user_agent')}
+        instances.sleep_here()
         pass
         try:
             with self.print_lock:
                 print("Testing proxy {0} / UA {1}:".format(proxy_ip, proxy_ua))
             response = requests.get(url, proxies={"http": proxy_ip, "https": proxy_ip}, headers=headers, timeout=11)
 
-            if response.status_code == 200:
-                json_data = response.json()
-                with self.print_lock:
-                    print(BColors.BLUEOK + BColors.GREEN + " origin: " + json_data['origin'] + "/ UA: " + json_data['headers']['User-Agent'] + BColors.ENDC )
-            # print(response.json())
-        except Exception as e:
-            # del self.proxy_ua_dict[proxy]
+            if response.status_code == 200 or response.status_code == 404:
+                if debug:
+                    json_data = response.json()
+                    with self.print_lock:
+                        print(BColors.BLUEOK + BColors.GREEN + "Origin: {0} -- UA: {1}"\
+                        .format(json_data.get('origin'), json_data.get('headers').get('User-Agent')) + BColors.ENDC )
+                else:
+                    print(BColors.GREEN + "Response: {0}".format(response) + BColors.ENDC)
+        except (requests.exceptions.ProxyError, requests.exceptions.Timeout,\
+            requests.exceptions.ReadTimeout, requests.exceptions.ConnectTimeout) as e:
             with self.print_lock:
-                print(BColors.MAGENTA + "Exception! Removing {0}{2} from {1}".format(proxy_ip, 'proxy pool', BColors.ENDC))
-                print(BColors.FAIL + "Connnection error for {0}: {1}".format(proxy_ip, e) + BColors.ENDC + "\n")
-            with self.proxy_ua_dict_lock:    
+                print(BColors.FAIL + "Connnection error for {0}: {1}".format(proxy_ip, e) + BColors.ENDC)
+                print(BColors.MAGENTA + "Exception! Removing {0}{2} from {1}".format(proxy_ip, 'proxy pool and recovered', BColors.ENDC))
+            with self.proxy_ua_dict_lock:
                 try:
-                    self.proxy_ua_dict.get('proxies').remove(proxy_ua_dict)
+                    self.proxy_ua_dict.get('proxies').remove(proxy_dict)
+                    for proxy in self.http_proxies_recovered:
+                        if proxy.get('ip_address') == proxy_dict.get('ip_address'):
+                            print(BColors.MAGENTA + "Also removing {0} from recovered list".format(proxy_dict.get('ip_address')) + BColors.ENDC)
+                            self.http_proxies_recovered.remove(proxy_dict)
                 except Exception as e:
                     print(BColors.MAGENTA + BColors.BOLD + "Error removing proxy {0} from pool: {1}"\
-                    .format(proxy_ua_dict.get('ip_address'), e) + BColors.ENDC)
+                    .format(proxy_dict.get('ip_address'), e) + BColors.ENDC)
         # with self.print_lock:
         #     print(threading.current_thread().name,worker)
-
-
-
-def write_proxies_to_json():
-    # TODO: write proxies by ping quality, disabled, etc.
-    pass
-
 
 
 class Proxy:
@@ -287,7 +310,6 @@ class Proxy:
 
 if __name__ == "__main__":
     scanner = ProxyScanner()
-    proxies = scanner.get_proxies()
+    proxies = scanner.get_proxies_from_internet()
     # print("Proxies final: " + str(proxies))
     json.dumps(proxies, indent=True)
-    scanner.write_proxies_to_json_on_disk()

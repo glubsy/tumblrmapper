@@ -343,7 +343,7 @@ def update_blog_info(database, con, update):
     #     con.execute(stmt, )
     print(BColors.BLUE + "updating Blogs table with info:" + update + BColors.ENDC)
     cur = con.cursor()
-    # args: (blogname, UP|DEAD|WIPED, total_posts, updated, crawl_status(resume|dead))
+    # args: (blogname, UP|DEAD|WIPED, total_posts, updated, crawl_status(resume(default)|dead))
     params = (update.name, update.health, update.total_posts, update.updated)
     cur.execute(cur.prep('execute procedure insert_blog_init_info(?, ?, ?, ?, ?)'), params)
     return
@@ -362,6 +362,7 @@ def ping_blog_status(blog):
     # return status
     pass
 
+
 def fetch_random_blog(database, con):
     """ Queries DB for a blog that is available """
     cur = con.cursor()
@@ -369,10 +370,7 @@ def fetch_random_blog(database, con):
         # sql = cur.prep("execute procedure fetch_one_blogname;")
         cur.execute("execute procedure fetch_one_blogname;")
         # cur.execute("select * from blogs;")
-
-        return cur.fetchone()
-
-        
+        return cur.fetchone() #tuple ('blog', None, None, 'new', None, None, None)
 
 
 def populate_db_with_archives(database, archivepath):
@@ -451,7 +449,7 @@ def create_blank_database(database):
 
 def test_update_table(database, con):
     """feed testing data"""
-    update = tumblr_client.parse_json_response(json.load(open\
+    update = tumblrmapper.parse_json_response(json.load(open\
     (SCRIPTDIR + "tools/test/vgf_july_reblogfalse_dupe.json", 'r')))
     # con = fdb.connect(database=database.db_filepath, user=database.username, password=database.password)
     cur = con.cursor()

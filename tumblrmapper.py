@@ -22,7 +22,9 @@ import proxies
 import tumblr_client
 import tumdlr_classes
 from constants import BColors
-from rate_limiter import RateLimiter
+
+# import ratelimit
+
 
 # try:
 #     from tqdm import tqdm
@@ -75,7 +77,7 @@ def parse_config(config_path=SCRIPTDIR, data_path=None):
                         "db_filepath": data_path + os.sep, #blank initial DB file
                         "api_version": "2", #use api v2 by default
                         "proxies": False, #use random proxies, or not
-                        "api_keys": "api_keys.txt",
+                        "api_keys": data_path + os.sep + "api_keys.json",
                         "threads": 10
                         }
 
@@ -109,17 +111,17 @@ def main():
                         level=getattr(logging, args.log_level.upper()))
     logging.debug("Debugging Enabled.")
 
-    config = parse_config(args.config_path, args.data_path)
+    instances.config = parse_config(args.config_path, args.data_path)
 
-    THREADS = config.getint('tumblrmapper', 'threads')
+    THREADS = instances.config.getint('tumblrmapper', 'threads')
 
     if args.create_blank_db: # we asked for a brand new DB file
-        blogs_toscrape = config.get('tumblrmapper', 'blogs_to_scrape')
-        archives_toload = config.get('tumblrmapper', 'archives')
-        temp_database_path = config.get('tumblrmapper', 'blank_db')
+        blogs_toscrape = instances.config.get('tumblrmapper', 'blogs_to_scrape')
+        archives_toload = instances.config.get('tumblrmapper', 'archives')
+        temp_database_path = instances.config.get('tumblrmapper', 'blank_db')
         temp_database = db_handler.Database(db_filepath=temp_database_path, \
                                 username="sysdba", password="masterkey")
-        
+
         db_handler.create_blank_database(temp_database)
         db_handler.populate_db_with_blogs(temp_database, blogs_toscrape)
         # Optional archives too
@@ -130,29 +132,33 @@ def main():
     # === API KEY ===
     # list of APIKey objects
     instances.api_keys = api_keys.get_api_key_object_list(\
-    SCRIPTDIR + os.sep + config.get('tumblrmapper', 'api_keys'))
+    SCRIPTDIR + os.sep + instances.config.get('tumblrmapper', 'api_keys'))
 
     # === PROXIES ===
     # Get proxies from free proxies site
     instances.proxy_scanner = proxies.ProxyScanner()
-    # fresh_proxy_dict = proxy_scanner.get_proxies()
+    # fresh_proxy_dict = instances.proxy_scanner.get_proxies_from_internet()
     # print(fresh_proxy_dict)
 
-    fresh_proxy_dict = {'128.199.198.79:8118': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_7_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', '142.0.72.77:808': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.124 Safari/537.36', '80.211.4.187:8080': 'Mozilla/5.0 (compatible; MSIE 8.0; Windows NT 5.1; Trident/4.0; SLCC1; .NET CLR 3.0.4506.2152; .NET CLR 3.5.30729; .NET CLR 1.1.4322)', '188.166.68.38:3128': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', '196.220.96.39:3128': 'Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 6.1; WOW64; Trident/4.0; SLCC2; .NET CLR 2.0.50727; Media Center PC 6.0; .NET CLR 3.5.30729; .NET CLR 3.0.30729; .NET4.0C)', '176.53.2.122:8080': 'Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2228.0 Safari/537.36', '147.75.113.108:8080': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/34.0.1847.137 Safari/4E423F', '163.172.175.210:3128': 'Mozilla/5.0 (Macintosh; U; Intel Mac OS X 10_6_6; en-us) AppleWebKit/533.20.25 (KHTML, like Gecko) Version/5.0.4 Safari/533.20.27', '5.9.107.34:3128': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2227.1 Safari/537.36', '115.249.145.202:80': 'Mozilla/5.0 (Windows NT 6.2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/28.0.1467.0 Safari/537.36', '36.74.18.249:8080': 'Mozilla/5.0 (Windows NT 6.2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/28.0.1464.0 Safari/537.36', '41.190.33.162:8080': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/29.0.1547.2 Safari/537.36', '80.48.119.28:8080': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36', '94.177.247.162:8118': 'Mozilla/5.0 (X11; NetBSD) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.116 Safari/537.36', '89.236.17.108:3128': 'Mozilla/5.0 (Windows NT 5.1; rv:21.0) Gecko/20130401 Firefox/21.0', '196.220.96.34:3128': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/33.0.1750.517 Safari/537.36', '5.189.133.231:80': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_2) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1309.0 Safari/537.17', '173.212.202.65:443': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/30.0.1599.17 Safari/537.36', '59.106.215.9:3128': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', '35.185.39.27:6969': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/32.0.1664.3 Safari/537.36', '217.194.255.217:3128': 'Mozilla/5.0 (Windows NT 4.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', '119.11.240.152:3128': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_7_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36'}
-    
+    fresh_proxy_dict = {'proxies': [{'ip_address': '92.53.73.138:8118', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/28.0.1467.0 Safari/537.36', 'disabled': False}, {'ip_address': '162.242.158.97:3128', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '92.47.30.74:45618', 'user_agent': 'Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 6.1; WOW64; Trident/4.0; SLCC2; .NET CLR2.0.50727; InfoPath.2)', 'disabled': False}, {'ip_address': '122.183.243.68:8080', 'user_agent': 'Mozilla/5.0 (Windows; U; Windows NT 6.1; sv-SE) AppleWebKit/533.19.4 (KHTML, like Gecko) Version/5.0.3 Safari/533.19.4', 'disabled': False}, {'ip_address': '191.102.92.187:80', 'user_agent': 'Mozilla/5.0 (Windows NT 5.1; rv:21.0) Gecko/20130401 Firefox/21.0', 'disabled': False}, {'ip_address': '185.19.176.237:53281', 'user_agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/33.0.1750.517 Safari/537.36', 'disabled': False}, {'ip_address': '158.69.200.254:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1985.67 Safari/537.36', 'disabled': False}, {'ip_address': '192.116.142.153:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/30.0.1599.17 Safari/537.36', 'disabled': False}, {'ip_address': '201.64.157.242:80', 'user_agent': 'Mozilla/5.0 (Macintosh; U; Intel Mac OS X 10_6_6; ko-kr) AppleWebKit/533.20.25 (KHTML, like Gecko) Version/5.0.4 Safari/533.20.27', 'disabled': False}, {'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/29.0.1547.62 Safari/537.36', 'disabled': False}, {'ip_address': '128.199.198.79:8118', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2) AppleWebKit/537.36 (KHTML,like Gecko) Chrome/28.0.1467.0 Safari/537.36', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}]}
+
+
     # Associate api_key to each proxy in fresh list
-    instances.proxy_scanner.gen_list_of_proxy_objects(fresh_proxy_dict)
-    instances.proxy_scanner.gen_proxy_cycle()
+    #FIXME remove the two next lines; deprecated
+    # instances.proxy_scanner.gen_list_of_proxy_objects(fresh_proxy_dict)
+    instances.proxy_scanner.gen_proxy_cycle(fresh_proxy_dict.get('proxies'))
+    print(next(instances.proxy_scanner.definitive_proxy_cycle))
+    print(type(next(instances.proxy_scanner.definitive_proxy_cycle)))
 
     # === DATABASE ===
-    db = db_handler.Database(db_filepath=config.get('tumblrmapper', 'db_filepath'), \
-                            username=config.get('tumblrmapper', 'username'),
-                            password=config.get('tumblrmapper', 'password'))
+    db = db_handler.Database(db_filepath=instances.config.get('tumblrmapper', 'db_filepath'), \
+                            username=instances.config.get('tumblrmapper', 'username'),
+                            password=instances.config.get('tumblrmapper', 'password'))
     # db.connect()
 
     # === BLOG ===
     blog_object_queue = queue.Queue(maxsize=THREADS)
-    
+
     # while True:
     # == Fetch 10 available blogs from DB ==
     daemon_threads = []
@@ -164,11 +170,8 @@ def main():
         worker_threads.append(t)
         t.start()
 
-
     with futures.ThreadPoolExecutor(max_workers=THREADS) as executor:
         executor.map(worker_threads)
-
-
 
     # def worker_get_from_queue(q):
     #     while True:
@@ -178,8 +181,6 @@ def main():
     #             break
     #         do_work(item)
     #         q.task_done()
-    
-
 
     for t in worker_threads:
         t.join()
@@ -207,53 +208,56 @@ def main():
     # db.close_connection()
 
 
-
 def process(db, lock):
     con = db.connect()
     with lock:
         blog = blog_generator(db, con)
 
-    constants.sleep_here()
+    instances.sleep_here()
 
     update = UpdatePayload()
+
     if blog.crawl_status == 'new': # not yet updated
 
         while not update.valid:
-            constants.sleep_here()
+            instances.sleep_here()
             try:
-                response = blog.api_get_blog_json_health()
+                response = blog.api_get_blog_json_health(lock)
                 check_response(db, con, response, update)
+            except:
+                print("DEBUG STUB error in check_response()")
 
         # update and retrieve blog info
-        db_blog_record = db_handler.update_blog_info(blog, con, update)
-
-        offset = db_blog_record['offset']
+        db_handler.update_blog_info(blog, con, update)
+        # db_blog_record = 
+        # offset = db_blog_record['offset']
 
     elif blog.crawl_status == 'resume': # refresh health info
 
         while not update.valid:
-            constants.sleep_here()
+            instances.sleep_here()
             try:
-                response = blog.api_get_blog_json_health()
+                response = blog.api_get_blog_json_health(lock)
                 check_response(db, con, response, update)
             except:
-
+                print("DEBUG STUB error in check_response()")
 
         # update and retrieve blog info
-        db_blog_record = db_handler.update_blog_info(blog, con, update)
+        db_handler.update_blog_info(blog, con, update)
+        # db_blog_record = 
+        # offset = read_offset_from_DB(db_blog_record)
 
-        offset = read_offset_from_DB(db_blog_record)
 
-
-    if db_blog_record.health == 'DEAD':
-        print(BColors.FAIL + "WARNING! Blog {0} appears to be dead!".format(db_blog_record.name) + BColors.ENDC)
-        return
-
+    # if db_blog_record.health == 'DEAD':
+    #     print(BColors.FAIL + "WARNING! Blog {0} appears to be dead!".format(db_blog_record.name) + BColors.ENDC)
+    #     return
     startcrawling(blog, offset=offset)
 
-def read_offset_from_DB(blog):
 
-    return db_blog_record
+def read_offset_from_DB(blog):
+    # STUB
+    return None
+
 
 def startcrawling(blog, offset=None):
     print("start crawling {0}, offsert: {1}".format(blog.name, offset))
@@ -272,8 +276,17 @@ def worker_blog_queue_feeder():
             pass
 
 
+def count_api_requests(func):
+    def func_wrapper(*args, **kwargs):
+        api_key = kwargs.get("api_key")
+        api_key.use_once()
+        print(BColors.LIGHTPINK + "API key used: {0}. Number of request: {1}"\
+        .format(api_key, api_key.request_num) + BColors.ENDC)
+    return func_wrapper
+
+
 def blog_generator(db, con):
-    """Queries DB for a blog that is either new or needs update. 
+    """Queries DB for a blog that is either new or needs update.
     Returns a TumblrBlog() object instance with no proxy attached to it."""
 
     blog = TumblrBlog()
@@ -281,10 +294,11 @@ def blog_generator(db, con):
     blog.crawl_status, blog.post_scraped, \
     blog.offset, blog.last_checked = db_handler.fetch_random_blog(db, con)
 
-    # attach a proxy 
-    blog.proxy_object = next(instances.proxy_scanner.definitive_proxy_cycle)
+    # attach a proxy
+    blog.attach_proxy(next(instances.proxy_scanner.definitive_proxy_cycle))
     # init requests.session with headers
-    blog.init_session() 
+    blog.init_session()
+    blog.attach_random_api_key()
 
     print(BColors.CYAN + "Got blog from DB: {0}".format(blog.name) + BColors.ENDC)
 
@@ -295,12 +309,12 @@ def check_response(blog, con, response, update):
     """ Reads the response object, updates the blog attributes accordingly.
     Last checks before updating BLOG table with info
     if unauthorized in response, change API key here, etc."""
-    
+
     print(BColors.GREEN + "Updating DB with:", str(response) + BColors.ENDC)
-    # TESTING: 
+    # TESTING:
     # update = parse_json_response(json.load(open\
     # (SCRIPTDIR + "/tools/test/videogame-fantasy_july_reblogfalse_dupe.json", 'r')))
-    
+
     parse_json_response(response, update)
 
     if update.errors_title is not None:
@@ -313,7 +327,7 @@ def check_response(blog, con, response, update):
         if "error" in update.errors and "Unauthorized" in update.errors:
             print(BColors.FAIL + "Blog {0} is unauthorized! Missing API key? REROLL!".format(blog.name) + BColors.ENDC)
             # FIXME: that's assuming only the API key is responsible for unauthorized, might be the IP!
-            blog.renew_api_key_for_proxy()
+            blog.renew_api_key()
             update.valid = False
             return update
 
@@ -345,18 +359,19 @@ class TumblrBlog:
         self.crawl_status = None
         self.last_checked = None
         self.proxy_object = None
+        self.api_key_object_ref = None
         self.requests_session = None
         self.current_json = None
 
-    def init_session(self): 
+    def init_session(self):
         if not self.requests_session: # first time
             requests_session = requests.Session()
-            requests_session.headers.update({'User-Agent': self.proxy_object.user_agent})
-            requests_session.proxies.update({'http': self.proxy_object.ip_address, 'https': self.proxy_object.ip_address})
+            requests_session.headers.update({'User-Agent': self.proxy_object.get('user_agent')})
+            requests_session.proxies.update({'http': self.proxy_object.get('ip_address'), 'https': self.proxy_object.get('ip_address')})
             self.requests_session = requests_session
-        else: 
-            self.requests_session.headers.update({'User-Agent': self.proxy_object.user_agent})
-            self.requests_session.proxies.update({'http': self.proxy_object.ip_address, 'https': self.proxy_object.ip_address})
+        else:
+            self.requests_session.headers.update({'User-Agent': self.proxy_object.get('user_agent')})
+            self.requests_session.proxies.update({'http': self.proxy_object.get('ip_address'), 'https': self.proxy_object.get('ip_address')})
 
 
     def attach_proxy(self, proxy_object):
@@ -368,41 +383,51 @@ class TumblrBlog:
             self.init_session() # refresh
 
 
-    def attach_random_api_key_to_proxy(self):
+    def attach_random_api_key(self):
         """ attach api key fetched from global list to proxy object already attached"""
 
-        if not self.proxy_object:
-            self.get_new_proxy() 
-        temp_key = api_keys.get_random_api_key(instances.api_keys)
-        self.proxy_object.api_key = temp_key.api_key
-        self.proxy_object.secret_key =  temp_key.secret_key
+        self.api_key_object_ref = api_keys.get_random_api_key(instances.api_keys)
+        # self.proxy_object.api_key = temp_key.api_key
+        # self.proxy_object.secret_key =  temp_key.secret_key
+
+        # attach string to local proxy dict, in case we need to keep the proxy for later use
+        self.proxy_object.update({'api_key': self.api_key_object_ref.api_key})
 
 
-    def get_new_proxy(self, old_proxy_object=None):
+    def renew_api_key(self, old_api_key=None):
+        # mark as disabled from global list pool
+        if not old_api_key:
+            old_api_key = self.api_key_object_ref
+
+        api_keys.disable_api_key(old_api_key)
+        self.attach_random_api_key()
+
+
+    def get_new_proxy(self, lock, old_proxy_object=None):
         """ Pops old proxy gone bad from cycle, get a new one """
         if not old_proxy_object:
             old_proxy_object = self.proxy_object
-        self.proxy_object = instances.proxy_scanner.get_new_proxy(old_proxy_object)
-        self.attach_random_api_key_to_proxy()
+
+        with lock: # get_new_proxy() requires a lock!
+            self.proxy_object = instances.proxy_scanner.get_new_proxy(old_proxy_object)
+
+        self.attach_random_api_key()
         self.init_session() # refresh session
 
         print(BColors.BLUEOK + "Changed proxy for {0} to {1}"\
-        .format(self.name, self.proxy_object.ip_address) + BColors.ENDC)
+        .format(self.name, self.proxy_object.get('ip_address')) + BColors.ENDC)
 
 
-    def renew_api_key_for_proxy(self, old_api_key)
-        # mark as disabled from global list pool
-        api_keys.disable_api_key(old_api_key)
-        self.proxy_object.api_key = api_keys.get_random_api_key(instances.api_keys)
-
-    
-    def requester(self, url, requests_session=None):
+    # @ratelimit(1000, 3600)
+    @count_api_requests
+    def requester(self, url, requests_session=None, api_key=None):
         """ Does a request, returns json """
         # url = 'https://httpbin.org/get'
 
         if not requests_session:
             self.init_session()
-        print("---\nRequested new session for {0}: {1} {2}\n----".format(self.name, self.requests_session.proxies, self.requests_session.headers))
+        print("---\nRequested new session for {0}: {1} {2}\n----"\
+        .format(self.name, self.requests_session.proxies, self.requests_session.headers))
 
         try:
             response = self.requests_session.get(url, timeout=10)
@@ -410,30 +435,32 @@ class TumblrBlog:
             if response.status_code > 0:
                 json_data = response.json()
                 return json_data
-            return response.json() #FIXME: TESTING 
+            return response.json() #FIXME: TESTING
         except Exception as e:
             raise
 
 
-    def api_get_blog_json_health(self):
+    def api_get_blog_json_health(self, lock, api_key=None):
         """Returns requests.response object"""
+        if not api_key:
+            api_key = self.api_key_object_ref
         attempt = 0
-        apiv2_url = 'https://api.tumblr.com/v2/blog/{0}/info?api_key={1}'.format(self.name, self.proxy_object.api_key)
-        print(BColors.YELLOW + "api_get_blog_json_health({0}): proxy: {1}".format(self.name, self.proxy_object.ip_address) + BColors.ENDC)
+        apiv2_url = 'https://api.tumblr.com/v2/blog/{0}/info?api_key={1}'.format(self.name, api_key.api_key)
+        print(BColors.YELLOW + "api_get_blog_json_health({0}): proxy: {1}".format(self.name, self.proxy_object.get('ip_address')) + BColors.ENDC)
         # renew proxy n times if it fails
         while attempt < 3:
-            try: 
-                response = self.requester(apiv2_url, self.requests_session)
+            try:
+                response = self.requester(apiv2_url, self.requests_session, api_key)
             except requests.exceptions.ProxyError as e:
                 logging.debug(BColors.FAIL + "Proxy error for {0}: {1}"\
                 .format(self.name, e.__repr__()) + BColors.ENDC)
-                self.get_new_proxy()
+                self.get_new_proxy(lock)
                 attempt += 1
                 continue
             except requests.exceptions.Timeout as e:
                 logging.debug(BColors.FAIL + "Proxy Timeout on {0}: {1}"\
                 .format(self.name, e.__repr__()) + BColors.ENDC )
-                self.get_new_proxy()
+                self.get_new_proxy(lock)
                 attempt += 1
                 continue
             return response
@@ -451,7 +478,7 @@ class UpdatePayload(requests.Response):
 def parse_json_response(json, update):
     """returns a UpdatePayload() object that holds the fields to update in DB"""
     t0 = time.time()
-    
+
     # if not 200 <= json['meta']['status'] <= 399:
     #     update.errors = json['errors']
     #     return update
