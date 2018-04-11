@@ -10,6 +10,7 @@ import signal
 import sys
 import threading
 import time
+import signal
 from concurrent import futures
 from itertools import cycle
 
@@ -23,7 +24,7 @@ import proxies
 import tumblr_client
 import tumdlr_classes
 from constants import BColors
-
+# import curses
 # import ratelimit
 
 
@@ -34,7 +35,8 @@ from constants import BColors
 #     TQDM_AVAILABLE = False
 SCRIPTDIR = os.path.dirname(__file__)
 THREADS = 10
-
+asked_termination = False
+sigint_again = False
 
 def parse_args():
     """Parse command-line arguments."""
@@ -129,6 +131,7 @@ def main():
         # db_handler.populate_db_with_archives(temp_database, archives_toload)
         print(BColors.BLUEOK + BColors.GREEN + "Done creating blank DB in: " + temp_database.db_filepath + BColors.ENDC)
         return
+    
 
     # === API KEY ===
     # list of APIKey objects
@@ -141,8 +144,7 @@ def main():
     # fresh_proxy_dict = instances.proxy_scanner.get_proxies_from_internet()
     # print(fresh_proxy_dict)
 
-    fresh_proxy_dict = {'proxies': [{'ip_address': '92.53.73.138:8118', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/28.0.1467.0 Safari/537.36', 'disabled': False}, {'ip_address': '162.242.158.97:3128', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '92.47.30.74:45618', 'user_agent': 'Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 6.1; WOW64; Trident/4.0; SLCC2; .NET CLR2.0.50727; InfoPath.2)', 'disabled': False}, {'ip_address': '122.183.243.68:8080', 'user_agent': 'Mozilla/5.0 (Windows; U; Windows NT 6.1; sv-SE) AppleWebKit/533.19.4 (KHTML, like Gecko) Version/5.0.3 Safari/533.19.4', 'disabled': False}, {'ip_address': '191.102.92.187:80', 'user_agent': 'Mozilla/5.0 (Windows NT 5.1; rv:21.0) Gecko/20130401 Firefox/21.0', 'disabled': False}, {'ip_address': '185.19.176.237:53281', 'user_agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/33.0.1750.517 Safari/537.36', 'disabled': False}, {'ip_address': '158.69.200.254:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1985.67 Safari/537.36', 'disabled': False}, {'ip_address': '192.116.142.153:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/30.0.1599.17 Safari/537.36', 'disabled': False}, {'ip_address': '201.64.157.242:80', 'user_agent': 'Mozilla/5.0 (Macintosh; U; Intel Mac OS X 10_6_6; ko-kr) AppleWebKit/533.20.25 (KHTML, like Gecko) Version/5.0.4 Safari/533.20.27', 'disabled': False}, {'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/29.0.1547.62 Safari/537.36', 'disabled': False}, {'ip_address': '128.199.198.79:8118', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2) AppleWebKit/537.36 (KHTML,like Gecko) Chrome/28.0.1467.0 Safari/537.36', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}]}
-
+    fresh_proxy_dict = {'proxies': [{'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36(KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '47.206.51.67:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.4; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2225.0 Safari/537.36', 'disabled': False}, {'ip_address': '92.53.73.138:8118', 'user_agent': 'Mozilla/5.0 (Windows NT6.1; WOW64; rv:21.0) Gecko/20130331 Firefox/21.0', 'disabled': False}, {'ip_address': '45.77.247.164:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '80.211.4.187:8080', 'user_agent': 'Mozilla/5.0 (Microsoft Windows NT 6.2.9200.0); rv:22.0) Gecko/20130405 Firefox/22.0', 'disabled': False}, {'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '66.82.123.234:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1985.67 Safari/537.36', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64;x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh;Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '52.164.249.198:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.2309.372 Safari/537.36', 'disabled': False}, {'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '47.206.51.67:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.4; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2225.0 Safari/537.36', 'disabled':False}, {'ip_address': '92.53.73.138:8118', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:21.0) Gecko/20130331 Firefox/21.0', 'disabled': False}, {'ip_address': '45.77.247.164:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '80.211.4.187:8080', 'user_agent': 'Mozilla/5.0 (Microsoft Windows NT 6.2.9200.0); rv:22.0) Gecko/20130405 Firefox/22.0', 'disabled': False}, {'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '191.34.157.243:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.124 Safari/537.36', 'disabled': False}, {'ip_address': '61.91.251.235:8080', 'user_agent': 'Opera/9.80 (Windows NT 5.1; U; zh-tw) Presto/2.8.131 Version/11.10', 'disabled': False}, {'ip_address': '41.190.33.162:8080', 'user_agent': 'Mozilla/5.0 (X11; CrOS i686 4319.74.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/29.0.1547.57 Safari/537.36', 'disabled': False}, {'ip_address': '80.48.119.28:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '213.99.103.187:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/28.0.1464.0 Safari/537.36', 'disabled': False}, {'ip_address': '141.105.121.181:80', 'user_agent': 'Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 7.0; InfoPath.3; .NET CLR 3.1.40767; Trident/6.0; en-IN)', 'disabled': False}]}
 
     # Associate api_key to each proxy in fresh list
     #FIXME remove the two next lines; deprecated
@@ -156,109 +158,152 @@ def main():
     # db.connect()
 
     # === BLOG ===
-    blog_object_queue = queue.Queue(maxsize=THREADS)
+    que = queue.Queue(maxsize=THREADS)
 
-    # while True:
-    # == Fetch 10 available blogs from DB ==
-    daemon_threads = []
-    worker_threads = []
-    lock = threading.Lock()
-    for i in range(0,THREADS):
-        args = (db, lock)
-        t = threading.Thread(target=process, args=args)
-        worker_threads.append(t)
+    while True:
+        q = []
+        t = threading.Thread(target=input_thread, args=(q,))
+        t.daemon = True
         t.start()
+        worker_threads = []
 
-    with futures.ThreadPoolExecutor(max_workers=THREADS) as executor:
-        executor.map(worker_threads)
+        worker_threads.append(t)
 
-    # def worker_get_from_queue(q):
-    #     while True:
-    #         item = q.get()
-    #         if item is end_of_queue:
-    #             q.task_done()
-    #             break
-    #         do_work(item)
-    #         q.task_done()
+        pill2kill = threading.Event()
+        lock = threading.Lock()
 
-    for t in worker_threads:
-        t.join()
+        for i in range(0, THREADS - 1):
+            args = (db, lock, q)
+            t = threading.Thread(target=process, args=args)
+            worker_threads.append(t)
+            t.start()
+        
+        with futures.ThreadPoolExecutor(max_workers=THREADS) as executor:
+            executor.map(worker_threads)
+        
+        # def worker_get_from_queue(q):
+        #     while True:
+        #         item = q.get()
+        #         if item is end_of_queue:
+        #             q.task_done()
+        #             break
+        #         do_work(item)
+        #         q.task_done()
 
-    # ============= FUTURES TEST =======================
-    # with futures.ThreadPoolExecutor(THREADS) as executor:
-    #     info_jobs = [executor.submit(blog.api_get_blog_json_health) for blog in blog_object_list]
-    #     futures.wait(info_jobs, timeout=10, return_when=futures.ALL_COMPLETED)
-    #     results = [job.result() for job in info_jobs]
-    #     process_job = [executor.submit(update_blog_health_db, blog, result) for result in results]
-        # process_job.add_done_callback()
-    # ============= FUTURES TEST =======================
+        for t in worker_threads:
+            t.join()
 
-    # # When prerequisite is completed
-    # with futures.ThreadPoolExecutor(THREADS) as executor:
-    #     jobs = [executor.submit(get_posts, blog) for blog in blogs] #"blog" is an iterable of single arguments
-    #     if keyboard_interrupt:
-    #         for job in jobs:
-    #             jobs.cancel()
-    #     for comp_job in futures.as_completed(jobs):
-    #         response = comp_job.result()
-    #         executor.submit(insert_into_db, response)
+        # ============= FUTURES TEST =======================
+        # with futures.ThreadPoolExecutor(THREADS) as executor:
+        #     info_jobs = [executor.submit(blog.api_get_blog_json_health) for blog in blog_object_list]
+        #     futures.wait(info_jobs, timeout=10, return_when=futures.ALL_COMPLETED)
+        #     results = [job.result() for job in info_jobs]
+        #     process_job = [executor.submit(update_blog_health_db, blog, result) for result in results]
+            # process_job.add_done_callback()
+        # ============= FUTURES TEST =======================
 
-    # exit
-    # db.close_connection()
+        # # When prerequisite is completed
+        # with futures.ThreadPoolExecutor(THREADS) as executor:
+        #     jobs = [executor.submit(get_posts, blog) for blog in blogs] #"blog" is an iterable of single arguments
+        #     if keyboard_interrupt:
+        #         for job in jobs:
+        #             jobs.cancel()
+        #     for comp_job in futures.as_completed(jobs):
+        #         response = comp_job.result()
+        #         executor.submit(insert_into_db, response)
+
+        # exit
+        # db.close_connection()
+def input_thread(q):
+    while True:
+        if input():
+            print(q)
+            q.append(None)
 
 
-def process(db, lock):
+def process(db, lock, pill2kill):
     con = db.connect()
-    with lock:
-        blog = blog_generator(db, con)
-    
-    if blog.name is None:
-        return
+    while pill2kill is not None:
+     
+        with lock:
+            blog = blog_generator(db, con)
 
-    instances.sleep_here()
+        if blog.name is None:
+            return
 
-    update = UpdatePayload()
+        instances.sleep_here()
 
-    if blog.crawl_status == 'new': # not yet updated
+        update = UpdatePayload()
 
-        while not update.valid:
-            instances.sleep_here()
-            # try:
-            response = blog.api_get_blog_json_health(lock)
-            check_response(db, con, response, update)
-            # except Exception as e :
-            #     print("DEBUG STUB error in check_response(): {0}".format(e))
-
-        # update and retrieve blog info
-        db_handler.update_blog_info(blog, con, update)
-        # db_blog_record = 
-        # offset = db_blog_record['offset']
-
-    elif blog.crawl_status == 'resume': # refresh health info
-
-        while not update.valid:
-            instances.sleep_here()
-            try:
+        if blog.crawl_status == 'new': # not yet updated
+            attempts = 0
+            while not update.valid and attempts < 3:
+                attempts += 1
+                instances.sleep_here()
+                # try:
                 response = blog.api_get_blog_json_health(lock)
-                check_response(db, con, response, update)
-            except Exception as e :
-                print("DEBUG STUB error in check_response(): {0}".format(e))
+                check_response(blog, response, update)
+                # except Exception as e :
+                #     print("DEBUG STUB error in check_response(): {0}".format(e))
 
-        # update and retrieve blog info
-        db_handler.update_blog_info(blog, con, update)
-        # db_blog_record = 
-        # offset = read_offset_from_DB(db_blog_record)
+            if update.valid:
+                # update and retrieve blog info
+                db_response = db_handler.update_blog_info(db, con, blog) # tuple
+                print("response: {0} {1}".format(type(db_response), db_response))
+                check_db_init_response(db_response, blog)
+                # db_blog_record =
+                # offset = db_blog_record['offset']
 
+        elif blog.crawl_status == 'resume': # refresh health info
+            attempts = 0
+            while not update.valid and attempts < 3:
+                if asked_termination:
+                    print("asked termination")
+                    break
+                attempts += 1
+                instances.sleep_here()
+                try:
+                    response = blog.api_get_blog_json_health(lock)
+                    check_response(blog, response, update)
+                except Exception as e :
+                    print("DEBUG STUB error in check_response(): {0}".format(e))
 
-    # if db_blog_record.health == 'DEAD':
-    #     print(BColors.FAIL + "WARNING! Blog {0} appears to be dead!".format(db_blog_record.name) + BColors.ENDC)
-    #     return
-    startcrawling(blog, offset=offset)
+            if update.valid:
+                # update and retrieve blog info
+                db_response = db_handler.update_blog_info(db, con, blog) # tuple
+                check_db_init_response(db_response, blog)
+                # db_blog_record =
+                # offset = read_offset_from_DB(db_blog_record)
+
+        if not update.valid:
+            print(BColors.RED + "Too many attemps for {0}! Aborting.".format(blog.name) + BColors.ENDC)
+            return
+
+        if blog.health == 'DEAD':
+            print(BColors.LIGHTRED + "WARNING! Blog {0} appears to be dead!".format(blog.name) + BColors.ENDC)
+            return
+        startcrawling(blog)
+
+        if pill2kill[0] == None:
+            print("BREAK")
+            break
+
+    print("TERMINATED THREAD")
 
 
 def read_offset_from_DB(blog):
     # STUB
     return None
+
+def check_db_init_response(db_response, blog):
+
+    if not db_response[0]:
+        return
+
+    if db_response[0] > blog.total_posts:
+        print(BColors.FAIL + "WARNING: number of posts for {0} has decreased from {1} to {2}!\
+ Blog was recently updated {3}, previously checked on {4}"\
+        .format(blog.name, db_response[0], blog.total_posts, db_response[1], db_response[2] ))
 
 
 def startcrawling(blog, offset=None):
@@ -286,7 +331,7 @@ def blog_generator(db, con):
     blog = TumblrBlog()
     blog.name, blog.total_posts, blog.health, \
     blog.crawl_status, blog.post_scraped, \
-    blog.offset, blog.last_checked = db_handler.fetch_random_blog(db, con)
+    blog.offset, blog.last_updated = db_handler.fetch_random_blog(db, con)
 
     if not blog.name:
         print(BColors.FAIL + "No blog fetched in blog_generator()!" + BColors.ENDC)
@@ -303,43 +348,51 @@ def blog_generator(db, con):
     return blog
 
 
-def check_response(blog, con, response, update):
+def check_response(blog, response, update):
     """ Reads the response object, updates the blog attributes accordingly.
     Last checks before updating BLOG table with info
     if unauthorized in response, change API key here, etc."""
 
-    print(BColors.GREEN + "check_response({0}) Updating DB.".format(response) + BColors.ENDC)
+    print(BColors.GREEN + "check_response() response={0}".format(response) + BColors.ENDC)
     # TESTING:
     # update = parse_json_response(json.load(open\
     # (SCRIPTDIR + "/tools/test/videogame-fantasy_july_reblogfalse_dupe.json", 'r')))
 
     parse_json_response(response, update)
+    print(BColors.LIGHTCYAN + "check_response() update={0}".format(update.__dict__) + BColors.ENDC)
 
     if update.errors_title is not None:
-        if update.meta_status == '404' and update.meta_msg == 'Not Found':
-            print(BColors.FAIL + "Blog {0} is apparently DEAD.".format(blog.name) + BColors.ENDC)
+        if update.meta_status == 404 and update.meta_msg == 'Not Found':
+            print(BColors.FAIL + "Blog {0}: is apparently DEAD.".format(blog.name) + BColors.ENDC)
             blog.health = "DEAD"
+            blog.crawl_status = "DEAD"
+            blog.total_posts = 0
+            blog.last_updated = 0
             update.valid = True
             return update
 
-        if "error" in update.errors and "Unauthorized" in update.errors:
-            print(BColors.FAIL + "Blog {0} is unauthorized! Missing API key? REROLL!".format(blog.name) + BColors.ENDC)
+        if "error" in update.errors_title and "Unauthorized" in update.errors_title:
+            print(BColors.FAIL + "Blog {0}: is unauthorized! Missing API key? REROLL!".format(blog.name) + BColors.ENDC)
             # FIXME: that's assuming only the API key is responsible for unauthorized, might be the IP!
             blog.renew_api_key()
             update.valid = False
             return update
 
-        print(BColors.FAIL + "Blog {0} uncaught error in response: ".format(blog.name, str(update)) + BColors.ENDC)
+        print(BColors.FAIL + "Blog {0}: uncaught error in response: {1}".format(blog.name, update.__dict__) + BColors.ENDC)
         update.valid = False
         return update
 
+    update.valid = True
     blog.health = "UP"
+    blog.total_posts = update.total_posts
+    blog.last_updated = update.updated
+    blog.crawl_status = "resume"
 
     if update.total_posts < 20:   #FIXME: arbitrary value
-        print(BColors.LIGHTYELLOW + "Warning: {0} seems to have been wiped.".format(blog.name) + BColors.ENDC)
+        print(BColors.LIGHTYELLOW + "check_response() Warning: {0} is considered WIPED.".format(blog.name) + BColors.ENDC)
         blog.health = "WIPED"
 
-    print(BColors.BLUEOK + "No error in checking json response for {0}".format(blog.name) + BColors.ENDC)
+    print(BColors.BLUEOK + "No error in check_response() json for {0}".format(blog.name) + BColors.ENDC)
 
     return update
 
@@ -356,6 +409,7 @@ class TumblrBlog:
         self.health = None
         self.crawl_status = None
         self.last_checked = None
+        self.last_updated = None
         self.proxy_object = None
         self.api_key_object_ref = None
         self.requests_session = None
@@ -430,7 +484,7 @@ class TumblrBlog:
 
         print(BColors.GREEN + "Getting:{0}".format(url) + BColors.ENDC)
         try:
-            
+
             response = self.requests_session.get(url, timeout=10)
             # if response.status_code == 200:
             if response.status_code > 0:
@@ -475,6 +529,8 @@ class UpdatePayload(requests.Response):
     def __init__(self):
         self.errors_title = None
         self.valid = False
+        self.meta_status = None
+        self.meta_msg = None
 
 def parse_json_response(json, update):
     """returns a UpdatePayload() object that holds the fields to update in DB"""
@@ -494,7 +550,7 @@ def parse_json_response(json, update):
     update.blogname = json['blog']['name']
     update.total_posts = json['blog']['total_posts']
     update.updated = json['blog']['updated']
-    if json['posts']:
+    if json.get('posts'):
         update.posts_response = json['posts'] #list of dicts
         update.trimmed_posts_list = [] #list of dicts of posts
 
@@ -543,8 +599,42 @@ def get_without_proxies():
     """get API json with own IP, throttled to not get banned, unique API key"""
 
 
+# def terminate(self):
+#     """Forced termination"""
+#     if asked_termination:
+#         print(BColors.FAIL + "Forced terminating script. \
+# Watch out for partially downloaded files!" + BColors.ENDC)
+#         # signal.pause()
+#         sys.exit(0)
+
+def is_sigint_called_twice():
+    """Check if pressing ctrl+c a second time to terminate immediately"""
+    if not sigint_again:
+        sigint_again = True
+        return False
+    #TODO: do some cleanup here
+    return True
+
+
+def signal_handler(sig, frame):
+    """Handles SIGINT signal, blocks it to terminate gracefully
+    after the current download has finished"""
+    print('You pressed Ctrl+C!:', sig, frame)
+    if is_sigint_called_twice():
+        print("\nTerminating script!")
+        sys.exit(0)
+
+    asked_termination = True
+    print(BColors.BLUE + "\nUser asked for soft termination, pausing soon.\n" + BColors.ENDC)
+
+
 
 if __name__ == "__main__":
+    # window = curses.initscr()
+    # window.nodelay(True)
+    # curses.echo()
+    # curses.cbreak()
+    signal.signal(signal.SIGINT, signal_handler) #handle pressing ctrl+c on Linux
     main()
     # try:
     #     main()

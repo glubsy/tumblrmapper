@@ -90,7 +90,7 @@ def populate_db_with_tables(database):
             CRAWLING        D_BOOLEAN default 0,\
             POST_OFFSET     INTEGER,\
             POSTS_SCRAPED   INTEGER,\
-            LAST_CHECKED    TIMESTAMP, \
+            LAST_CHECKED    D_EPOCH, \
             LAST_UPDATE     D_EPOCH,\
             PRIORITY        smallint,\
             CONSTRAINT blognames_unique UNIQUE (BLOG_NAME) using index ix_blognames\
@@ -210,7 +210,7 @@ def populate_db_with_tables(database):
         con.execute_immediate("\
             CREATE OR ALTER PROCEDURE insert_context(\
                 i_post_id d_post_no not null, \
-                i_timestamp integer,\
+                i_timestamp d_epoch,\
                 i_context d_super_long_text default null,\
                 i_remote_id d_post_no default null)\
             as \
@@ -239,7 +239,7 @@ def populate_db_with_tables(database):
                 O_STATUS VARCHAR(10),\
                 O_TOTAL INTEGER,\
                 O_SCRAPED INTEGER,\
-                O_CHECKED TIMESTAMP )\
+                O_CHECKED D_EPOCH )\
             AS\
             BEGIN\
             if (exists (select (BLOG_NAME) from BLOGS where ((CRAWL_STATUS = 'resume') and (CRAWLING != 1)))) then begin\
@@ -273,6 +273,10 @@ def populate_db_with_tables(database):
                 i_updated d_epoch,\
                 i_status varchar(10) default 'resume',\
                 i_crawling d_boolean default 0)\
+                RETURNS(\
+                O_total_posts INTEGER,\
+                O_UPDATED D_EPOCH,\
+                O_LAST_CHECKED D_EPOCH)\
                 AS declare variable v_checked d_epoch;\
                 BEGIN\
                 select DATEDIFF(second FROM timestamp '1/1/1970 00:00:00' TO current_timestamp)\
@@ -284,7 +288,9 @@ def populate_db_with_tables(database):
                 CRAWLING = :i_crawling, \
                 LAST_UPDATE = :i_updated,\
                 LAST_CHECKED = :v_checked\
-                where BLOG_NAME = :i_name;\
+                where BLOG_NAME = :i_name\
+                returning old.total_posts, old.LAST_UPDATE, old.LAST_CHECKED\
+                into o_total_posts, o_updated, o_last_checked;\
             END")
 
 
@@ -336,17 +342,22 @@ def populate_db_with_tables(database):
         # );")
 
 
-def update_blog_info(database, con, update):
+def update_blog_info(database, con, blog):
     """updates blog name in blogs table with values from dictionary"""
     # if dictionary.getitems('health') is OK
     #     stmt = cur.prep("execute procedure update_blog_status(?)")
     #     con.execute(stmt, )
-    print(BColors.BLUE + "updating Blogs table with info:" + update + BColors.ENDC)
+    print(BColors.BLUE + "update_blog_info(): {0}".format(blog.__dict__) + BColors.ENDC)
     cur = con.cursor()
-    # args: (blogname, UP|DEAD|WIPED, total_posts, updated, crawl_status(resume(default)|dead))
-    params = (update.name, update.health, update.total_posts, update.updated)
-    cur.execute(cur.prep('execute procedure insert_blog_init_info(?, ?, ?, ?, ?)'), params)
-    return
+    # args: (blogname, UP|DEAD|WIPED, total_posts, updated, [crawl_status(resume(default)|dead), crawling(0|1)])
+    params = (blog.name, blog.health, blog.total_posts, blog.last_updated, blog.crawl_status)
+    statmt = cur.prep('execute procedure insert_blog_init_info(?, ?, ?, ?, ?)')
+    cur.execute(statmt, params)
+
+    db_resp = cur.fetchall()
+    con.commit()
+    print(BColors.BOLD + "db_resp: {0}, {1}".format(type(db_resp), db_resp) + BColors.ENDC)
+    return db_resp[0]  # returns previous old total_posts, last blog update, last checked 
 
 def fetch_blog_status(database, con):
     """retrieves info about blog status in Database"""
