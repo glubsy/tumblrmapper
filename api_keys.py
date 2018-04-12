@@ -9,7 +9,9 @@ from constants import BColors
 import instances
 
 
+
 def count_api_requests(func):
+    """ decorator to count each API key number of requests"""
     def func_wrapper(*args, **kwargs):
         api_key = kwargs.get("api_key")
         api_key.use_once()
@@ -32,7 +34,9 @@ def get_api_key_object_list(api_keys_filepath):
                             secret_key=item.get('secret_key'),\
                             hour_check_time=item.get('hour_check_time'),\
                             day_check_time=item.get('day_check_time'),\
-                            last_used_time=item.get('last_used_time'),\
+                            last_written_time=item.get('last_written_time', 0.0),\
+                            bucket_hour=item.get('bucket_hour'),\
+                            bucket_day=item.get('bucket_day'),\
                             disabled=item.get('disabled'),\
                             disabled_until=item.get('disabled_until'),\
                             blacklisted=item.get('blacklisted')\
@@ -50,19 +54,25 @@ def read_api_keys_from_json(myfilepath=None):
     return data.get('api_keys')
 
 
-def write_api_keys_to_json(data=None, myfilepath=None):
-    """ Saves all api keys attributes to disk for later use"""
-    if not data:
-        data = instances.api_keys # list
+def write_api_keys_to_json(keylist=None, myfilepath=None):
+    """ Saves all api keys attributes to disk"""
+    if not keylist:
+        keylist = instances.api_keys # list
     if not myfilepath:
         myfilepath = instances.config.get('tumblrmapper', 'api_keys')
 
-    api_dict = { "api_keys": []}
-    for item in data:
-        api_dict['api_keys'].append(item.__dict__)
-    json.dumps(api_dict, indent=True)
+    now = time.time()
+    api_dict = { "api_keys": [] }
+    for obj in keylist:
+        obj.last_written_time = now
+        api_dict['api_keys'].append(obj.__dict__)
+
+    # DEBUG
+    # print(BColors.MAGENTA + "write_api_keys_to_json: {0}"\
+    # .format(json.dumps(api_dict, indent=True)) + BColors.ENDC)
+
     with open(myfilepath, 'w') as f:
-        json.dump(api_dict, f, indent=True) 
+        json.dump(api_dict, f, indent=True)
 
 
 def disable_api_key(api_key_object_list):
@@ -90,10 +100,10 @@ def disable_api_key(api_key_object_list):
 
 def get_random_api_key(apikey_list=None):
     """ get a random not disabled api key from instances.api_keys list"""
-    
+
     if not apikey_list:
         apikey_list = instances.api_keys
-    
+
     attempt = 0
     while True:
         keycheck = random.choice(apikey_list)
@@ -135,11 +145,12 @@ class APIKey:
         self.day_check_time = kwargs.get('day_check_time', float())
         self.last_used_hour = kwargs.get('last_used_hour', float())
         self.last_used_day = kwargs.get('last_used_day', float())
+        self.last_written_time = kwargs.get('last_written_time', float(0))
         self.disabled = kwargs.get('disabled', None)
         self.disabled_until = kwargs.get('disabled_until', None)
         self.blacklisted = kwargs.get('blacklisted', False)
-        self.bucket_hour = float(1000)
-        self.bucket_day = float(5000)
+        self.bucket_hour = kwargs.get('bucket_hour', float(1000))
+        self.bucket_day = kwargs.get('bucket_day', float(5000))
 
     def disable_until(self, duration):
         """returns date until it's disabled"""
@@ -164,21 +175,35 @@ class APIKey:
 def threaded_buckets():
     """ Infinite loop, that adds a token per second to each API object's buckets"""
 
+    # Computes counters back to what they've incremented to while were were offline
+    now = time.time()
+    for api_obj in instances.api_keys:
+        diff = now - api_obj.last_written_time
+        api_obj.bucket_hour = min(api_obj.bucket_hour + diff/5 * 1.390, 1000) # clamped
+        api_obj.bucket_day = min(api_obj.bucket_day +  diff/5 * 0.2892, 5000)
+        print(BColors.MAGENTA + "State of {0}: {1} {2}".format(api_obj.api_key, api_obj.bucket_hour, api_obj.bucket_day) + BColors.ENDC)
+
     t = threading.Thread(target=bucket_inc)
-    t.daemon
+    t.daemon = True
     t.start()
 
-    def bucket_inc():
-        while True:
-            time.sleep(5)
-            for api_obj in instances.api_keys:
-                if api_obj.bucket_hour >= 1000:
-                    continue
-                api_obj.bucket_hour += 1.39
-            for api_obj in instances.api_keys:
-                if api_obj.bucket_day >= 5000:
-                    continue
-                api_obj.bucket_hour += 0.29
+
+def bucket_inc():
+    while True:
+        time.sleep(5)
+        for api_obj in instances.api_keys:
+            if api_obj.bucket_hour > 1000:
+                api_obj.bucket_hour = 1000
+                continue
+            if api_obj.bucket_hour < 1000:
+                api_obj.bucket_hour += 1.390
+
+        for api_obj in instances.api_keys:
+            if api_obj.bucket_day > 5000:
+                api_obj.bucket_day = 5000
+                continue
+            if api_obj.bucket_day < 5000:
+                api_obj.bucket_day += 0.2892
 
 
 def read_api_keys_from_csv(myfilepath):
@@ -194,6 +219,7 @@ def read_api_keys_from_csv(myfilepath):
 
 
 if __name__ == "__main__":
+    import tumblrmapper
     SCRIPTDIR = os.path.dirname(__file__)
     API_KEYS_FILE = SCRIPTDIR + os.sep + "api_keys.json"
     args = tumblrmapper.parse_args()

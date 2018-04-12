@@ -41,13 +41,35 @@ fakeresponse = {\
 
 class ProxyScanner():
     """Gets proxies, associates UA"""
-    def __init__(self):
+
+    def __init__(self, proxies_path=None):
+        if not proxies_path:
+            proxies_path = SCRIPTDIR + os.sep + 'proxies.json' #for testing only
+
+        self.proxies_path = proxies_path
         self.http_proxies_set = set() #temp set of proxies from free site
         self.proxy_ua_dict = { "proxies" : [] } # the big global dict
         self.print_lock = threading.Lock()
         self.proxy_ua_dict_lock = threading.Lock()
         self.definitive_proxy_cycle = None #cycle of the list of dicts above
         self.http_proxies_recovered = set() #dicts of proxies previously recorded on disk
+        self.restore_proxies_from_disk(proxies_path)
+
+
+    def restore_proxies_from_disk(self, proxies_path=None):
+        """populate with our previously recorded proxies"""
+        if not proxies_path:
+            proxies_path = self.proxies_path
+
+        self.http_proxies_recovered = self.get_proxies_from_json_on_disk(proxies_path)
+        for proxy in self.http_proxies_recovered:
+            if proxy.get('disabled', False) or proxy.get('blacklisted', False):
+                # print(BColors.YELLOW + "From disk, skipping {0} because blacklisted.".format(proxy.get('ip_address')) + BColors.ENDC)
+                continue
+            # self.proxy_ua_dict[proxy.get('ip_address')] = proxy.get('user_agent')
+            self.proxy_ua_dict.get('proxies').append(proxy)
+
+        print(BColors.GREEN + "Restored proxies from disk: {0}\n".format(self.proxy_ua_dict) + BColors.ENDC)
 
 
     def get_new_proxy(self, old_proxy=None, remove=None): #TODO: move this to the wallet, to pop out the bad proxy
@@ -66,6 +88,7 @@ class ProxyScanner():
             self.write_proxies_to_json_on_disk(self.proxy_ua_dict)
 
         if not len(self.proxy_ua_dict.get('proxies')): # if list of proxy dict is depleted
+            print(BColors.BOLD + "List of proxies is empty, getting from internet!" + BColors.ENDC)
             self.get_proxies_from_internet()
             self.gen_proxy_cycle() #FIXME: move into get_proxies()?
 
@@ -90,8 +113,11 @@ class ProxyScanner():
 
         if not myfilepath: #FIXME: default path for testing
             myfilepath = SCRIPTDIR + os.sep + 'proxies.json'
-        data = json.load(open(myfilepath, 'r'))
 
+        try:
+            data = json.load(open(myfilepath, 'r'))
+        except json.decoder.JSONDecodeError: # got malformed or empty json
+            return []
         # self.http_proxies_recovered = data.get('proxies')
 
         return data.get('proxies')
@@ -107,7 +133,10 @@ class ProxyScanner():
         active_list = data.get('proxies')
         newlist = active_list + self.http_proxies_recovered
         data['proxies'] = newlist # merging with saved blacklisted proxies
-        print("New dict: {0}".format(data.get('proxies')))
+
+        # DEBUG
+        # print("New dict: {0}".format(data.get('proxies')))
+
         with open(myfilepath, "w") as f:
             json.dump(data, f, indent=True)
 
@@ -121,7 +150,7 @@ class ProxyScanner():
 
 
     def with_threads(self):
-        
+
         # socks_proxies_list = get_free_socks_proxies("https://socks-proxy.net/", type=socks)
         attempt = 0
         while not self.proxy_ua_dict.get('proxies'):
@@ -137,16 +166,7 @@ class ProxyScanner():
 
             useragents_cycle = cycle(self.get_ua_set(len(self.http_proxies_set)))
 
-            # populate with our previously recorded proxies
-            self.http_proxies_recovered = self.get_proxies_from_json_on_disk()
-            for proxy in self.http_proxies_recovered:
-                if proxy.get('disabled', False) or proxy.get('blacklisted', False):
-                    # print(BColors.YELLOW + "From disk, skipping {0} because blacklisted.".format(proxy.get('ip_address')) + BColors.ENDC)
-                    continue
-                # self.proxy_ua_dict[proxy.get('ip_address')] = proxy.get('user_agent')
-                self.proxy_ua_dict.get('proxies').append(proxy)
-
-            print("In_between: {0}\n".format(self.proxy_ua_dict))
+            self.restore_proxies_from_disk()
 
             # populate with our fresh set of proxies
             for ip in self.http_proxies_set:

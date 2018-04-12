@@ -99,7 +99,7 @@ class TumblrRequest(object):
         except TooManyRedirects as e:
             resp = e.response
 
-        return self.json_parse(resp)
+        # return json_parse(resp)
 
     def json_parse_validate_reponse(self, response): #FIXME: not used for now, but can be inspiring
         """ Wraps and abstracts response validation and JSON parsing
@@ -194,6 +194,75 @@ class TumblrRestClient(object):
 
         validate_params(valid_parameters, params) #FIXME: might not need
         return self.request.get(url, params)
+
+
+
+class UpdatePayload(requests.Response):
+    """ Container dictionary holding values from json to pass along """
+    def __init__(self):
+        self.errors_title = None
+        self.valid = False
+        self.meta_status = None
+        self.meta_msg = None
+
+def parse_json_response(json, update=None):
+    """returns a UpdatePayload() object that holds the fields to update in DB"""
+    t0 = time.time()
+    if update is None:
+        update = UpdatePayload()
+    # if not 200 <= json['meta']['status'] <= 399:
+    #     update.errors = json['errors']
+    #     return update
+    update.meta_status = json.get('meta')['status']
+    update.meta_msg = json.get('meta')['msg']
+
+    if not json.get('response') and json.get('errors'):
+        update.errors_title = json.get('errors')[0]['title']
+        return update
+
+    json = json.get('response')
+    update.blogname = json['blog']['name']
+    update.total_posts = json['blog']['total_posts']
+    update.updated = json['blog']['updated']
+    if json.get('posts'):
+        update.posts_response = json['posts'] #list of dicts
+        update.trimmed_posts_list = [] #list of dicts of posts
+
+        for post in update.posts_response: #dict in list
+            current_post_dict = {}
+            current_post_dict['id'] = post.get('id')
+            current_post_dict['date'] = post.get('date')
+            current_post_dict['updated'] = post.get('updated')
+            current_post_dict['post_url'] = post.get('post_url')
+            current_post_dict['blog_name'] = post.get('blog_name')
+            current_post_dict['timestamp'] = post.get('timestamp')
+            if 'trail' in post.keys() and len(post['trail']) > 0: # trail is not empty, it's a reblog
+                #FIXME: put this in a trail subdictionary
+                current_post_dict['reblogged_blog_name'] = post['trail'][0]['blog']['name']
+                current_post_dict['remote_id'] = int(post['trail'][0]['post']['id'])
+                current_post_dict['remote_content'] = post['trail'][0]['content_raw'].replace('\n', '')
+            else: #trail is an empty list
+                current_post_dict['reblogged_blog_name'] = None
+                current_post_dict['remote_id'] = None
+                current_post_dict['remote_content'] = None
+                pass
+            current_post_dict['photos'] = []
+            if 'photos' in post.keys():
+                for item in range(0, len(post['photos'])):
+                    current_post_dict['photos'].append(post['photos'][item]['original_size']['url'])
+
+            update.trimmed_posts_list.append(current_post_dict)
+
+        t1 = time.time()
+        print('Building list of posts took %.2f ms' % (1000*(t1-t0)))
+
+#     for post in update.trimmed_posts_list:
+#         print("===============================\n\
+# POST number: " + str(update.trimmed_posts_list.index(post)))
+#         for key, value in post.items():
+#             print("key: " + str(key) + "\nvalue: " + str(value) + "\n--")
+
+    return update
 
 
 

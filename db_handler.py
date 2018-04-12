@@ -1,19 +1,21 @@
 #!/bin/env python
-import os
-import sys
-import fdb
-import time
-import re
-import json
-from pprint import pprint
-from constants import BColors
-import traceback
 import csv
-import tumblr_client
+import json
+import os
+import re
+import sys
+import time
+import traceback
 # import logging
 from operator import itemgetter
-SCRIPTDIR = os.path.dirname(__file__) + os.sep
+from pprint import pprint
+import fdb
+import tumblr_client
 # import cProfile
+import tumblrmapper
+from constants import BColors
+
+SCRIPTDIR = os.path.dirname(__file__) + os.sep
 
 class Database():
     """handle the db file itself, creating everything  
@@ -42,7 +44,11 @@ class Database():
         self.con.append(con)
         return con
 
-    def close_connection(self, con):
+    def close_connection(self, con=None):
+        if not con:
+            for item in self.con:
+                item.close()
+                self.con.remove(item)
         self.con.remove(con)
         return con.close()
 
@@ -258,7 +264,7 @@ def populate_db_with_tables(database):
                      from BLOGS where (CRAWL_STATUS = 'new') \
                     order by PRIORITY desc nulls last ROWS 1 with lock\
                     into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked as cursor tcur do\
-                    update BLOGS set CRAWL_STATUS = 'fetched' where current of tcur;\
+                    update BLOGS set CRAWL_STATUS = 'init' where current of tcur;\
                 suspend;\
                 end\
             END")
@@ -299,11 +305,6 @@ def populate_db_with_tables(database):
             CREATE OR ALTER PROCEDURE update_crawling_blog_status (\
                 i_name d_blog_name, i_input d_boolean) AS BEGIN\
                 update BLOGS set CRAWLING = 0 where BLOG_NAME = :i_name; END")
-
-
-        con.execute_immediate("\
-            CREATE PROCEDURE reset_all_crawling AS BEGIN\
-                update BLOGS set CRAWLING = 0; END")\
 
             #reset column CRAWLING on script startup in case we halted without cleaning
 
@@ -350,7 +351,7 @@ def update_blog_info(database, con, blog):
     print(BColors.BLUE + "update_blog_info(): {0}".format(blog.__dict__) + BColors.ENDC)
     cur = con.cursor()
     # args: (blogname, UP|DEAD|WIPED, total_posts, updated, [crawl_status(resume(default)|dead), crawling(0|1)])
-    params = (blog.name, blog.health, blog.total_posts, blog.last_updated, blog.crawl_status)
+    params = (blog.name, blog.health, blog.total_posts, blog.last_updated, blog.crawl_status, blog.crawling)
     statmt = cur.prep('execute procedure insert_blog_init_info(?, ?, ?, ?, ?)')
     cur.execute(statmt, params)
 
@@ -358,6 +359,17 @@ def update_blog_info(database, con, blog):
     con.commit()
     print(BColors.BOLD + "db_resp: {0}, {1}".format(type(db_resp), db_resp) + BColors.ENDC)
     return db_resp[0]  # returns previous old total_posts, last blog update, last checked 
+
+
+def update_crawling_status(database, con, blog=None):
+    """ Sets blog crawling status to 0 or 1, if blog=None, reset all to 0"""
+    cur = con.cursor()
+    if not blog:
+        print(BColors.DARKGRAY + "Reset crawling status for all" + BColors.ENDC)
+        cur.execute('update BLOGS set CRAWLING = 0;')
+    else:
+        print(BColors.DARKGRAY + "Setting crawling status for {0} to {1}".format(blog.name, blog.crawling) + BColors.ENDC)
+        cur.execute('execute procedure update_crawling_blog_status(?,?);', (blog.name, blog.crawling))
 
 def fetch_blog_status(database, con):
     """retrieves info about blog status in Database"""
@@ -460,7 +472,7 @@ def create_blank_database(database):
 
 def test_update_table(database, con):
     """feed testing data"""
-    update = tumblrmapper.parse_json_response(json.load(open\
+    update = tumblr_client.parse_json_response(json.load(open\
     (SCRIPTDIR + "tools/test/vgf_july_reblogfalse_dupe.json", 'r')))
     # con = fdb.connect(database=database.db_filepath, user=database.username, password=database.password)
     cur = con.cursor()
