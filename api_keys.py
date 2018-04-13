@@ -9,19 +9,6 @@ from constants import BColors
 import instances
 
 
-
-def count_api_requests(func):
-    """ decorator to count each API key number of requests"""
-    def func_wrapper(*args, **kwargs):
-        api_key = kwargs.get("api_key")
-        api_key.use_once()
-        print(BColors.LIGHTPINK + "API key used: {0}. Number of request left: {1}/{2}"\
-        .format(api_key.api_key, api_key.bucket_hour, api_key.bucket_day) + BColors.ENDC)
-        return func(*args, **kwargs)
-    return func_wrapper
-
-
-
 def get_api_key_object_list(api_keys_filepath):
     """Returns a list of APIKey objects"""
     api_key_list = list()
@@ -88,7 +75,7 @@ def disable_api_key(api_key_object_list):
         return
 
     if key.disabled:
-        print("key {0} is already disabled!".format(key.api_key))
+        print(BColors.BOLD + "Key {0} is already disabled!".format(key.api_key) + BColors.ENDC)
     else:
         key.disabled = True
 
@@ -127,7 +114,10 @@ def remove_key(api_key_object):
         pass
 
 
-
+def inc_key_request(api_key):
+    api_key.use_once()
+    print(BColors.LIGHTPINK + "API key used: {0}. Number of request left: {1}/{2}"\
+    .format(api_key.api_key, api_key.bucket_hour, api_key.bucket_day) + BColors.ENDC)
 
 
 class APIKey:

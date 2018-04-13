@@ -8,9 +8,8 @@ import time
 import traceback
 # import logging
 from operator import itemgetter
-from pprint import pprint
+# from pprint import pprint
 import fdb
-import tumblr_client
 # import cProfile
 import tumblrmapper
 from constants import BColors
@@ -245,25 +244,26 @@ def populate_db_with_tables(database):
                 O_STATUS VARCHAR(10),\
                 O_TOTAL INTEGER,\
                 O_SCRAPED INTEGER,\
-                O_CHECKED D_EPOCH )\
+                O_CHECKED D_EPOCH,\
+                O_UPDATED D_EPOCH)\
             AS\
             BEGIN\
             if (exists (select (BLOG_NAME) from BLOGS where ((CRAWL_STATUS = 'resume') and (CRAWLING != 1)))) then begin\
                 for \
-                select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED\
+                select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED, LAST_UPDATE\
                 from BLOGS where ((CRAWL_STATUS = 'resume') and (CRAWLING != 1)) order by PRIORITY desc nulls last ROWS 1\
                 with lock\
-                into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked \
+                into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated \
                 as cursor cur do\
                     update BLOGS set CRAWLING = 1 where current of cur;\
                 suspend;\
                 end\
             else\
             if (exists (select (BLOG_NAME) from BLOGS where (CRAWL_STATUS = 'new'))) then begin\
-                for select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED\
+                for select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED, LAST_UPDATE\
                      from BLOGS where (CRAWL_STATUS = 'new') \
                     order by PRIORITY desc nulls last ROWS 1 with lock\
-                    into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked as cursor tcur do\
+                    into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated as cursor tcur do\
                     update BLOGS set CRAWL_STATUS = 'init' where current of tcur;\
                 suspend;\
                 end\
@@ -272,17 +272,19 @@ def populate_db_with_tables(database):
         # Update info fetched from API
         # args:  (blogname, health(UP,DEAD,WIPED), totalposts, updated_timestamp, status(resume, dead) )
         con.execute_immediate("\
-            CREATE OR ALTER PROCEDURE insert_blog_init_info (\
-                i_name D_BLOG_NAME,\
-                i_health varchar(5),\
-                i_total integer, \
-                i_updated d_epoch,\
-                i_status varchar(10) default 'resume',\
-                i_crawling d_boolean default 0)\
+            CREATE OR ALTER PROCEDURE update_blog_info_init (\
+                    i_name D_BLOG_NAME,\
+                    i_health varchar(5),\
+                    i_total integer, \
+                    i_updated d_epoch,\
+                    i_status varchar(10) default 'resume',\
+                    i_crawling d_boolean default 0)\
                 RETURNS(\
-                O_total_posts INTEGER,\
-                O_UPDATED D_EPOCH,\
-                O_LAST_CHECKED D_EPOCH)\
+                    O_total_posts INTEGER,\
+                    O_updated D_EPOCH,\
+                    O_last_checked D_EPOCH,\
+                    O_offset INTEGER,\
+                    O_scraped INTEGER)\
                 AS declare variable v_checked d_epoch;\
                 BEGIN\
                 select DATEDIFF(second FROM timestamp '1/1/1970 00:00:00' TO current_timestamp)\
@@ -295,16 +297,52 @@ def populate_db_with_tables(database):
                 LAST_UPDATE = :i_updated,\
                 LAST_CHECKED = :v_checked\
                 where BLOG_NAME = :i_name\
-                returning old.total_posts, old.LAST_UPDATE, old.LAST_CHECKED\
-                into o_total_posts, o_updated, o_last_checked;\
+                returning old.total_posts, old.LAST_UPDATE, old.LAST_CHECKED, POST_OFFSET, POSTS_SCRAPED\
+                into O_total_posts, O_updated, O_last_checked, O_offset, O_scraped;\
             END")
+
+        # Update whenever API gives us new different values than what we already had
+        con.execute_immediate(\
+"""CREATE OR ALTER PROCEDURE update_blog_info (
+    i_name D_BLOG_NAME,
+    i_health varchar(5),
+    i_total integer, 
+    i_updated d_epoch,
+    i_offset integer,
+    i_scraped integer,
+    i_status varchar(10) default 'resume',
+    i_crawling d_boolean default 0)
+RETURNS(
+    O_total_posts INTEGER,
+    O_updated D_EPOCH,
+    O_last_checked D_EPOCH,
+    O_offset INTEGER,
+    O_scraped INTEGER)
+AS declare variable v_checked d_epoch;
+BEGIN
+    select DATEDIFF(second FROM timestamp '1/1/1970 00:00:00' TO current_timestamp)
+    from rdb$database into :v_checked;
+    update BLOGS set 
+    HEALTH = :i_health, 
+    TOTAL_POSTS = :i_total, 
+    CRAWL_STATUS = :i_status, 
+    CRAWLING = :i_crawling, 
+    LAST_UPDATE = :i_updated,
+    LAST_CHECKED = :v_checked,
+    POST_OFFSET = :i_offset,
+    POSTS_SCRAPED = :i_scraped
+    where BLOG_NAME = :i_name
+    returning old.total_posts, old.LAST_UPDATE, old.LAST_CHECKED, old.POST_OFFSET, old.POSTS_SCRAPED
+    into O_total_posts, O_updated, O_last_checked, O_offset, O_scraped;
+END""")
 
 
         # called when quitting script, or done scaping total_posts
-        con.execute_immediate("\
-            CREATE OR ALTER PROCEDURE update_crawling_blog_status (\
-                i_name d_blog_name, i_input d_boolean) AS BEGIN\
-                update BLOGS set CRAWLING = 0 where BLOG_NAME = :i_name; END")
+        con.execute_immediate(\
+"""CREATE OR ALTER PROCEDURE update_crawling_blog_status (i_name d_blog_name, i_input d_boolean) 
+AS BEGIN 
+update BLOGS set CRAWLING = 0 where BLOG_NAME = :i_name; 
+END""")
 
             #reset column CRAWLING on script startup in case we halted without cleaning
 
@@ -343,22 +381,119 @@ def populate_db_with_tables(database):
         # );")
 
 
-def update_blog_info(database, con, blog):
-    """updates blog name in blogs table with values from dictionary"""
-    # if dictionary.getitems('health') is OK
-    #     stmt = cur.prep("execute procedure update_blog_status(?)")
-    #     con.execute(stmt, )
-    print(BColors.BLUE + "update_blog_info(): {0}".format(blog.__dict__) + BColors.ENDC)
+def insert_posts(database, con, blog):
+    """ Returns the number of posts processed"""
     cur = con.cursor()
-    # args: (blogname, UP|DEAD|WIPED, total_posts, updated, [crawl_status(resume(default)|dead), crawling(0|1)])
-    params = (blog.name, blog.health, blog.total_posts, blog.last_updated, blog.crawl_status, blog.crawling)
-    statmt = cur.prep('execute procedure insert_blog_init_info(?, ?, ?, ?, ?)')
-    cur.execute(statmt, params)
+    t0 = time.time()
+    added = 0
+    with fdb.TransactionContext(con):
+        for post in blog.update.trimmed_posts_list:
+            if not inserted_post(cur, post):
+                break
+            added += 1
+            inserted_context(cur, post)
+            inserted_urls(cur, post)
+        else:
+            print("NO BREAK OCCURED IN FOR LOOP, COMMITTING")
+            con.commit()
+            
+    t1 = time.time()
+    print('Procedures to insert took %.2f ms' % (1000*(t1-t0)))
 
-    db_resp = cur.fetchall()
+    print(BColors.BLUE + "Number of posts added to DB successfully: {0}".format(added) + BColors.ENDC)
+    blog.update.trimmed_posts_list = [] # reset
+    return added 
+
+
+def inserted_post(cur, post):
+    try:
+        cur.callproc('insert_post', (\
+                post.get('id'),\
+                post.get('blog_name'),\
+                post.get('post_url'),\
+                post.get('date'),\
+                post.get('remote_id'),\
+                post.get('reblogged_blog')\
+                ))
+    except fdb.DatabaseError as e:
+        if str(e).find("UNIQUE KEY constraint"):
+            e = "duplicate"
+        print(BColors.FAIL + "ERROR executing procedures for post {0}: {1}".format(post.get('id'), e) + BColors.ENDC)
+        return True
+    except Exception as e:
+        print(BColors.FAIL + "ERROR executing procedures for post {0}: {1}".format(post.get('id'), e) + BColors.ENDC)
+        return False
+    return True
+
+
+def inserted_context(cur, post):
+    try:
+        cur.callproc('insert_context', (\
+                    post.get('id'),\
+                    post.get('timestamp'),\
+                    post.get('remote_content'),\
+                    post.get('remote_id')\
+                    ))
+    except fdb.DatabaseError as e:
+        if str(e).find("UNIQUE KEY constraint"):
+            e = "duplicate"
+        print(BColors.FAIL + "ERROR executing procedures for context {0}: {1}".format(post.get('id'), e) + BColors.ENDC)
+        return True
+    except Exception as e:
+        print(BColors.FAIL + "ERROR executing procedures for context {0}: {1}".format(post.get('id'), e) + BColors.ENDC)
+        return False
+    return True
+
+
+def inserted_urls(cur, post):
+    insertstmt = cur.prep('insert into URLS (file_url,post_id,remote_id) values (?,?,?);')
+    for photo in post.get('photos'):
+        # print("photo: {0} {1} {2}".format(photo, post.get('id'), post.get('remote_id')))
+        try:
+            cur.execute(insertstmt, (\
+                        photo,\
+                        post.get('id'),\
+                        post.get('remote_id')\
+                        ))
+        except fdb.DatabaseError as e:
+            if str(e).find("UNIQUE KEY constraint"):
+                e = "duplicate"
+            print(BColors.FAIL + "ERROR inserting url {0}: {1}".format(photo, e) + BColors.ENDC)
+            continue
+        
+
+def update_blog_info(Database, con, blog, init=False):
+    """ updates info if our current values have changed compared to what the API gave up,
+    in case of an update while scraping for example
+    returns dict(last_total_posts, last_updated, last_checked, last_offset, last_scraped_posts)"""
+
+    print(BColors.BLUE + "update_blog_info(): {0}".format(blog.name) + BColors.ENDC)
+    cur = con.cursor()
+    if init:
+        # args: (blogname, UP|DEAD|WIPED, total_posts, updated, [crawl_status(resume(default)|dead), crawling(0|1)])        
+        params = (blog.name, blog.health, blog.total_posts, blog.last_updated, blog.crawl_status, blog.crawling)
+        statmt = cur.prep('execute procedure update_blog_info_init(?,?,?,?,?)')
+    else:
+        # args: (blogname, UP|DEAD|WIPED, total_posts, last_updated, current_offset, 
+        # scraped_so_far, [crawl_status(resume(default)|dead), crawling(0|1)])
+        params = (blog.name, blog.health, blog.total_posts, blog.last_updated, blog.offset, blog.posts_scraped, blog.crawl_status, blog.crawling)
+        statmt = cur.prep('execute procedure update_blog_info(?,?,?,?,?,?,?)')
+
+    cur.execute(statmt, params)
+    db_resp = cur.fetchall()[0]
     con.commit()
-    print(BColors.BOLD + "db_resp: {0}, {1}".format(type(db_resp), db_resp) + BColors.ENDC)
-    return db_resp[0]  # returns previous old total_posts, last blog update, last checked 
+    # print(BColors.BOLD + "db_resp: {0}, {1}".format(type(db_resp), db_resp) + BColors.ENDC)
+    resp_dict = {}
+    resp_dict['last_total_posts'], resp_dict['last_updated'], resp_dict['last_checked'],\
+    resp_dict['last_offset'], resp_dict['last_scraped_posts'] = db_resp
+    # print(BColors.BOLD + "resp_dict: {0}".format(resp_dict) + BColors.ENDC)
+    return resp_dict
+
+
+def reset_to_brand_new(database, con, blog):
+    cur = con.cursor()
+    cur.execute(r"update BLOGS set CRAWL_STATUS = 'new' where BLOG_NAME = (?);", (blog.name,))
+    con.commit()
 
 
 def update_crawling_status(database, con, blog=None):
@@ -371,29 +506,18 @@ def update_crawling_status(database, con, blog=None):
         print(BColors.DARKGRAY + "Setting crawling status for {0} to {1}".format(blog.name, blog.crawling) + BColors.ENDC)
         cur.execute('execute procedure update_crawling_blog_status(?,?);', (blog.name, blog.crawling))
 
-def fetch_blog_status(database, con):
-    """retrieves info about blog status in Database"""
-    # cur.prep("execute procedure check_blog_status(?)")
-    # return db_blog_status 
-    pass
-
-def ping_blog_status(blog):
-    """retrieves info from tumblr API concerning blog"""
-    # fetch_blog_info(blog) returns:
-    #     404 or any error -> dead or unknown (if only network error)
-    #     lastupdated, total_posts, wiped if 0 post (or less than 10 posts?)
-    # return status
-    pass
 
 
 def fetch_random_blog(database, con):
-    """ Queries DB for a blog that is available """
+    """ Queries DB for a blog that is available 
+    returns: name, offset, health, status, total posts, scraped posts, last checked, last updated
+    """
     cur = con.cursor()
     with fdb.TransactionContext(con):
         # sql = cur.prep("execute procedure fetch_one_blogname;")
         cur.execute("execute procedure fetch_one_blogname;")
         # cur.execute("select * from blogs;")
-        return cur.fetchone() #tuple ('blog', None, None, 'new', None, None, None)
+        return cur.fetchone() #tuple ('blog', None, None, 'new', None, None, None, None, None)
 
 
 def populate_db_with_archives(database, archivepath):
@@ -470,9 +594,10 @@ def create_blank_database(database):
     populate_db_with_tables(database)
 
 
+# DEBUG
 def test_update_table(database, con):
     """feed testing data"""
-    update = tumblr_client.parse_json_response(json.load(open\
+    update = tumblrmapper.parse_json_response(json.load(open\
     (SCRIPTDIR + "tools/test/vgf_july_reblogfalse_dupe.json", 'r')))
     # con = fdb.connect(database=database.db_filepath, user=database.username, password=database.password)
     cur = con.cursor()
@@ -499,10 +624,10 @@ def test_update_table(database, con):
                     try:
                         cur.execute(insertstmt, paramlist)
                     except Exception as e:
-                        print(BColors.BLUEOK + BColors.FAIL + "ERROR inserting url:" + str(e) + BColors.ENDC)
+                        print(BColors.BLUEOK + BColors.FAIL + "ERROR inserting url:" + str(e.__dict__) + BColors.ENDC)
                         continue
             except Exception as e:
-                print(BColors.FAIL + "ERROR executing procedures for post and context:" + str(e) + BColors.ENDC)
+                print(BColors.FAIL + "ERROR executing procedures for post and context:" + str(e.__dict__) + BColors.ENDC)
                 break
         else:
             print("NO BREAK OCCURED IN FOR LOOP, COMMITTING")

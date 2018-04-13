@@ -3,6 +3,7 @@ import time
 
 def __init__():
     """ stores global variables """
+    random.seed()
     global proxy_scanner
     proxy_scanner = None
     global api_keys
