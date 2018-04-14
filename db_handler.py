@@ -85,54 +85,55 @@ def populate_db_with_tables(database):
                                CHECK (VALUE IS NULL OR VALUE IN (0, 1));")
 
         # Create tables with columns
-        con.execute_immediate(
-            "CREATE TABLE BLOGS ( \
-            AUTO_ID         D_AUTO_ID PRIMARY KEY,\
-            BLOG_NAME       D_BLOG_NAME,\
-            HEALTH          varchar(5),\
-            TOTAL_POSTS     INTEGER,\
-            CRAWL_STATUS    varchar(10) DEFAULT 'new',\
-            CRAWLING        D_BOOLEAN default 0,\
-            POST_OFFSET     INTEGER,\
-            POSTS_SCRAPED   INTEGER,\
-            LAST_CHECKED    D_EPOCH, \
-            LAST_UPDATE     D_EPOCH,\
-            PRIORITY        smallint,\
-            CONSTRAINT blognames_unique UNIQUE (BLOG_NAME) using index ix_blognames\
-            );")
-            # HEALTH:  
-            # CRAWL STATUS
+        con.execute_immediate(\
+"""
+CREATE TABLE BLOGS ( 
+AUTO_ID         D_AUTO_ID PRIMARY KEY, 
+BLOG_NAME       D_BLOG_NAME, 
+HEALTH          varchar(5), 
+TOTAL_POSTS     INTEGER, 
+CRAWL_STATUS    varchar(10) DEFAULT 'new', 
+CRAWLING        D_BOOLEAN default 0, 
+POST_OFFSET     INTEGER, 
+POSTS_SCRAPED   INTEGER, 
+LAST_CHECKED    D_EPOCH, 
+LAST_UPDATE     D_EPOCH, 
+PRIORITY        smallint, 
+CONSTRAINT blognames_unique UNIQUE (BLOG_NAME) using index ix_blognames 
+);""")
 
-        con.execute_immediate(
-            "CREATE TABLE GATHERED_BLOGS (\
-            AUTO_ID      D_AUTO_ID PRIMARY KEY, \
-            BLOG_NAME    D_BLOG_NAME );")
+        con.execute_immediate(\
+            """CREATE TABLE GATHERED_BLOGS (
+            AUTO_ID      D_AUTO_ID PRIMARY KEY, 
+            BLOG_NAME    D_BLOG_NAME );""")
             #TODO: make constraint CHECK to only create if not already in tBLOGS?
     
-        con.execute_immediate(
-            "CREATE TABLE POSTS ( \
-            POST_ID             D_POST_NO PRIMARY KEY, \
-            REMOTE_ID           D_POST_NO, \
-            ORIGIN_BLOGNAME     D_AUTO_ID NOT NULL, \
-            REBLOGGED_BLOGNAME  D_AUTO_ID, \
-            POST_URL            D_POSTURL NOT NULL, \
-            POST_DATE           varchar(26), \
-            FOREIGN KEY(ORIGIN_BLOGNAME) REFERENCES BLOGS(AUTO_ID), \
-            FOREIGN KEY(REBLOGGED_BLOGNAME) REFERENCES GATHERED_BLOGS(AUTO_ID) \
-            );")
+        con.execute_immediate(\
+"""
+CREATE TABLE POSTS ( 
+POST_ID             D_POST_NO PRIMARY KEY, 
+REMOTE_ID           D_POST_NO, 
+ORIGIN_BLOGNAME     D_AUTO_ID NOT NULL, 
+REBLOGGED_BLOGNAME  D_AUTO_ID, 
+POST_URL            D_POSTURL NOT NULL, 
+POST_DATE           varchar(26), 
+FOREIGN KEY(ORIGIN_BLOGNAME) REFERENCES BLOGS(AUTO_ID), 
+FOREIGN KEY(REBLOGGED_BLOGNAME) REFERENCES GATHERED_BLOGS(AUTO_ID) 
+);""")
             #BLOG_ORIGIN is the blog of the post_id (TID)
             #BLOG_REBLOGGED is name of blog in trail
 
-        con.execute_immediate(
-            "CREATE TABLE CONTEXTS ( \
-            POST_ID         D_POST_NO,\
-            REMOTE_ID       D_POST_NO UNIQUE, \
-            TTIMESTAMP      D_EPOCH, \
-            CONTEXT         D_SUPER_LONG_TEXT, \
-            LATEST_REBLOG   D_POST_NO,\
-            PRIMARY KEY(POST_ID),\
-            FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID) \
-            );")
+        con.execute_immediate(\
+"""
+CREATE TABLE CONTEXTS ( 
+POST_ID         D_POST_NO, 
+REMOTE_ID       D_POST_NO UNIQUE, 
+TTIMESTAMP      D_EPOCH, 
+CONTEXT         D_SUPER_LONG_TEXT, 
+LATEST_REBLOG   D_POST_NO, 
+PRIMARY KEY(POST_ID), 
+FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID) 
+);""")
             # to update
             # if remote_id is null, then it's an original post, not reblogged, we store everything no problem
             # if we already have that remote_id, we don't want to store context again -> we skip
@@ -143,12 +144,12 @@ def populate_db_with_tables(database):
             # if we input an existing REMOTE_ID (with a new POST_ID, because reblogged by many POST_ID), then EXCEPTION!
 
         con.execute_immediate(
-            "CREATE TABLE URLS ( \
-            FILE_URL             D_URL PRIMARY KEY, \
-            POST_ID              D_POST_NO NOT NULL, \
-            REMOTE_ID            D_POST_NO, \
-            FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID) \
-            ); ")
+            """CREATE TABLE URLS ( 
+            FILE_URL             D_URL PRIMARY KEY, 
+            POST_ID              D_POST_NO NOT NULL, 
+            REMOTE_ID            D_POST_NO, 
+            FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID)
+            ); """)
             # if remote_id is null, it means it was not a reblog
             # if it's not null, it's from a reblog,
 
@@ -158,152 +159,163 @@ def populate_db_with_tables(database):
         # CREATE generators and triggers
         con.execute_immediate("CREATE SEQUENCE tBLOGS_autoid_sequence;")
         con.execute_immediate("CREATE SEQUENCE tGATHERED_BLOGS_autoid_sequence;")
-        con.execute_immediate(
-            "CREATE TRIGGER tGATHERED_BLOGS_AUTOINC FOR GATHERED_BLOGS \
-            ACTIVE BEFORE INSERT POSITION 0 \
-            AS BEGIN NEW.AUTO_ID = next value for tGATHERED_BLOGS_autoid_sequence; END")
+        con.execute_immediate(\
+            """CREATE TRIGGER tGATHERED_BLOGS_AUTOINC FOR GATHERED_BLOGS 
+            ACTIVE BEFORE INSERT POSITION 0 
+            AS BEGIN NEW.AUTO_ID = next value for tGATHERED_BLOGS_autoid_sequence; END""")
 
         # CREATE procedures
         # Records given blogname into BLOG table, increments auto_id,
         # decrements auto_id in case an exception occured (on non unique inputs)
-        con.execute_immediate(  
-            "CREATE OR ALTER PROCEDURE insert_blogname \
-            ( i_blogname d_blog_name, i_prio smallint default null ) \
-            AS declare variable v_generated_auto_id d_auto_id;\
-            BEGIN \
-            v_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence, 1);\
-            INSERT into BLOGS (AUTO_ID, BLOG_NAME, PRIORITY) values (:v_generated_auto_id, :i_blogname, :i_prio);\
-            WHEN ANY \
-            DO \
-            v_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence, -1);\
-            END ")
+        con.execute_immediate(\
+"""
+CREATE OR ALTER PROCEDURE insert_blogname 
+( i_blogname d_blog_name, i_prio smallint default null ) 
+AS declare variable v_generated_auto_id d_auto_id; 
+BEGIN 
+v_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence, 1); 
+INSERT into BLOGS (AUTO_ID, BLOG_NAME, PRIORITY) values (:v_generated_auto_id, :i_blogname, :i_prio); 
+WHEN ANY 
+DO 
+v_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence, -1); 
+END 
+""")
 
         # Inserts a post and all its metadata
-        con.execute_immediate(  
-            "CREATE OR ALTER PROCEDURE insert_post \
-            (   i_postid d_post_no, \
-                i_blog_origin d_blog_name,\
-                i_post_url d_posturl,\
-                i_post_date varchar(26),\
-                i_remoteid d_post_no default null,\
-                i_reblogged_blog_name d_blog_name default null\
-            )\
-            AS declare variable v_blog_origin_id d_auto_id;\
-            declare variable v_fetched_reblogged_blog_id d_auto_id default null;\
-            declare variable v_b_update_gathered d_boolean default 0;\
-            BEGIN\
-            select AUTO_ID from BLOGS where BLOG_NAME = :i_blog_origin into :v_blog_origin_id;\
-            \
-            if (:i_reblogged_blog_name is not null) THEN \
-            select AUTO_ID from GATHERED_BLOGS where BLOG_NAME = :i_reblogged_blog_name into :v_fetched_reblogged_blog_id;\
-            \
-            if ((:i_reblogged_blog_name is distinct from :i_blog_origin) and (:v_fetched_reblogged_blog_id is null)) \
-            THEN v_b_update_gathered = 1;\
-            \
-            if ((v_b_update_gathered = 1) and (:i_reblogged_blog_name is not null)) THEN\
-            INSERT into GATHERED_BLOGS (BLOG_NAME) values (:i_reblogged_blog_name)\
-            returning (AUTO_ID) into :v_fetched_reblogged_blog_id;\
-            \
-            INSERT into POSTS (POST_ID, POST_URL, POST_DATE, REMOTE_ID, \
-            ORIGIN_BLOGNAME, REBLOGGED_BLOGNAME)\
-            values (:i_postid, :i_post_url, :i_post_date, :i_remoteid, \
-            :v_blog_origin_id, :v_fetched_reblogged_blog_id);\
-            END"\
-            )
+        con.execute_immediate(\
+"""
+CREATE OR ALTER PROCEDURE insert_post 
+(   i_postid d_post_no, 
+    i_blog_origin d_blog_name,
+    i_post_url d_posturl,
+    i_post_date varchar(26),
+    i_remoteid d_post_no default null,
+    i_reblogged_blog_name d_blog_name default null
+) 
+AS declare variable v_blog_origin_id d_auto_id; 
+declare variable v_fetched_reblogged_blog_id d_auto_id default null; 
+declare variable v_b_update_gathered d_boolean default 0; 
+BEGIN 
+select AUTO_ID from BLOGS where BLOG_NAME = :i_blog_origin into :v_blog_origin_id; 
+
+if (:i_reblogged_blog_name is not null) THEN 
+select AUTO_ID from GATHERED_BLOGS where BLOG_NAME = :i_reblogged_blog_name into :v_fetched_reblogged_blog_id; 
+
+if ((:i_reblogged_blog_name is distinct from :i_blog_origin) and (:v_fetched_reblogged_blog_id is null)) 
+THEN v_b_update_gathered = 1; 
+
+if ((v_b_update_gathered = 1) and (:i_reblogged_blog_name is not null)) THEN 
+INSERT into GATHERED_BLOGS (BLOG_NAME) values (:i_reblogged_blog_name) 
+returning (AUTO_ID) into :v_fetched_reblogged_blog_id; 
+
+INSERT into POSTS (POST_ID, POST_URL, POST_DATE, REMOTE_ID, 
+ORIGIN_BLOGNAME, REBLOGGED_BLOGNAME) 
+values (:i_postid, :i_post_url, :i_post_date, :i_remoteid, 
+:v_blog_origin_id, :v_fetched_reblogged_blog_id); 
+END
+""")
 
         # Inserts context, update if already present with latest reblog's values
-        con.execute_immediate("\
-            CREATE OR ALTER PROCEDURE insert_context(\
-                i_post_id d_post_no not null, \
-                i_timestamp d_epoch,\
-                i_context d_super_long_text default null,\
-                i_remote_id d_post_no default null)\
-            as \
-            BEGIN\
-            if (:i_remote_id is not null) then /* we might not want to keep it*/\
-                    if (exists (select (REMOTE_ID) from CONTEXTS where (REMOTE_ID = :i_remote_id))) then\
-                    begin\
-                        if (:i_timestamp > (select (TTIMESTAMP) from CONTEXTS where (REMOTE_ID = :i_remote_id))) then\
-                            update CONTEXTS set CONTEXT = :i_context, \
-                            TTIMESTAMP = :i_timestamp,\
-                            LATEST_REBLOG = :i_post_id\
-                            where (REMOTE_ID = :i_remote_id);\
-                            exit;\
-                    end\
-            else /* we store everything, it's an original post*/\
-            insert into CONTEXTS (POST_ID, TTIMESTAMP, CONTEXT, REMOTE_ID ) values\
-                                (:i_post_id, :i_timestamp, :i_context, :i_remote_id );\
-            END")
+        con.execute_immediate(\
+"""
+CREATE OR ALTER PROCEDURE insert_context(
+    i_post_id d_post_no not null, 
+    i_timestamp d_epoch,
+    i_context d_super_long_text default null,
+    i_remote_id d_post_no default null)
+as 
+BEGIN 
+if (:i_remote_id is not null) then /* we might not want to keep it*/
+    if (exists (select (REMOTE_ID) from CONTEXTS where (REMOTE_ID = :i_remote_id))) then
+    begin
+        if (:i_timestamp > (select (TTIMESTAMP) from CONTEXTS where (REMOTE_ID = :i_remote_id))) then
+            update CONTEXTS set CONTEXT = :i_context, 
+            TTIMESTAMP = :i_timestamp,
+            LATEST_REBLOG = :i_post_id
+            where (REMOTE_ID = :i_remote_id);
+            exit;
+    end
+else /* we store everything, it's an original post*/ 
+insert into CONTEXTS (POST_ID, TTIMESTAMP, CONTEXT, REMOTE_ID ) values
+                    (:i_post_id, :i_timestamp, :i_context, :i_remote_id );
+END
+""")
 
-        con.execute_immediate("\
-            CREATE OR ALTER PROCEDURE FETCH_ONE_BLOGNAME\
-            RETURNS (\
-                O_NAME D_BLOG_NAME,\
-                O_OFFSET INTEGER,\
-                O_HEALTH VARCHAR(5),\
-                O_STATUS VARCHAR(10),\
-                O_TOTAL INTEGER,\
-                O_SCRAPED INTEGER,\
-                O_CHECKED D_EPOCH,\
-                O_UPDATED D_EPOCH)\
-            AS\
-            BEGIN\
-            if (exists (select (BLOG_NAME) from BLOGS where ((CRAWL_STATUS = 'resume') and (CRAWLING != 1)))) then begin\
-                for \
-                select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED, LAST_UPDATE\
-                from BLOGS where ((CRAWL_STATUS = 'resume') and (CRAWLING != 1)) order by PRIORITY desc nulls last ROWS 1\
-                with lock\
-                into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated \
-                as cursor cur do\
-                    update BLOGS set CRAWLING = 1 where current of cur;\
-                suspend;\
-                end\
-            else\
-            if (exists (select (BLOG_NAME) from BLOGS where (CRAWL_STATUS = 'new'))) then begin\
-                for select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED, LAST_UPDATE\
-                     from BLOGS where (CRAWL_STATUS = 'new') \
-                    order by PRIORITY desc nulls last ROWS 1 with lock\
-                    into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated as cursor tcur do\
-                    update BLOGS set CRAWL_STATUS = 'init' where current of tcur;\
-                suspend;\
-                end\
-            END")
+
+        con.execute_immediate(\
+"""
+CREATE OR ALTER PROCEDURE FETCH_ONE_BLOGNAME 
+RETURNS (
+    O_NAME D_BLOG_NAME,
+    O_OFFSET INTEGER,
+    O_HEALTH VARCHAR(5),
+    O_STATUS VARCHAR(10),
+    O_TOTAL INTEGER,
+    O_SCRAPED INTEGER,
+    O_CHECKED D_EPOCH,
+    O_UPDATED D_EPOCH) 
+AS 
+BEGIN 
+if (exists (select (BLOG_NAME) from BLOGS where ((CRAWL_STATUS = 'resume') and (CRAWLING != 1)))) then begin
+    for 
+    select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED, LAST_UPDATE
+    from BLOGS where ((CRAWL_STATUS = 'resume') and (CRAWLING != 1)) order by PRIORITY desc nulls last ROWS 1
+    with lock
+    into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated 
+    as cursor cur do
+        update BLOGS set CRAWLING = 1 where current of cur;
+    suspend;
+    end
+else 
+if (exists (select (BLOG_NAME) from BLOGS where (CRAWL_STATUS = 'new'))) then begin
+    for select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED, LAST_UPDATE
+            from BLOGS where (CRAWL_STATUS = 'new') 
+        order by PRIORITY desc nulls last ROWS 1 with lock
+        into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated as cursor tcur do
+        update BLOGS set CRAWL_STATUS = 'init' where current of tcur;
+    suspend;
+    end
+END
+""")
 
         # Update info fetched from API
         # args:  (blogname, health(UP,DEAD,WIPED), totalposts, updated_timestamp, status(resume, dead) )
-        con.execute_immediate("\
-            CREATE OR ALTER PROCEDURE update_blog_info_init (\
-                    i_name D_BLOG_NAME,\
-                    i_health varchar(5),\
-                    i_total integer, \
-                    i_updated d_epoch,\
-                    i_status varchar(10) default 'resume',\
-                    i_crawling d_boolean default 0)\
-                RETURNS(\
-                    O_total_posts INTEGER,\
-                    O_updated D_EPOCH,\
-                    O_last_checked D_EPOCH,\
-                    O_offset INTEGER,\
-                    O_scraped INTEGER)\
-                AS declare variable v_checked d_epoch;\
-                BEGIN\
-                select DATEDIFF(second FROM timestamp '1/1/1970 00:00:00' TO current_timestamp)\
-            from rdb$database into :v_checked;\
-                update BLOGS set \
-                HEALTH = :i_health, \
-                TOTAL_POSTS = :i_total, \
-                CRAWL_STATUS = :i_status, \
-                CRAWLING = :i_crawling, \
-                LAST_UPDATE = :i_updated,\
-                LAST_CHECKED = :v_checked\
-                where BLOG_NAME = :i_name\
-                returning old.total_posts, old.LAST_UPDATE, old.LAST_CHECKED, POST_OFFSET, POSTS_SCRAPED\
-                into O_total_posts, O_updated, O_last_checked, O_offset, O_scraped;\
-            END")
+        con.execute_immediate(\
+"""
+CREATE OR ALTER PROCEDURE update_blog_info_init (
+    i_name D_BLOG_NAME,
+    i_health varchar(5),
+    i_total integer, 
+    i_updated d_epoch,
+    i_status varchar(10) default 'resume',
+    i_crawling d_boolean default 0) 
+RETURNS(
+    O_health varchar(5),
+    O_total_posts INTEGER,
+    O_updated D_EPOCH,
+    O_last_checked D_EPOCH,
+    O_offset INTEGER,
+    O_scraped INTEGER) 
+AS declare variable v_checked d_epoch; 
+BEGIN 
+select DATEDIFF(second FROM timestamp '1/1/1970 00:00:00' TO current_timestamp) 
+from rdb$database into :v_checked; 
+update BLOGS set 
+HEALTH = :i_health, 
+TOTAL_POSTS = :i_total, 
+CRAWL_STATUS = :i_status, 
+CRAWLING = :i_crawling, 
+LAST_UPDATE = :i_updated, 
+LAST_CHECKED = :v_checked 
+where BLOG_NAME = :i_name 
+returning old.HEALTH, old.total_posts, old.LAST_UPDATE, old.LAST_CHECKED, POST_OFFSET, POSTS_SCRAPED 
+into O_health, O_total_posts, O_updated, O_last_checked, O_offset, O_scraped; 
+END""")
 
         # Update whenever API gives us new different values than what we already had
         con.execute_immediate(\
-"""CREATE OR ALTER PROCEDURE update_blog_info (
+"""
+CREATE OR ALTER PROCEDURE update_blog_info (
     i_name D_BLOG_NAME,
     i_health varchar(5),
     i_total integer, 
@@ -313,6 +325,7 @@ def populate_db_with_tables(database):
     i_status varchar(10) default 'resume',
     i_crawling d_boolean default 0)
 RETURNS(
+    O_health varchar(5),
     O_total_posts INTEGER,
     O_updated D_EPOCH,
     O_last_checked D_EPOCH,
@@ -322,18 +335,18 @@ AS declare variable v_checked d_epoch;
 BEGIN
     select DATEDIFF(second FROM timestamp '1/1/1970 00:00:00' TO current_timestamp)
     from rdb$database into :v_checked;
-    update BLOGS set 
-    HEALTH = :i_health, 
-    TOTAL_POSTS = :i_total, 
-    CRAWL_STATUS = :i_status, 
-    CRAWLING = :i_crawling, 
+    update BLOGS set
+    HEALTH = :i_health,
+    TOTAL_POSTS = :i_total,
+    CRAWL_STATUS = :i_status,
+    CRAWLING = :i_crawling,
     LAST_UPDATE = :i_updated,
     LAST_CHECKED = :v_checked,
     POST_OFFSET = :i_offset,
     POSTS_SCRAPED = :i_scraped
     where BLOG_NAME = :i_name
-    returning old.total_posts, old.LAST_UPDATE, old.LAST_CHECKED, old.POST_OFFSET, old.POSTS_SCRAPED
-    into O_total_posts, O_updated, O_last_checked, O_offset, O_scraped;
+    returning old.HEALTH, old.TOTAL_POSTS, old.LAST_UPDATE, old.LAST_CHECKED, old.POST_OFFSET, old.POSTS_SCRAPED
+    into O_health, O_total_posts, O_updated, O_last_checked, O_offset, O_scraped; 
 END""")
 
 
@@ -464,10 +477,10 @@ def inserted_urls(cur, post):
 
 def update_blog_info(Database, con, blog, init=False):
     """ updates info if our current values have changed compared to what the API gave up,
-    in case of an update while scraping for example
+    in case of an update while scraping for example. If init, no need for offset and posts_scraped since brand new
     returns dict(last_total_posts, last_updated, last_checked, last_offset, last_scraped_posts)"""
 
-    print(BColors.BLUE + "update_blog_info(): {0}".format(blog.name) + BColors.ENDC)
+    print(BColors.BLUE + "db_handler: update_blog_info(): {0} init: {1}".format(blog.name, init) + BColors.ENDC)
     cur = con.cursor()
     if init:
         # args: (blogname, UP|DEAD|WIPED, total_posts, updated, [crawl_status(resume(default)|dead), crawling(0|1)])        
@@ -484,7 +497,7 @@ def update_blog_info(Database, con, blog, init=False):
     con.commit()
     # print(BColors.BOLD + "db_resp: {0}, {1}".format(type(db_resp), db_resp) + BColors.ENDC)
     resp_dict = {}
-    resp_dict['last_total_posts'], resp_dict['last_updated'], resp_dict['last_checked'],\
+    resp_dict['last_health'], resp_dict['last_total_posts'], resp_dict['last_updated'], resp_dict['last_checked'],\
     resp_dict['last_offset'], resp_dict['last_scraped_posts'] = db_resp
     # print(BColors.BOLD + "resp_dict: {0}".format(resp_dict) + BColors.ENDC)
     return resp_dict

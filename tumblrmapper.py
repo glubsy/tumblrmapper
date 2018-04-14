@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import signal
+import traceback
 from concurrent import futures
 from itertools import cycle
 import requests
@@ -20,6 +21,7 @@ import instances
 import proxies
 import tumdlr_classes
 from constants import BColors
+
 # import curses
 # import ratelimit
 
@@ -146,65 +148,49 @@ def process(db, lock, pill2kill):
 
         blog.update = UpdatePayload()
 
-        if blog.crawl_status == 'new' or blog.crawl_status == 'resume': # not yet updated
+        if blog.crawl_status == 'new': # not yet updated
 
-            # Retry getting /posts until either 404 or success
-            attempts = 0
-            while not blog.update.valid and attempts < 3:
-                attempts += 1
-                instances.sleep_here()
-                # try:
-                response = blog.api_get_request(lock, api_key=None, reqtype="posts")
-                # try: 
-                blog.check_response_validate_update(response)
-                # except BaseException as e:
-                #     print(BColors.RED + "Too many proxy attempts for {0}! Skipping for now. {1}".format(blog.name, e) + BColors.ENDC)
-                #     thread_premature_cleanup(db, con, blog)
-                #     break
-                # except Exception as e :
-                #     print("DEBUG STUB error in check_response(): {0}".format(e))
+            if not first_blog_status_check(db, con, lock, blog, isnew=True):
+                continue
 
-            if blog.update.valid:
-                # update and retrieve remaining blog info
-                db_response = db_handler.update_blog_info(db, con, blog, init=True) # tuple
-                print("response: {0} {1}".format(type(db_response), db_response))
-                check_db_init_response(db_response, blog)
+            if blog.health == 'DEAD':
+                print(BColors.LIGHTRED + "WARNING! Blog {0} appears to be dead!".format(blog.name) + BColors.ENDC)
+                continue
 
-            if not blog.update.valid:
-                print(BColors.RED + "Too many invalid request attempts for {0}! Aborting."\
-                .format(blog.name) + BColors.ENDC)
-                thread_premature_cleanup(db, con, blog)
-                return
+            # we already have the first batch of posts, insert them
+            if blog.offset == 0: # DB had no previous offset, it's brand new
+                processed_posts = db_handler.insert_posts(db, con, blog)
+                blog.posts_scraped += processed_posts
+                blog.offset += blog.posts_scraped
+                print("OFFSETS are now: {0}".format(blog.offset))
 
-        if blog.health == 'DEAD':
-            print(BColors.LIGHTRED + "WARNING! Blog {0} appears to be dead!".format(blog.name) + BColors.ENDC)
-            continue
-
-
+        elif blog.crawl_status == 'resume':
+            if not first_blog_status_check(db, con, lock, blog, isnew=False):
+                continue
+        
         # STARTING BUSINESS
         if pill2kill.is_set():
             break
 
-        # we already have the first batch of posts, insert them
-        if blog.offset is None: # DB had no previous offset, it's brand new
-            blog.offset = 0
-            processed_posts = db_handler.insert_posts(db, con, blog)
-            blog.posts_scraped += processed_posts
-            blog.offset += blog.posts_scraped
-            print("OFFSETS are now: {0}".format(blog.offset))
-
-
+        if blog.new_posts > 0:
+            blog.offset +=  blog.new_posts
         while not pill2kill.is_set():
             if not blog.update.trimmed_posts_list: #get more
                 blog.api_get_request(lock, api_key=None, reqtype="posts", offset=blog.offset)
+                check_header_change(blog)
+                blog.offset += len(blog.update.trimmed_posts_list)
 
-                blog.offset += 20
                 if not blog.update.trimmed_posts_list: # nothing more
                     break
+            else:
+                print("inserting new posts")
+                instances.sleep_here()
+                db_handler.insert_posts(db, con, blog)
+
 
         if pill2kill.is_set():
             break
-        
+    
 
     print(BColors.LIGHTGRAY + "Terminating thread {0}"\
     .format(threading.current_thread()) + BColors.ENDC)
@@ -213,24 +199,97 @@ def process(db, lock, pill2kill):
     return
 
 
-def check_db_init_response(db_response, blog):
+
+def first_blog_status_check(db, con, lock, blog, isnew=False):
+    """"""
+
+    # Retry getting /posts until either 404 or success
+    attempts = 0
+    while not blog.update.valid and attempts < 3:
+        attempts += 1
+        instances.sleep_here(0,1)
+        try:
+            blog.api_get_request(lock, api_key=None, reqtype="posts")
+        except BaseException as e:
+            traceback.print_exc()
+            print(BColors.RED + "Too many proxy attempts for {0}! Skipping for now. Error:\n{1}".format(blog.name, e) + BColors.ENDC)
+            if isnew:
+                thread_premature_cleanup(db, con, blog)
+                return False
+            break
+
+
+    if blog.update.valid:
+        # update and retrieve remaining blog info
+        blog.total_posts = blog.update.total_posts
+
+        db_response = db_handler.update_blog_info(db, con, blog, init=isnew) # tuple
+
+        print(BColors.BOLD + "After update_blog_info {0}, response: {1}".format(blog.name, db_response) + BColors.ENDC)
+
+        if not check_db_init_response(db_response, blog, isnew=isnew):
+            print("check_db_init_response was False for {0}".format(blog.name))
+            return False
+
+    if not blog.update.valid:
+        print(BColors.RED + "Too many invalid request attempts for {0}! Aborting for now."\
+        .format(blog.name) + BColors.ENDC)
+        if isnew: 
+            thread_premature_cleanup(db, con, blog)
+        return False
+    
+    return True
+
+
+
+def check_db_init_response(db_response, blog, isnew=False):
     """Parse items returned by DB on blog update"""
 
     if not db_response:
         return
+    if not db_response.get('last_total_posts', None):
+        db_response['last_total_posts'] = 0 
 
-    if db_response.get('last_total_posts', 0) < blog.total_posts:
-        print(BColors.BOLD + "Blog {0} has been updated. Old total_posts {1}, new total_posts {2}."\
-        .format(blog.name, db_response.get('last_total_posts'), blog.total_posts) + BColors.ENDC)
+    if not isnew:
+        if db_response['last_total_posts'] < blog.total_posts:
+            blog.new_posts = (blog.total_posts - db_response['last_total_posts'])
+            print(BColors.BOLD + "Blog {0} has been updated. Old total_posts {1}, new total_posts {2}. Offset will be pushed by {3}"\
+            .format(blog.name, db_response.get('last_total_posts'), blog.total_posts, blog.new_posts) + BColors.ENDC)
 
-    elif db_response.get('last_total_posts', 0) > blog.total_posts:
-        print(BColors.FAIL + BColors.BOLD + "WARNING: number of posts for {0} has decreased from {1} to {2}!\
- Blog was recently updated {3}, previously checked on {4}\n Check what happened, did the author remove posts!?"\
-        .format(blog.name, db_response.get('last_total_posts'), blog.total_posts, db_response.get('last_updated'), db_response.get('last_checked')))
+        elif db_response.get('last_total_posts', 0) > blog.total_posts:
+            print(BColors.FAIL + BColors.BOLD + "WARNING: number of posts for {0} has decreased from {1} to {2}!\
+    Blog was recently updated {3}, previously checked on {4}\n Check what happened, did the author remove posts!?"\
+            .format(blog.name, db_response.get('last_total_posts'), blog.total_posts, db_response.get('last_updated'), db_response.get('last_checked')))
+            return False
 
+        if db_response.get('last_health').find("UP") and db_response.get('last_health') != blog.health: # health changed!! Died suddenly?
+            print(BColors.FAIL + BColors.BOLD + "WARNING: blog {0} changed health status from {1} to: {2}"\
+            .format(blog.name, blog.health, db_response.get('last_health')) + BColors.ENDC)
+            return False
+
+    # initializing 
+    print("initializing offset to what it was in DB")
     blog.offset = db_response.get('last_offset', 0)
-    blog.post_scraped = db_response.get('last_scraped_posts')
+    blog.post_scraped = db_response.get('last_scraped_posts', 0)
     blog.crawling = 1 # set by DB by procedure on its side
+    blog.db_response = db_response
+    print("check_db_init_response returning true")
+    return True
+
+
+def check_header_change(blog):
+    """Check if the header changed, update info in DB if needed"""
+    
+    if not blog.db_response:
+        return
+    
+
+    if blog.update.total_posts > blog.db_response.total_posts:
+        # new posts
+        blog.db_response = db_handler.update_blog_info(blog)
+
+    blog.total_posts = blog.update.total_posts
+    blog.last_updated = blog.update.updated
 
 
 def crawler(blog, offset=None):
@@ -297,6 +356,7 @@ class TumblrBlog:
         self.current_json = None
         self.update = None
         self.response = None
+        self.new_posts = 0
 
     def init_session(self):
         if not self.requests_session: # first time
@@ -408,8 +468,13 @@ class TumblrBlog:
                 self.get_new_proxy(lock)
                 attempt += 1
                 continue
-            return response
-        return None
+            api_keys.inc_key_request(api_key)
+            break
+
+        try:
+            self.check_response_validate_update(response)
+        except:
+            raise
 
 
     def check_response_validate_update(self, response):
@@ -426,11 +491,11 @@ class TumblrBlog:
             print(BColors.YELLOW + "Error trying to get json from response for blog {0}".format(self.name) + BColors)
             raise
 
-        print(BColors.GREEN + "check_response({0}) response={1}".format(self.name, self.response.get('meta')['status']) + BColors.ENDC)
+        print(BColors.GREEN + "check_response_validate_update({0}) response={1}".format(self.name, self.response.get('meta')['status']) + BColors.ENDC)
 
         parse_json_response(self.response, self.update)
 
-        print(BColors.LIGHTCYAN + "check_response({0}) update={1}".format(self.name, self.update.meta_msg) + BColors.ENDC)
+        print(BColors.LIGHTCYAN + "check_response_validate_update({0}) update={1}".format(self.name, self.update.meta_msg) + BColors.ENDC)
 
         if self.update.errors_title is not None:
             if self.update.meta_status == 404 and self.update.meta_msg == 'Not Found':
@@ -455,16 +520,14 @@ class TumblrBlog:
 
         self.update.valid = True
         self.health = "UP"
-        self.total_posts = self.update.total_posts
-        self.last_updated = self.update.updated
         self.crawl_status = "resume"
         self.crawling = 1
 
         if self.update.total_posts < 20:   #FIXME: arbitrary value
-            print("check_response() Warning: {0} is considered WIPED.".format(self.name))
+            print("check_response_validate_update() Warning: {0} is considered WIPED.".format(self.name))
             self.health = "WIPED"
 
-        print(BColors.BLUEOK + "No error in check_response() json for {0}".format(self.name) + BColors.ENDC)
+        print(BColors.BLUEOK + "No error in check_response_validate_update() json for {0}".format(self.name) + BColors.ENDC)
 
         return
 
@@ -573,7 +636,8 @@ def thread_good_cleanup(db, con, blog):
 
 def thread_premature_cleanup(db, con, blog):
     """Blog has not been updated in any way, just reset STATUS to NEW"""
-    db_handler.reset_to_brand_new(db, con, blog)
+    # only resets CRAWL_STATUS to 'new', not CRAWLING which stays 1 to avoid repicking it straight away
+    db_handler.reset_to_brand_new(db, con, blog) 
 
 if __name__ == "__main__":
     # window = curses.initscr()
