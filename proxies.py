@@ -117,6 +117,7 @@ class ProxyScanner():
         try:
             data = json.load(open(myfilepath, 'r'))
         except json.decoder.JSONDecodeError: # got malformed or empty json
+            logging.debug(BColors.FAIL + "Failed decoding proxies json" + BColors.ENDC)
             return []
         # self.http_proxies_recovered = data.get('proxies')
 

@@ -479,29 +479,36 @@ def inserted_urls(cur, post):
                 e = "duplicate"
             logging.info(BColors.FAIL + "ERROR" + BColors.BLUE + " inserting url {0}: {1}".format(photo, e) + BColors.ENDC)
             continue
-    return errors
+    return True, errors
 
-def update_blog_info(Database, con, blog, init=False):
-    """ updates info if our current values have changed compared to what the API gave up,
+def update_blog_info(Database, con, blog, init=False, end=False):
+    """ updates info if our current values have changed compared to what the API gave us last time,
     in case of an update while scraping for example. If init, no need for offset and posts_scraped since brand new
     returns dict(last_total_posts, last_updated, last_checked, last_offset, last_scraped_posts)"""
 
-    logging.debug(BColors.BLUE + "db_handler: update_blog_info(): {0} init: {1}".format(blog.name, init) + BColors.ENDC)
+    logging.debug(BColors.BLUE + "{0} update DB info. init={1} end={2}".format(blog.name, init, end) + BColors.ENDC)
     cur = con.cursor()
     if init:
         # args: (blogname, UP|DEAD|WIPED, total_posts, updated, [crawl_status(resume(default)|dead), crawling(0|1)])        
-        params = (blog.name, blog.health, blog.total_posts, blog.last_updated, blog.crawl_status, blog.crawling)
-        statmt = cur.prep('execute procedure update_blog_info_init(?,?,?,?,?)')
+        params = [blog.name, blog.health, blog.total_posts, blog.last_updated, blog.crawl_status, blog.crawling]
+        statmt = 'execute procedure update_blog_info_init(?,?,?,?,?,?);'
     else:
         # args: (blogname, UP|DEAD|WIPED, total_posts, last_updated, current_offset, 
         # scraped_so_far, [crawl_status(resume(default)|dead), crawling(0|1)])
-        params = (blog.name, blog.health, blog.total_posts, blog.last_updated, blog.offset, blog.posts_scraped, blog.crawl_status, blog.crawling)
-        statmt = cur.prep('execute procedure update_blog_info(?,?,?,?,?,?,?)')
+        params = [blog.name, blog.health, blog.total_posts, blog.last_updated, blog.offset, blog.posts_scraped, blog.crawl_status, blog.crawling]
+        statmt = 'execute procedure update_blog_info(?,?,?,?,?,?,?,?);'
 
     cur.execute(statmt, params)
+
+    if end: # we don't care about return values
+        con.commit()
+        return
+
     db_resp = cur.fetchall()[0]
-    con.commit()
     # logging.debug(BColors.BLUE + "db_resp: {0}, {1}".format(type(db_resp), db_resp) + BColors.ENDC)
+
+    con.commit()
+
     resp_dict = {}
     resp_dict['last_health'], resp_dict['last_total_posts'], resp_dict['last_updated'], resp_dict['last_checked'],\
     resp_dict['last_offset'], resp_dict['last_scraped_posts'] = db_resp
@@ -515,15 +522,17 @@ def reset_to_brand_new(database, con, blog):
     con.commit()
 
 
-def update_crawling_status(database, con, blog=None):
+def update_crawling(database, con, blog=None):
     """ Sets blog crawling status to 0 or 1, if blog=None, reset all to 0"""
+
     cur = con.cursor()
     if not blog:
-        logging.debug(BColors.BLUEOK + BColors.BLUE + "Reset crawling status for all" + BColors.ENDC)
         cur.execute('update BLOGS set CRAWLING = 0;')
+        logging.debug(BColors.BLUEOK + BColors.BLUE + "Reset crawling for all" + BColors.ENDC)
     else:
-        logging.debug(BColors.BLUEOK + BColors.BLUE + "{0} Setting crawling status to {1}".format(blog.name, blog.crawling) + BColors.ENDC)
         cur.execute('execute procedure update_crawling_blog_status(?,?);', (blog.name, blog.crawling))
+        logging.debug(BColors.BLUEOK + BColors.BLUE + "{0} set crawling to {1}".format(blog.name, blog.crawling) + BColors.ENDC)
+    con.commit()
 
 
 
