@@ -6,9 +6,8 @@ import re
 import sys
 import time
 import traceback
-# import logging
+import logging
 from operator import itemgetter
-# from pprint import pprint
 import fdb
 # import cProfile
 import tumblrmapper
@@ -20,6 +19,7 @@ class Database():
     """handle the db file itself, creating everything  
     Args are: filepath, user, password, bloglist, archives, host=None"""
     
+
     def __init__(self, *args, **kwargs):
         """initialize with environment"""
         self.host = kwargs.get('db_host', 'localhost') #not implemented
@@ -28,11 +28,13 @@ class Database():
         self.password = kwargs.get('password', "masterkey")
         self.con = []
 
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         """ close all remaining connections"""
-        print("Closing connections to DB")
+        logging.debug(BColors.BLUE + "Closing connections to DB" + BColors.ENDC)
         for con in self.con:
             con.close()
+
 
     def connect(self):
         """initialize connection to remote DB"""
@@ -43,6 +45,7 @@ class Database():
         self.con.append(con)
         return con
 
+
     def close_connection(self, con=None):
         if not con:
             for item in self.con:
@@ -51,13 +54,6 @@ class Database():
         self.con.remove(con)
         return con.close()
 
-    def query_blog(self, queryobj):
-        """query DB for blog status"""
-
-    def populate_db_with_procedures(self):
-        pass
-
-    
 
 
 def create_blank_db_file(database):
@@ -66,6 +62,7 @@ def create_blank_db_file(database):
     # ("create database 'host:/temp/db.db' user 'sysdba' password 'pass'")
     c = r"create database " + r"'" + database.db_filepath + r"' user '" + database.username + r"' password '" + database.password + r"'"
     fdb.create_database(c)
+
 
 def populate_db_with_tables(database):
     """Create our tables and procedures here in the DB"""
@@ -399,26 +396,33 @@ def insert_posts(database, con, blog):
     cur = con.cursor()
     t0 = time.time()
     added = 0
+    errors = 0
     with fdb.TransactionContext(con):
         for post in blog.update.trimmed_posts_list:
-            if not inserted_post(cur, post):
+            results = inserted_post(cur, post)
+            if not results[0]:
+                errors += results[1]
                 break
             added += 1
-            inserted_context(cur, post)
-            inserted_urls(cur, post)
+            results = inserted_context(cur, post)
+            errors += results[1]
+            results = inserted_urls(cur, post)
+            errors += results[1]
         else:
-            print("NO BREAK OCCURED IN FOR LOOP, COMMITTING")
+            logging.debug(BColors.BLUE + "COMMITTING" + BColors.ENDC)
             con.commit()
             
     t1 = time.time()
-    print('Procedures to insert took %.2f ms' % (1000*(t1-t0)))
+    logging.debug(BColors.BLUE + "Procedures to insert took %.2f ms" % (1000*(t1-t0)) + BColors.ENDC)
 
-    print(BColors.BLUE + "Number of posts added to DB successfully: {0}".format(added) + BColors.ENDC)
+    logging.info(BColors.BLUE + "{0} Successfully added {1} posts.".format(blog.name, added) + BColors.ENDC)
+    logging.info(BColors.BLUE + "{0} Failed adding {1} posts.".format(blog.name, errors) + BColors.ENDC)
     blog.update.trimmed_posts_list = [] # reset
     return added 
 
 
 def inserted_post(cur, post):
+    errors = 0
     try:
         cur.callproc('insert_post', (\
                 post.get('id'),\
@@ -431,15 +435,16 @@ def inserted_post(cur, post):
     except fdb.DatabaseError as e:
         if str(e).find("UNIQUE KEY constraint"):
             e = "duplicate"
-        print(BColors.FAIL + "ERROR executing procedures for post {0}: {1}".format(post.get('id'), e) + BColors.ENDC)
-        return True
+        logging.info(BColors.FAIL + "ERROR" + BColors.BLUE + " executing procedures for post {0}: {1}".format(post.get('id'), e) + BColors.ENDC)
+        return True, errors
     except Exception as e:
-        print(BColors.FAIL + "ERROR executing procedures for post {0}: {1}".format(post.get('id'), e) + BColors.ENDC)
-        return False
-    return True
+        logging.info(BColors.FAIL + "ERROR" + BColors.BLUE + " executing procedures for post {0}: {1}".format(post.get('id'), e) + BColors.ENDC)
+        return False, errors
+    return True, errors
 
 
 def inserted_context(cur, post):
+    errors = 0
     try:
         cur.callproc('insert_context', (\
                     post.get('id'),\
@@ -450,18 +455,19 @@ def inserted_context(cur, post):
     except fdb.DatabaseError as e:
         if str(e).find("UNIQUE KEY constraint"):
             e = "duplicate"
-        print(BColors.FAIL + "ERROR executing procedures for context {0}: {1}".format(post.get('id'), e) + BColors.ENDC)
-        return True
+        logging.info(BColors.FAIL + "ERROR" + BColors.BLUE + " executing procedures for context {0}: {1}".format(post.get('id'), e) + BColors.ENDC)
+        return True, errors
     except Exception as e:
-        print(BColors.FAIL + "ERROR executing procedures for context {0}: {1}".format(post.get('id'), e) + BColors.ENDC)
-        return False
-    return True
+        logging.info(BColors.FAIL + "ERROR" + BColors.BLUE + " executing procedures for context {0}: {1}".format(post.get('id'), e) + BColors.ENDC)
+        return False, errors
+    return True, errors
 
 
 def inserted_urls(cur, post):
     insertstmt = cur.prep('insert into URLS (file_url,post_id,remote_id) values (?,?,?);')
+    errors = 0
     for photo in post.get('photos'):
-        # print("photo: {0} {1} {2}".format(photo, post.get('id'), post.get('remote_id')))
+        # logging.debug("photo: {0} {1} {2}".format(photo, post.get('id'), post.get('remote_id')))
         try:
             cur.execute(insertstmt, (\
                         photo,\
@@ -471,16 +477,16 @@ def inserted_urls(cur, post):
         except fdb.DatabaseError as e:
             if str(e).find("UNIQUE KEY constraint"):
                 e = "duplicate"
-            print(BColors.FAIL + "ERROR inserting url {0}: {1}".format(photo, e) + BColors.ENDC)
+            logging.info(BColors.FAIL + "ERROR" + BColors.BLUE + " inserting url {0}: {1}".format(photo, e) + BColors.ENDC)
             continue
-        
+    return errors
 
 def update_blog_info(Database, con, blog, init=False):
     """ updates info if our current values have changed compared to what the API gave up,
     in case of an update while scraping for example. If init, no need for offset and posts_scraped since brand new
     returns dict(last_total_posts, last_updated, last_checked, last_offset, last_scraped_posts)"""
 
-    print(BColors.BLUE + "db_handler: update_blog_info(): {0} init: {1}".format(blog.name, init) + BColors.ENDC)
+    logging.debug(BColors.BLUE + "db_handler: update_blog_info(): {0} init: {1}".format(blog.name, init) + BColors.ENDC)
     cur = con.cursor()
     if init:
         # args: (blogname, UP|DEAD|WIPED, total_posts, updated, [crawl_status(resume(default)|dead), crawling(0|1)])        
@@ -495,11 +501,11 @@ def update_blog_info(Database, con, blog, init=False):
     cur.execute(statmt, params)
     db_resp = cur.fetchall()[0]
     con.commit()
-    # print(BColors.BOLD + "db_resp: {0}, {1}".format(type(db_resp), db_resp) + BColors.ENDC)
+    # logging.debug(BColors.BLUE + "db_resp: {0}, {1}".format(type(db_resp), db_resp) + BColors.ENDC)
     resp_dict = {}
     resp_dict['last_health'], resp_dict['last_total_posts'], resp_dict['last_updated'], resp_dict['last_checked'],\
     resp_dict['last_offset'], resp_dict['last_scraped_posts'] = db_resp
-    # print(BColors.BOLD + "resp_dict: {0}".format(resp_dict) + BColors.ENDC)
+    # logging.debug(BColors.BLUE + "resp_dict: {0}".format(resp_dict) + BColors.ENDC)
     return resp_dict
 
 
@@ -513,10 +519,10 @@ def update_crawling_status(database, con, blog=None):
     """ Sets blog crawling status to 0 or 1, if blog=None, reset all to 0"""
     cur = con.cursor()
     if not blog:
-        print(BColors.DARKGRAY + "Reset crawling status for all" + BColors.ENDC)
+        logging.debug(BColors.BLUEOK + BColors.BLUE + "Reset crawling status for all" + BColors.ENDC)
         cur.execute('update BLOGS set CRAWLING = 0;')
     else:
-        print(BColors.DARKGRAY + "Setting crawling status for {0} to {1}".format(blog.name, blog.crawling) + BColors.ENDC)
+        logging.debug(BColors.BLUEOK + BColors.BLUE + "{0} Setting crawling status to {1}".format(blog.name, blog.crawling) + BColors.ENDC)
         cur.execute('execute procedure update_crawling_blog_status(?,?);', (blog.name, blog.crawling))
 
 
@@ -555,7 +561,7 @@ def populate_db_with_archives(database, archivepath):
         cur.executemany(sql, argsseq)
         con.commit()
     t1 = time.time()
-    print('Inserting records into OLD_1280 Took %.2f ms' % (1000*(t1-t0)))
+    logging.debug(BColors.BLUE + "Inserting records into OLD_1280 Took %.2f ms" % (1000*(t1-t0)) + BColors.ENDC)
 
 
 def populate_db_with_blogs(database, blogpath):
@@ -572,11 +578,11 @@ def populate_db_with_blogs(database, blogpath):
                 cur.execute(insert_statement, params)
             except fdb.fbcore.DatabaseError as e:
                 if "violation of PRIMARY or UNIQUE KEY" in e.__str__():
-                    print("Error when inserting blog: " + blog + " is already recorded.")
+                    logging.info(BColors.FAIL + "Error" + BColors.BLUE + " inserting {0}: duplicate.".format(blog) + BColors.ENDC)
         con.commit()
 
     t1 = time.time()
-    print('Inserting records into BLOGS Took %.2f ms' % (1000*(t1-t0)))
+    logging.debug(BColors.BLUE + 'Inserting records into BLOGS Took %.2f ms' % (1000*(t1-t0)) + BColors.ENDC)
 
 
 def read_csv_bloglist(blogpath):
@@ -627,7 +633,7 @@ def test_update_table(database, con):
                 params = (post['id'], post['blog_name'], post['post_url'], \
                 post['date'], post['timestamp'], post['remote_id'], post['reblogged_blog_name'], \
                 post['remote_content'], post['photos'])
-                print(post)
+                logging.debug(post)
 
                 cur.callproc('insert_post', itemgetter(0,1,2,3,5,6)(params))
 
@@ -637,17 +643,17 @@ def test_update_table(database, con):
                     try:
                         cur.execute(insertstmt, paramlist)
                     except Exception as e:
-                        print(BColors.BLUEOK + BColors.FAIL + "ERROR inserting url:" + str(e.__dict__) + BColors.ENDC)
+                        logging.exception(BColors.BLUEOK + BColors.FAIL + "ERROR inserting url:" + str(e.__dict__) + BColors.ENDC)
                         continue
             except Exception as e:
-                print(BColors.FAIL + "ERROR executing procedures for post and context:" + str(e.__dict__) + BColors.ENDC)
+                logging.debug(BColors.FAIL + "ERROR" + BColors.BLUE + " executing procedures for post and context:" + str(e.__dict__) + BColors.ENDC)
                 break
         else:
-            print("NO BREAK OCCURED IN FOR LOOP, COMMITTING")
+            logging.debug(BColors.BLUE + "COMMITTING" + BColors.ENDC)
             con.commit()
 
     t1 = time.time()
-    print('Procedures to insert took %.2f ms' % (1000*(t1-t0)))
+    logging.debug(BColors.BLUE + "Procedures to insert took %.2f ms" % (1000*(t1-t0)) + BColors.ENDC)
 
 
 
