@@ -176,10 +176,12 @@ def process(db, lock, pill2kill):
             break
 
         if blog.new_posts > 0:
-            blog.offset +=  blog.new_posts - 1
+            blog.offset +=  blog.new_posts
             logging.debug(BColors.DARKGRAY + "{0} Offset after adding new posts {1}".format(blog.name, blog.offset))
         while not pill2kill.is_set():
             if not blog.update.trimmed_posts_list: #get more
+                logging.debug(BColors.LIGHTYELLOW + "{0} Getting at offset {1}".format(blog.name, blog.offset))
+                
                 blog.api_get_request(lock, api_key=None, reqtype="posts", offset=blog.offset)
                 check_header_change(blog)
                 
@@ -189,7 +191,7 @@ def process(db, lock, pill2kill):
                 logging.debug("{0} inserting new posts".format(blog.name))
                 instances.sleep_here()
                 blog.posts_scraped += db_handler.insert_posts(db, con, blog)
-                blog.offset = blog.posts_scraped - 1
+                blog.offset = blog.posts_scraped
 
         # We're done, no more found
         check_blog_end_of_posts(blog)
