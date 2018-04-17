@@ -7,7 +7,9 @@ import sys
 import time
 import traceback
 import logging
-import html.parser
+# import html.parser
+from urllib import parse
+from html.parser import HTMLParser
 from operator import itemgetter
 import fdb
 # import cProfile
@@ -15,6 +17,10 @@ import tumblrmapper
 from constants import BColors
 
 SCRIPTDIR = os.path.dirname(__file__) + os.sep
+
+http_url_re = re.compile(r'"(https?:\/\/.*?)"', re.I)
+repattern_tumblr_redirect = re.compile(r't\.umblr\.com\/redirect\?z=(.*)(&|&amp;)t=.*', re.I)
+myhtmlparser = HTMLParser()
 
 class Database():
     """handle the db file itself, creating everything
@@ -412,7 +418,7 @@ def populate_db_with_archives(database, archivepath):
     cur = con.cursor()
     oldfiles = readlines(archivepath)
 
-    repattern_tumblr = re.compile(r'(tumblr_.*)_.*\..*', re.I) #eliminate '_size.ext'
+    repattern_tumblr = re.compile(r'(tumblr_.*)_.*\..*', re.I) #eliminate '_resol.ext'
     repattern_revisions = re.compile(r'(tumblr_.*)(?:_r\d)', re.I) #elimitane '_r\d'
 
     t0 = time.time()
@@ -687,25 +693,45 @@ def get_remote_id_and_context(post):
 
 
 
-def filter_content_raw(content_raw):
+def filter_content_raw(content_raw, parsehtml=False):
     """Eliminates the html tags, redirects, etc. in contexts
     returns context string and a list of isolated found tumblr urls"""
 
     filtered_urls = []
 
-    content_raw = htmlToText(content_raw)
-    logging.debug(BColors.LIGHTPINK + "PARSED html:\n{0}".format(repr(content_raw)) + BColors.ENDC)
+    if parsehtml:
+        content_raw = htmlToText(content_raw)
 
-    # urls = content_raw.find('http')
+    urls = extract_urls(content_raw, parsehtml=parsehtml)
 
     return content_raw, filtered_urls
+
+
+def extract_urls(content, parsehtml=False):
+    """Returns a list of urls"""
+
+    url_list = set()
+    for item in http_url_re.findall(content):
+        print('before: ' + item)
+        item = myhtmlparser.unescape(item) # remove &amp;
+
+        reresult = repattern_tumblr_redirect.search(item) # search for t.umblr
+        if reresult:
+            item = reresult.group(1)
+
+        url_list.add(parse.unquote(item)) # remove %3A%2F%2F
+
+        #remove t.umblr
+    print(url_list)
+    return url_list
+
 
 
 def htmlToText(raw_html):
     """https://stackoverflow.com/questions/14694482/converting-html-to-text-with-python
     WARNING: causes infinite loop in some circumstances? """
     ret = raw_html.replace('\n','').replace('\t','')
-    logging.debug(BColors.BLUE + "RAW html:\n{0}".format(ret) + BColors.ENDC)
+    # logging.debug(BColors.BLUE + "RAW html:\n{0}".format(ret) + BColors.ENDC)
 
     def _getElement(subhtml, name, end=None):
         ename = "<" + name + ">"
@@ -792,6 +818,7 @@ def htmlToText(raw_html):
                 ret = ret.replace(element, elementContent)
             else:
                 ret = ret.replace(element, '')
+    logging.debug(BColors.LIGHTPINK + "PARSED html:\n{0}".format(repr(ret)) + BColors.ENDC)
     return ret
 
 
