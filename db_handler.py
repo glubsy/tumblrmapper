@@ -18,9 +18,12 @@ from constants import BColors
 
 SCRIPTDIR = os.path.dirname(__file__) + os.sep
 
-http_url_re = re.compile(r'"(https?:\/\/.*?)"', re.I)
+http_url_simple_re = re.compile(r'"(https?(?::\/\/|%3A%2F%2F).*?)"', re.I)
+# matches quoted, between quotes, before html tags
+http_url_super_re = re.compile(r'(?:\"(https?(?::\/\/|%3A%2F%2F).*?)(?:\")(?:<\/)*?)|(?:(https?:\/\/.*?)(?:(?:\s)|(?:<)))', re.I)
 repattern_tumblr_redirect = re.compile(r't\.umblr\.com\/redirect\?z=(.*)(&|&amp;)t=.*', re.I)
-myhtmlparser = HTMLParser()
+
+htmlparser = HTMLParser()
 
 class Database():
     """handle the db file itself, creating everything
@@ -663,67 +666,151 @@ def get_remote_id_and_context(post):
     """if there is no 'content_raw'
     ---> get 'reblog' instead (it's the same! but for original post)"""
 
-    remote_id = None
-    content_raw = None
-    reblogged_blog_name = None
-    body = post.get('body', None)
+    full_context = ''
+    post['full_context'] = ''
+    attr = { # potentially good fields holding context data
+        'reblog':                post.get('reblog'),
+        'comment':               None,
+        'tree_html':             None,
+        'body':                  post.get('body'),
+        'caption':               post.get('caption'),
+        'source_url':            post.get('source_url'),  # type == video, audio
+        'answer':                post.get('answer'),    # type == answer
+        'content_raw':           ''}
 
-    if body:
-        content_raw = body
-    else:
-        trail = post.get('trail', None)                         # list
-        if not trail:                                           # there is no remote_id!
-            content_raw = post.get('reblog').get('comment')
-            if not content_raw:
-                content_raw = post.get('reblog').get('tree_html') # fallback
+    trail          = post.get('trail')
+    reblogged_name = None
+    remote_id      = None
+
+    if attr['reblog'] is not None:
+        attr['comment'] = post.get('reblog').get('comment')
+        attr['tree_html'] = post.get('reblog').get('tree_html')
+        full_context += attr['comment'] + attr['tree_html']
+
+    if attr['body'] is not None:            # type == text
+        full_context += attr['body']
+
+    if attr['caption'] is not None:         # type in [photo,video]
+        full_context += attr['caption']
+
+    if attr['source_url'] is not None:      # type in [video, audio, quote]
+        full_context += attr['source_url']
+
+    if attr['answer'] is not None:          # type == answer
+        full_context += attr['answer']
+
+    if trail:
+        for item in trail:
+            full_context += item.get('content_raw', '') + item.get('content', '')
+
+            attr['content_raw'] += item.get('content_raw')
+
+            item_remote_id = item.get('post').get('id')
+            if post.get('id') != item_remote_id:            # not a self reblog, precious
+                if item.get('is_root_item'):                # original post
+                    reblogged_name          = item.get('blog').get('name')
+                    remote_id               = item_remote_id
+
+    # keep the longest field of all
+    # stringset = set()
+    # for item in set(attr.values()):
+    #     stringset.add(value)
+    # if trail:
+    #     for item in trail:
+    #         stringset.add(item.get('content_raw'))
+    #         stringset.add(item.get('content'))
+    # maxlength = max(len(s) for s in stringset)
+    # longest_strings = [s for s in stringset if len(s) == maxlength]
+    # attr['content_raw'] = longest_strings[0]
+
+    if not trail:                       # empty list, there will be no remote_id!
+        if post.get('type') == 'text': # text, quote, link, answer, video, audio, photo, chat
+            attr['content_raw'] = attr.get('body')
+        elif post.get('type') in ['photo', 'video']:
+            attr['content_raw'] = attr.get('caption')
+        elif post.get('type') == 'answer':
+            attr['content_raw'] = attr.get('answer')
         else:
-            for item in trail:
-                item_remote_id = item.get('post').get('id')
-                if post.get('id') != item_remote_id:            # precious
-                    if item.get('is_root_item'):                # only keep this
-                        reblogged_blog_name = item.get('blog').get('name')
-                        remote_id = item_remote_id
-                        content_raw = item.get('content_raw')
+            attr['content_raw'] = post.get('reblog').get('comment', '')\
+            + post.get('reblog').get('tree_html', '')
 
-    post['content_raw'], post['filtered_urls'] = filter_content_raw(content_raw)
-    post['remote_id'] = remote_id
-    post['reblogged_blog_name'] = reblogged_blog_name
+
+    post['reblogged_name']  = reblogged_name
+    post['remote_id']       = remote_id
+    post['content_raw']     = attr.get('content_raw')
+    post['full_context'], 
+    post['filtered_urls']   = filter_content_raw(full_context)
+
     return post
 
 
 
 
-def filter_content_raw(content_raw, parsehtml=False):
+def filter_content_raw(content, parsehtml=False):
     """Eliminates the html tags, redirects, etc. in contexts
     returns context string and a list of isolated found tumblr urls"""
 
-    filtered_urls = []
-
     if parsehtml:
-        content_raw = htmlToText(content_raw)
+        content = htmlToText(content)
 
-    urls = extract_urls(content_raw, parsehtml=parsehtml)
+    urls = extract_urls(content, parsehtml=parsehtml)
 
-    return content_raw, filtered_urls
+    return content, urls
 
 
 def extract_urls(content, parsehtml=False):
-    """Returns a list of urls"""
+    """Returns a set of unique urls, unquoted, without redirects,
+    None if none is found"""
 
-    url_list = set()
-    for item in http_url_re.findall(content):
-        print('before: ' + item)
-        item = myhtmlparser.unescape(item) # remove &amp;
+    found_http_occur = content.count('http')
+    logging.debug("http occurences: {0}".format(found_http_occur))
 
-        reresult = repattern_tumblr_redirect.search(item) # search for t.umblr
-        if reresult:
-            item = reresult.group(1)
+    if not found_http_occur:
+        return
 
-        url_list.add(parse.unquote(item)) # remove %3A%2F%2F
+    url_set = set()
+    checked = set()
+    http_walk = 0
+    t0 = time.time()
+    for item in http_url_super_re.findall(content):
+        # logging.debug('matched: {0}'.format(item))
+        for capped in item:
+            if capped in checked or capped is '':
+                http_walk += capped.count('http')
+                continue
+            logging.debug('captured: {0}'.format(capped))
+            checked.add(capped)
 
-        #remove t.umblr
-    print(url_list)
-    return url_list
+            if capped.find("://tmblr.co/") != -1:
+                http_walk += capped.count('http')
+                continue
+
+            reresult = repattern_tumblr_redirect.search(capped) # search for t.umblr
+            if reresult:
+                http_walk += capped.count('http') # we usually find 3 occurences
+                capped = reresult.group(1)
+
+            # capped = htmlparser.unescape(capped) # remove &amp;
+            capped = parse.unquote(capped)         # remove %3A%2F%2F and %20 spaces
+
+            if capped in url_set:
+                http_walk += capped.count('http')
+
+            url_set.add(capped)
+
+    t1 = time.time()
+    logging.debug(BColors.BLUEOK + BColors.BLUE + "Procedures to insert took %.2f ms" \
+                  % (1000*(t1-t0)) + BColors.ENDC)
+
+    logging.debug(BColors.BLUE + BColors.BOLD + "url_set length: {0},\n{1}"
+                  .format(len(url_set), url_set) + BColors.ENDC)
+
+    if len(url_set) < found_http_occur - http_walk:
+        logging.info(BColors.FAIL + "Warning: less urls than HTTP occurences. {0}<{1}"
+                      .format(len(url_set), found_http_occur) + BColors.ENDC)
+        logging.info(BColors.BLUE + "full context was:\n{0}".format(repr(content)) + BColors.ENDC)
+
+    return url_set
 
 
 
@@ -836,7 +923,7 @@ def inserted_post(cur, post):
                 post.get('post_url'),           # post_url
                 post.get('date'),               # timestamp
                 post.get('remote_id'),          # remote_id
-                post.get('reblogged_blog_name') # reblogged_blog_name
+                post.get('reblogged_name')      # reblogged_blog_name
                 ))
     except fdb.DatabaseError as e:
         if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
@@ -886,19 +973,18 @@ def inserted_urls(cur, post):
         # logging.debug("photo: {0} {1} {2}"
         # .format(photo, post.get('id'), post.get('remote_id')))
         try:
-            cur.execute(insertstmt, (\
-                        photo.get('original_size').get('url'),\
-                        post.get('id'),\
-                        post.get('remote_id')\
+            cur.execute(insertstmt, (
+                        photo.get('original_size').get('url'),
+                        post.get('id'),
+                        post.get('remote_id')
                         ))
         except fdb.DatabaseError as e:
             if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
                 e = "duplicate"
-            logging.info(BColors.FAIL + "DB ERROR" + BColors.BLUE + \
-                        " url\t{0}: {1}".format(
+            logging.info(BColors.FAIL + "DB ERROR" + BColors.BLUE
+                        + " url\t{0}: {1}".format(
                         photo.get('original_size').get('url'),
-                        e)
-                        + BColors.ENDC)
+                        e) + BColors.ENDC)
             continue
     return True, errors
 
@@ -930,7 +1016,8 @@ if __name__ == "__main__":
     archives_toload = SCRIPTDIR +  "tools/1280_files_list.txt"
     database = Database(db_filepath="/home/firebird/tumblrmapper_test.fdb", \
                         username="sysdba", password="masterkey")
-    test_jsons = ["vgf_july_reblogfalse_dupe.json", "3dandy.json"]
+    test_jsons = ["vgf_latest.json", "3dandy.json", "thelewd3dblog_offset0.json",
+     "leet_01.json", "cosm_01.json"]
 
     con = database.connect()
     # create_blank_database(database)
