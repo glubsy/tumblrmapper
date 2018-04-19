@@ -94,7 +94,7 @@ def populate_db_with_tables(database):
         # cur = con.cursor()
         # Create domains
         con.execute_immediate("CREATE DOMAIN D_LONG_TEXT AS VARCHAR(500);")
-        con.execute_immediate("CREATE DOMAIN D_URL AS VARCHAR(150);")
+        con.execute_immediate("CREATE DOMAIN D_URL AS VARCHAR(250);")
         con.execute_immediate("CREATE DOMAIN D_POSTURL AS VARCHAR(300);")
         con.execute_immediate("CREATE DOMAIN D_AUTO_ID AS smallint;")
         con.execute_immediate("CREATE DOMAIN D_BLOG_NAME AS VARCHAR(60);")
@@ -285,6 +285,42 @@ insert into CONTEXTS (POST_ID, TTIMESTAMP, CONTEXT, REMOTE_ID ) values
 END
 """)
 
+        con.execute_immediate(\
+"""
+CREATE OR ALTER PROCEDURE insert_url
+ ( i_url D_URL,
+ i_post_id d_post_no,
+ i_remote_id d_post_no default null)
+AS
+declare variable v_rid d_post_no;
+BEGIN
+if ((i_remote_id is null)) THEN
+begin
+    update or insert into URLS (FILE_URL, POST_ID, REMOTE_ID)
+    values (:i_url, :i_post_id, :i_remote_id) MATCHING (FILE_URL, POST_ID);
+    exit;
+end
+if ((i_remote_id = i_post_id) and (i_remote_id is not null)) then
+begin /*self reblog, priority*/
+
+    select REMOTE_ID from URLS
+    where URLS.FILE_URL = :i_url into v_rid;
+
+    if (v_rid = :i_post_id) THEN
+    begin
+    update URLS set POST_ID = :i_post_id, REMOTE_ID = :i_remote_id
+    where file_url = :i_url;
+    exit;
+    end
+end
+ELSE begin
+insert into URLS (FILE_URL, POST_ID, REMOTE_ID)
+values (:i_url, :i_post_id, :i_remote_id);
+--when ANY do /*supress any exception, TODO: capture duplicate to avoid overhead*/
+--exit;
+end
+END
+""")
 
         con.execute_immediate(\
 """
@@ -781,11 +817,6 @@ def get_remote_id_and_context(post):
                         remote_id               = item_remote_id
                 # diff name same id impossible
 
-
-
-
-
-
     # keep the longest field of all
     # stringset = set()
     # for item in set(attr.values()):
@@ -1041,12 +1072,12 @@ def inserted_urls(cur, post):
     if not photos:
         return True, errors
 
-    insertstmt = cur.prep('insert into URLS (file_url,post_id,remote_id) values (?,?,?);')
+    # insertstmt = cur.prep('insert into URLS (file_url,post_id,remote_id) values (?,?,?);')
     for photo in photos:
         # logging.debug("photo: {0} {1} {2}"
         # .format(photo, post.get('id'), post.get('remote_id')))
         try:
-            cur.execute(insertstmt, (
+            cur.callproc('insert_url' (
                         photo.get('original_size').get('url'),
                         post.get('id'),
                         post.get('remote_id')
