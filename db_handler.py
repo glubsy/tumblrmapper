@@ -239,23 +239,34 @@ END
         # Inserts context, update if already present with latest reblog's values
         con.execute_immediate(\
 """
-CREATE OR ALTER PROCEDURE insert_context(
-    i_post_id d_post_no not null,
-    i_timestamp d_epoch,
-    i_context d_super_long_text default null,
-    i_remote_id d_post_no default null)
-as
+CREATE OR ALTER PROCEDURE INSERT_CONTEXT (
+    i_post_id D_POST_NO NOT NULL,
+    i_timestamp D_EPOCH,
+    i_context D_SUPER_LONG_TEXT DEFAULT null,
+    i_remote_id D_POST_NO DEFAULT null )
+AS
 BEGIN
 if (:i_remote_id is not null) then /* we might not want to keep it*/
-    if (exists (select (REMOTE_ID) from CONTEXTS where (REMOTE_ID = :i_remote_id))) then
-    begin
+    if (exists (select (REMOTE_ID) from CONTEXTS where (REMOTE_ID = :i_remote_id))) then /*if remote_id already in remote_id col*/
+    begin 																				/*keep the latest one, update if newer*/
         if (:i_timestamp > (select (TTIMESTAMP) from CONTEXTS where (REMOTE_ID = :i_remote_id))) then
-            update CONTEXTS set CONTEXT = :i_context,
-            TTIMESTAMP = :i_timestamp,
-            LATEST_REBLOG = :i_post_id
-            where (REMOTE_ID = :i_remote_id);
+            update CONTEXTS
+            set CONTEXT = :i_context,
+                TTIMESTAMP = :i_timestamp,
+                LATEST_REBLOG = :i_post_id
+                where (REMOTE_ID = :i_remote_id);
             exit;
     end
+    else
+    if (:i_post_id = :i_remote_id) THEN /*self reblog, we update*/
+        begin
+            update CONTEXTS
+            	set TTIMESTAMP = :i_timestamp,
+            		CONTEXT = :i_context,
+            		REMOTE_ID = :i_remote_id
+            	   where POST_ID = :i_post_id;
+        exit;
+        end
 else /* we store everything, it's an original post*/
 insert into CONTEXTS (POST_ID, TTIMESTAMP, CONTEXT, REMOTE_ID ) values
                     (:i_post_id, :i_timestamp, :i_context, :i_remote_id );
@@ -705,17 +716,49 @@ def get_remote_id_and_context(post):
     if attr['answer'] is not None:          # type == answer
         full_context += ' ' + attr['answer']
 
+
+    if not trail:                       # empty list, there will be no remote_id!
+        if post.get('type') == 'text': # text, quote, link, answer, video, audio, photo, chat
+            attr['content_raw'] = attr.get('body')
+        elif post.get('type') in ['photo', 'video']:
+            attr['content_raw'] = attr.get('caption')
+        elif post.get('type') == 'answer':
+            attr['content_raw'] = attr.get('answer')
+        else:
+            attr['content_raw'] = attr.get('comment', '')\
+            + ' ' + attr.get('tree_html', '')
+
     if trail:
+        found_reblog = False
         for item in trail:
             full_context += item.get('content_raw', '') + ' ' + item.get('content', '')
 
             attr['content_raw'] += ' ' + item.get('content_raw')
 
+            if found_reblog:
+                continue
+
             item_remote_id = item.get('post').get('id')
-            if post.get('id') != item_remote_id:            # not a self reblog, precious
-                if item.get('is_root_item'):                # original post
-                    reblogged_name          = item.get('blog').get('name')
+            item_name = item.get('blog').get('name')
+
+            if post.get('id') != item_remote_id:           # we know it's a reblog, not a self reblog, precious
+                if item_name != post.get('blog_name') :    # indeed a foreign reblog
+                    found_reblog = True
+                    if item.get('is_root_item'):     # actual original post, not a reblog
+                        reblogged_name          = item_name
+                        remote_id               = item_remote_id
+                else:
+                    reblogged_name          = None
+                    remote_id               = None
+            elif post.get('id') == item_remote_id:      # either a self reblog, or just a blog, + name is same
+                if item.get('is_current_item'):         # not a self reblog, it's the current post, we keep to update
+                    reblogged_name          = item_name
                     remote_id               = item_remote_id
+                    logging.debug(BColors.FAIL + "Replacing content_raw of {0} with\n{1}"
+                    .format(attr('content_raw'), item.get('content_raw')))
+                    attr['content_raw']     = item.get('content_raw')
+
+
 
     # keep the longest field of all
     # stringset = set()
@@ -729,16 +772,7 @@ def get_remote_id_and_context(post):
     # longest_strings = [s for s in stringset if len(s) == maxlength]
     # attr['content_raw'] = longest_strings[0]
 
-    if not trail:                       # empty list, there will be no remote_id!
-        if post.get('type') == 'text': # text, quote, link, answer, video, audio, photo, chat
-            attr['content_raw'] = attr.get('body')
-        elif post.get('type') in ['photo', 'video']:
-            attr['content_raw'] = attr.get('caption')
-        elif post.get('type') == 'answer':
-            attr['content_raw'] = attr.get('answer')
-        else:
-            attr['content_raw'] = attr.get('comment', '')\
-            + ' ' + attr.get('tree_html', '')
+
 
 
     post['reblogged_name']  = reblogged_name
@@ -820,7 +854,7 @@ def extract_urls(content, parsehtml=False):
         singleton = http_url_single_re.search(content)
         if singleton:
             url_set.add(singleton.group(1))
-            logging.info(BColors.BLUE +  "Added singleton back: " 
+            logging.info(BColors.BLUE +  "Added singleton back: "
             + singleton.group(1) + BColors.ENDC)
 
     return url_set
