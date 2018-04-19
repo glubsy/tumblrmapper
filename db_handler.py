@@ -201,6 +201,18 @@ v_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence, -1);
 END
 """)
 
+        con.execute_immediate(\
+"""
+CREATE OR ALTER PROCEDURE reset_crawl_status
+ ( i_blog_name d_blog_name )
+AS declare variable v_crawl varchar(10) default null;
+BEGIN
+select (CRAWL_STATUS) from BLOGS where (BLOG_NAME = :i_blog_name) into :v_crawl;
+if (v_crawl is not null) THEN
+update BLOGS set CRAWL_STATUS = 'new' where (BLOG_NAME = :i_blog_name);
+END
+""")
+
         # Inserts a post and all its metadata
         con.execute_immediate(\
 """
@@ -579,7 +591,7 @@ def update_blog_info(Database, con, blog, init=False, end=False):
 
 def reset_to_brand_new(database, con, blog):
     cur = con.cursor()
-    cur.execute(r"update BLOGS set CRAWL_STATUS = 'new' where BLOG_NAME = (?);",
+    cur.execute(r'execute procedure reset_crawl_status(?);',
                 (blog.name,))
     con.commit()
 
@@ -653,11 +665,11 @@ def insert_posts(database, con, blog, update):
                 continue
             added += 1
 
-            # results = inserted_context(cur, post)
-            # errors += results[1]
+            results = inserted_context(cur, post)
+            errors += results[1]
 
-            # results = inserted_urls(cur, post)
-            # errors += results[1]
+            results = inserted_urls(cur, post)
+            errors += results[1]
         else:
             logging.debug(BColors.BLUE + "COMMITTING" + BColors.ENDC)
             con.commit()
@@ -743,20 +755,34 @@ def get_remote_id_and_context(post):
 
             if post.get('id') != item_remote_id:           # we know it's a reblog, not a self reblog, precious
                 if item_name != post.get('blog_name') :    # indeed a foreign reblog
-                    found_reblog = True
-                    if item.get('is_root_item'):     # actual original post, not a reblog
+                    if item.get('is_root_item'):            # actual original foreign post
+                        found_reblog = True
                         reblogged_name          = item_name
                         remote_id               = item_remote_id
-                else:
-                    reblogged_name          = None
-                    remote_id               = None
-            elif post.get('id') == item_remote_id:      # either a self reblog, or just a blog, + name is same
-                if item.get('is_current_item'):         # not a self reblog, it's the current post, we keep to update
-                    reblogged_name          = item_name
-                    remote_id               = item_remote_id
-                    logging.debug(BColors.FAIL + "Replacing content_raw of {0} with\n{1}"
-                    .format(attr('content_raw'), item.get('content_raw')))
-                    attr['content_raw']     = item.get('content_raw')
+                else:   #same name    # could be self reblog
+                    if item.get('is_current_item'):     # update / reblog -> update DB context
+                        logging.debug(BColors.YELLOW + "Replacing content_raw of:\n{0}\nwith more recently updated version is_current_item:\n{1}"
+                        .format(len(attr.get('content_raw')), len(item.get('content_raw'))) + BColors.ENDC)
+                        attr['content_raw']     = item.get('content_raw')
+                    elif item.get('is_root_item'):            # just self reblog! normal update name and remote_id, don't update context
+                        found_reblog = True
+                        reblogged_name          = item_name
+                        remote_id               = item_remote_id
+
+            elif post.get('id') == item_remote_id:      # either a self reblog, or just a blog, + blog name is same
+                if item_name == post.get('blog_name'):  # it's just a normal blog, nothing fancy not a reblog but can be part of a reblog (comment added)
+                    if item.get('is_current_item'):     # self reblog that was updated! we keep all to update the context explicitly
+                        logging.debug(BColors.YELLOW + "Replacing content_raw of:\n{0}\nwith more recently updated version is_current_item:\n{1}"
+                        .format(len(attr.get('content_raw')), len(item.get('content_raw'))) + BColors.ENDC)
+                        attr['content_raw']     = item.get('content_raw')
+                    elif item.get('is_root_item'):      # just self reblog!
+                        found_reblog = True
+                        reblogged_name          = item_name
+                        remote_id               = item_remote_id
+                # diff name same id impossible
+
+
+
 
 
 
@@ -1063,7 +1089,7 @@ if __name__ == "__main__":
     archives_toload = SCRIPTDIR +  "tools/1280_files_list.txt"
     database = Database(db_filepath="/home/firebird/tumblrmapper_test.fdb", \
                         username="sysdba", password="masterkey")
-    test_jsons = ["vgf_latest.json", "3dandy.json", "thelewd3dblog_offset0.json",
+    test_jsons = ["jerian-cg-selfreblog.json", "vgf_latest.json", "3dandy.json", "thelewd3dblog_offset0.json",
      "leet_01.json", "cosm_01.json"]
 
     os.nice(20)

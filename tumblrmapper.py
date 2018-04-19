@@ -80,7 +80,8 @@ def parse_config(config_path=SCRIPTDIR, data_path=None):
                         "api_keys": data_path + os.sep + "api_keys.json",
                         "proxies": data_path + os.sep + "proxies.json",
                         "threads": 5,
-                        "nice_level": 10
+                        "nice_level": 10,
+                        "log_level": "INFO"
                         }
 
     config = configparser.SafeConfigParser(config_defaults)
@@ -201,7 +202,7 @@ def process(db, lock, pill2kill):
                 update = blog.api_get_request(lock, update, api_key=None, \
                 reqtype="posts", offset=blog.offset)
                 check_header_change(db, con, blog, update)
-                
+
                 if not update.posts_response: # nothing more
                     break
             else:
@@ -218,7 +219,7 @@ def process(db, lock, pill2kill):
 
         if pill2kill.is_set():
             break
-    
+
 
     logging.debug(BColors.LIGHTGRAY + "Terminating thread {0}"\
     .format(threading.current_thread()) + BColors.ENDC)
@@ -277,10 +278,10 @@ def first_blog_status_check(db, con, lock, blog, update, isnew=False):
     if not update.valid:
         logging.info(BColors.RED + "{0} Too many invalid request attempts! Aborting for now."\
         .format(blog.name) + BColors.ENDC)
-        if isnew: 
+        if isnew:
             thread_premature_cleanup(db, con, blog)
         return False
-    
+
     return True
 
 
@@ -291,17 +292,17 @@ def check_db_init_response(db_response, blog, isnew=False):
     if not db_response:
         return
     if not db_response.get('last_total_posts', None):
-        db_response['last_total_posts'] = 0 
+        db_response['last_total_posts'] = 0
     if not db_response.get('last_offset', None):
         db_response['last_offset'] = 0
 
     if not isnew:
-        if db_response['last_offset'] >= blog.total_posts:    
+        if db_response['last_offset'] >= blog.total_posts:
             logging.debug(BColors.BOLD + \
             "{0} last offset was {1} and superior to current total posts {2}. Resetting to 0."\
             .format(blog.name, db_response['last_offset'], blog.total_posts) + BColors.ENDC)
             db_response['last_offset'] = 0
-        
+
         if db_response['last_total_posts'] < blog.total_posts:
             blog.new_posts = (blog.total_posts - db_response['last_total_posts'])
             logging.info(BColors.BOLD + \
@@ -326,7 +327,7 @@ def check_db_init_response(db_response, blog, isnew=False):
             .format(blog.name, blog.health, db_response.get('last_health')) + BColors.ENDC)
             return False
 
-    # initializing 
+    # initializing
     logging.debug("{0} initializing offset to what it was in DB".format(blog.name))
     blog.offset = db_response.get('last_offset', 0)
     blog.post_scraped = db_response.get('last_scraped_posts', 0)
@@ -338,14 +339,14 @@ def check_db_init_response(db_response, blog, isnew=False):
 
 def check_header_change(database, con, blog, update):
     """Check if the header changed, update info in DB if needed"""
-    
+
     if not blog.db_response:
         return
-    
+
     if update.total_posts > blog.total_posts:
         # new posts
         blog.db_response = db_handler.update_blog_info(database, con, blog)
-    
+
 
     blog.total_posts = update.total_posts
     blog.last_updated = update.updated
@@ -516,8 +517,8 @@ class TumblrBlog:
         # renew proxy n times if it fails
         while attempt < 10:
             try:
-                response = self.requester(url=apiv2_url, 
-                                        requests_session=self.requests_session, 
+                response = self.requester(url=apiv2_url,
+                                        requests_session=self.requests_session,
                                         api_key=api_key)
             except requests.exceptions.ProxyError as e:
                 logging.info(BColors.FAIL + "{0} Proxy error: {1}"\
@@ -693,7 +694,7 @@ def thread_premature_cleanup(db, con, blog):
     "{0} thread_premature_cleanup, reset_to_brand_new"\
     .format(blog.name) + BColors.ENDC )
     # only resets CRAWL_STATUS to 'new', not CRAWLING which stays 1 to avoid repicking it straight away
-    db_handler.reset_to_brand_new(db, con, blog) 
+    db_handler.reset_to_brand_new(db, con, blog)
 
 
 def configure_logging(args):
@@ -704,11 +705,10 @@ def configure_logging(args):
 
     instances.config = parse_config(args.config_path, args.data_path)
 
-    fh = logging.FileHandler(
-                            filename=instances.config
-                            .get('tumblrmapper', 'log_path'), 
+    fh = logging.FileHandler(filename=instances.config.get('tumblrmapper', 'log_path'),
                             mode='w')
-    fh.setLevel(logging.INFO)
+
+    fh.setLevel(getattr(logging, instances.config.get('tumblrmapper', "log_level")))
     fh.setFormatter(logging.Formatter(
                     '{asctime} {levelname}:\t{message}',
                     '%y/%m/%d %H:%M:%S', '{'))
@@ -731,10 +731,7 @@ if __name__ == "__main__":
 
     # parse command-line arguments
     args = parse_args()
-
     configure_logging(args)
-
-
 
     THREADS = instances.config.getint('tumblrmapper', 'threads')
 
