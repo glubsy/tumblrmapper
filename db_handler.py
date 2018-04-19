@@ -19,6 +19,7 @@ from constants import BColors
 SCRIPTDIR = os.path.dirname(__file__) + os.sep
 
 http_url_simple_re = re.compile(r'"(https?(?::\/\/|%3A%2F%2F).*?)"', re.I)
+http_url_single_re = re.compile(r'(https?(?::\/\/|%3A%2F%2F).*?)(?:\s)*?$', re.I)
 # matches quoted, between quotes, before html tags
 http_url_super_re = re.compile(r'(?:\"(https?(?::\/\/|%3A%2F%2F).*?)(?:\")(?:<\/)*?)|(?:(https?:\/\/.*?)(?:(?:\s)|(?:<)))', re.I)
 repattern_tumblr_redirect = re.compile(r't\.umblr\.com\/redirect\?z=(.*)(&|&amp;)t=.*', re.I)
@@ -738,7 +739,7 @@ def get_remote_id_and_context(post):
     post['reblogged_name']  = reblogged_name
     post['remote_id']       = remote_id
     post['content_raw']     = attr.get('content_raw')
-    post['full_context'], 
+    post['full_context'],
     post['filtered_urls']   = filter_content_raw(full_context)
 
     return post
@@ -809,6 +810,11 @@ def extract_urls(content, parsehtml=False):
         logging.info(BColors.FAIL + "Warning: less urls than HTTP occurences. {0}<{1}"
                       .format(len(url_set), found_http_occur) + BColors.ENDC)
         logging.info(BColors.BLUE + "full context was:\n{0}".format(repr(content)) + BColors.ENDC)
+
+        singleton = http_url_single_re.search(content)
+        if singleton:
+            url_set.add(singleton.group(1))
+            logging.debug("Added singleton: " + singleton.group(1) )
 
     return url_set
 
