@@ -122,11 +122,11 @@ PRIORITY        smallint,
 CONSTRAINT blognames_unique UNIQUE (BLOG_NAME) using index ix_blognames
 );""")
 
-        con.execute_immediate(\
-            """CREATE TABLE GATHERED_BLOGS (
-            AUTO_ID      D_AUTO_ID PRIMARY KEY,
-            BLOG_NAME    D_BLOG_NAME );""")
-            #TODO: make constraint CHECK to only create if not already in tBLOGS?
+        # con.execute_immediate(\
+        #     """CREATE TABLE GATHERED_BLOGS (
+        #     AUTO_ID      D_AUTO_ID PRIMARY KEY,
+        #     BLOG_NAME    D_BLOG_NAME );""")
+        #     #TODO: make constraint CHECK to only create if not already in tBLOGS?
 
         con.execute_immediate(\
 """
@@ -138,7 +138,7 @@ REBLOGGED_BLOGNAME  D_AUTO_ID,
 POST_URL            D_POSTURL NOT NULL,
 POST_DATE           varchar(26),
 FOREIGN KEY(ORIGIN_BLOGNAME) REFERENCES BLOGS(AUTO_ID),
-FOREIGN KEY(REBLOGGED_BLOGNAME) REFERENCES GATHERED_BLOGS(AUTO_ID)
+FOREIGN KEY(REBLOGGED_BLOGNAME) REFERENCES BLOGS(AUTO_ID)
 );""")
             #BLOG_ORIGIN is the blog of the post_id (TID)
             #BLOG_REBLOGGED is name of blog in trail
@@ -178,11 +178,11 @@ FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID)
 
         # CREATE generators and triggers
         con.execute_immediate("CREATE SEQUENCE tBLOGS_autoid_sequence;")
-        con.execute_immediate("CREATE SEQUENCE tGATHERED_BLOGS_autoid_sequence;")
+        # con.execute_immediate("CREATE SEQUENCE tGATHERED_BLOGS_autoid_sequence;")
         con.execute_immediate(\
-            """CREATE TRIGGER tGATHERED_BLOGS_AUTOINC FOR GATHERED_BLOGS
+            """CREATE TRIGGER tGATHERED_BLOGS_AUTOINC FOR BLOGS
             ACTIVE BEFORE INSERT POSITION 0
-            AS BEGIN NEW.AUTO_ID = next value for tGATHERED_BLOGS_autoid_sequence; END""")
+            AS BEGIN NEW.AUTO_ID = next value for tBLOGS_autoid_sequence; END""")
 
         # CREATE procedures
         # Records given blogname into BLOG table, increments auto_id,
@@ -216,16 +216,17 @@ AS declare variable v_blog_origin_id d_auto_id;
 declare variable v_fetched_reblogged_blog_id d_auto_id default null;
 declare variable v_b_update_gathered d_boolean default 0;
 BEGIN
+
 select AUTO_ID from BLOGS where BLOG_NAME = :i_blog_origin into :v_blog_origin_id;
 
 if (:i_reblogged_blog_name is not null) THEN
-select AUTO_ID from GATHERED_BLOGS where BLOG_NAME = :i_reblogged_blog_name into :v_fetched_reblogged_blog_id;
+select AUTO_ID from BLOGS where BLOG_NAME = :i_reblogged_blog_name into :v_fetched_reblogged_blog_id;
 
 if ((:i_reblogged_blog_name is distinct from :i_blog_origin) and (:v_fetched_reblogged_blog_id is null))
 THEN v_b_update_gathered = 1;
 
 if ((v_b_update_gathered = 1) and (:i_reblogged_blog_name is not null)) THEN
-INSERT into GATHERED_BLOGS (BLOG_NAME) values (:i_reblogged_blog_name)
+INSERT into BLOGS (BLOG_NAME) values (:i_reblogged_blog_name)
 returning (AUTO_ID) into :v_fetched_reblogged_blog_id;
 
 INSERT into POSTS (POST_ID, POST_URL, POST_DATE, REMOTE_ID,
@@ -673,10 +674,11 @@ def get_remote_id_and_context(post):
         'reblog':                post.get('reblog'),
         'comment':               None,
         'tree_html':             None,
-        'body':                  post.get('body'),
+        'body':                  post.get('body'), #FIXME: maybe can default to '' here, not None
         'caption':               post.get('caption'),
-        'source_url':            post.get('source_url'),  # type == video, audio
-        'answer':                post.get('answer'),    # type == answer
+        'source_url':            post.get('source_url'),  # type: video, audio
+        'answer':                post.get('answer'),    # type: answer
+        'link_url':              post.get('link_url'), # type: photos
         'content_raw':           ''}
 
     trail          = post.get('trail')
@@ -686,25 +688,28 @@ def get_remote_id_and_context(post):
     if attr['reblog'] is not None:
         attr['comment'] = post.get('reblog').get('comment')
         attr['tree_html'] = post.get('reblog').get('tree_html')
-        full_context += attr['comment'] + attr['tree_html']
+        full_context += ' ' + attr['comment'] + ' ' + attr['tree_html']
 
     if attr['body'] is not None:            # type == text
-        full_context += attr['body']
+        full_context += ' ' + attr['body']
 
     if attr['caption'] is not None:         # type in [photo,video]
-        full_context += attr['caption']
+        full_context += ' ' + attr['caption']
 
     if attr['source_url'] is not None:      # type in [video, audio, quote]
-        full_context += attr['source_url']
+        full_context += ' ' + attr['source_url']
+
+    if attr['link_url'] is not None:      # type in [video, audio, quote]
+        full_context += ' ' + attr['link_url']
 
     if attr['answer'] is not None:          # type == answer
-        full_context += attr['answer']
+        full_context += ' ' + attr['answer']
 
     if trail:
         for item in trail:
-            full_context += item.get('content_raw', '') + item.get('content', '')
+            full_context += item.get('content_raw', '') + ' ' + item.get('content', '')
 
-            attr['content_raw'] += item.get('content_raw')
+            attr['content_raw'] += ' ' + item.get('content_raw')
 
             item_remote_id = item.get('post').get('id')
             if post.get('id') != item_remote_id:            # not a self reblog, precious
@@ -732,8 +737,8 @@ def get_remote_id_and_context(post):
         elif post.get('type') == 'answer':
             attr['content_raw'] = attr.get('answer')
         else:
-            attr['content_raw'] = post.get('reblog').get('comment', '')\
-            + post.get('reblog').get('tree_html', '')
+            attr['content_raw'] = attr.get('comment', '')\
+            + ' ' + attr.get('tree_html', '')
 
 
     post['reblogged_name']  = reblogged_name
@@ -808,13 +813,15 @@ def extract_urls(content, parsehtml=False):
 
     if len(url_set) < found_http_occur - http_walk:
         logging.info(BColors.FAIL + "Warning: less urls than HTTP occurences. {0}<{1}"
-                      .format(len(url_set), found_http_occur) + BColors.ENDC)
-        logging.info(BColors.BLUE + "full context was:\n{0}".format(repr(content)) + BColors.ENDC)
+                    .format(len(url_set), found_http_occur) + BColors.ENDC)
+        logging.info(BColors.BLUE + "full context was:\n{0}"
+                    .format(repr(content)) + BColors.ENDC)
 
         singleton = http_url_single_re.search(content)
         if singleton:
             url_set.add(singleton.group(1))
-            logging.debug("Added singleton: " + singleton.group(1) )
+            logging.info(BColors.BLUE +  "Added singleton back: " 
+            + singleton.group(1) + BColors.ENDC)
 
     return url_set
 
@@ -1025,6 +1032,7 @@ if __name__ == "__main__":
     test_jsons = ["vgf_latest.json", "3dandy.json", "thelewd3dblog_offset0.json",
      "leet_01.json", "cosm_01.json"]
 
+    os.nice(20)
     con = database.connect()
     # create_blank_database(database)
     # populate_db_with_blogs(database, blogs_toscrape)

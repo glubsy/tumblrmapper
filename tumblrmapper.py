@@ -79,7 +79,8 @@ def parse_config(config_path=SCRIPTDIR, data_path=None):
                         "use_proxies": False, #use random proxies, or not
                         "api_keys": data_path + os.sep + "api_keys.json",
                         "proxies": data_path + os.sep + "proxies.json",
-                        "threads": 10
+                        "threads": 5,
+                        "nice_level": 10
                         }
 
     config = configparser.SafeConfigParser(config_defaults)
@@ -777,9 +778,11 @@ if __name__ == "__main__":
                             username=instances.config.get('tumblrmapper', 'username'),
                             password=instances.config.get('tumblrmapper', 'password'))
     con = db.connect()
-    db_handler.update_crawling(db, con)
+    db_handler.update_crawling(db, con) # reset crawling values in DB
     db.close_connection(con)
 
+
+    os.nice(instances.config.getint('tumblrmapper', 'nice_level'))
     # === BLOG ===
     que = queue.Queue(maxsize=THREADS)
 
