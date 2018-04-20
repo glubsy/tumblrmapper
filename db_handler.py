@@ -83,6 +83,9 @@ def create_blank_database(database):
     """Creates a new blank DB file and populates with tables"""
     create_blank_db_file(database)
     populate_db_with_tables(database)
+    logging.info(BColors.BLUEOK + BColors.GREEN
+    + "Done creating blank DB in: {0}"
+    .format(database.db_filepath) + BColors.ENDC)
 
 
 def populate_db_with_tables(database):
@@ -96,7 +99,7 @@ def populate_db_with_tables(database):
         con.execute_immediate("CREATE DOMAIN D_LONG_TEXT AS VARCHAR(500);")
         con.execute_immediate("CREATE DOMAIN D_URL AS VARCHAR(250);")
         con.execute_immediate("CREATE DOMAIN D_POSTURL AS VARCHAR(300);")
-        con.execute_immediate("CREATE DOMAIN D_AUTO_ID AS smallint;")
+        con.execute_immediate("CREATE DOMAIN D_AUTO_ID AS BIGINT;")
         con.execute_immediate("CREATE DOMAIN D_BLOG_NAME AS VARCHAR(60);")
         con.execute_immediate("CREATE DOMAIN D_EPOCH AS BIGINT;")
         con.execute_immediate("CREATE DOMAIN D_POST_NO AS BIGINT;")
@@ -112,7 +115,7 @@ AUTO_ID         D_AUTO_ID PRIMARY KEY,
 BLOG_NAME       D_BLOG_NAME,
 HEALTH          varchar(5),
 TOTAL_POSTS     INTEGER,
-CRAWL_STATUS    varchar(10) DEFAULT 'new',
+CRAWL_STATUS    varchar(10) DEFAULT NULL,
 CRAWLING        D_BOOLEAN default 0,
 POST_OFFSET     INTEGER,
 POSTS_SCRAPED   INTEGER,
@@ -178,11 +181,13 @@ FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID)
 
         # CREATE generators and triggers
         con.execute_immediate("CREATE SEQUENCE tBLOGS_autoid_sequence;")
+        con.execute_immediate("CREATE SEQUENCE tBLOGS_autoid_sequence2;")
+        con.execute_immediate("ALTER SEQUENCE tBLOGS_autoid_sequence2 RESTART WITH 9999;")
         # con.execute_immediate("CREATE SEQUENCE tGATHERED_BLOGS_autoid_sequence;")
-        con.execute_immediate(\
-            """CREATE TRIGGER tGATHERED_BLOGS_AUTOINC FOR BLOGS
-            ACTIVE BEFORE INSERT POSITION 0
-            AS BEGIN NEW.AUTO_ID = next value for tBLOGS_autoid_sequence; END""")
+        # con.execute_immediate(\
+        #     """CREATE TRIGGER tGATHERED_BLOGS_AUTOINC FOR BLOGS
+        #     ACTIVE BEFORE INSERT POSITION 0
+        #     AS BEGIN NEW.AUTO_ID = next value for tBLOGS_autoid_sequence; END""")
 
         # CREATE procedures
         # Records given blogname into BLOG table, increments auto_id,
@@ -190,14 +195,40 @@ FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID)
         con.execute_immediate(\
 """
 CREATE OR ALTER PROCEDURE insert_blogname
-( i_blogname d_blog_name, i_prio smallint default null )
+( i_blogname d_blog_name, 
+i_crawl_status varchar(10) default 'new',
+i_prio smallint default null )
 AS declare variable v_generated_auto_id d_auto_id;
 BEGIN
 v_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence, 1);
-INSERT into BLOGS (AUTO_ID, BLOG_NAME, PRIORITY) values (:v_generated_auto_id, :i_blogname, :i_prio);
+INSERT into BLOGS (AUTO_ID, BLOG_NAME, CRAWL_STATUS, PRIORITY) 
+values (:v_generated_auto_id, :i_blogname, :i_crawl_status, :i_prio);
 WHEN ANY
 DO
 v_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence, -1);
+END
+""")
+        # insert gathered blog names
+        con.execute_immediate(\
+"""
+CREATE OR ALTER PROCEDURE INSERT_BLOGNAME_GATHERED (
+    i_blogname D_BLOG_NAME)
+returns (o_generated_auto_id d_auto_id)
+AS
+BEGIN
+if (not exists (select AUTO_ID from BLOGS where (BLOGS.BLOG_NAME = :i_blogname)))
+THEN begin
+    o_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence2, 1);
+    INSERT into BLOGS (AUTO_ID, BLOG_NAME) values (:o_generated_auto_id, :i_blogname);
+    end
+ELSE
+BEGIN
+    select AUTO_ID from BLOGS where BLOGS.BLOG_NAME = :i_blogname into :o_generated_auto_id;
+    exit;
+END
+WHEN GDSCODE unique_key_violation
+DO
+o_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence2, -1);
 END
 """)
 
@@ -216,30 +247,25 @@ END
         # Inserts a post and all its metadata
         con.execute_immediate(\
 """
-CREATE OR ALTER PROCEDURE insert_post
-(   i_postid d_post_no,
-    i_blog_origin d_blog_name,
-    i_post_url d_posturl,
-    i_post_date varchar(26),
-    i_remoteid d_post_no default null,
-    i_reblogged_blog_name d_blog_name default null
-)
-AS declare variable v_blog_origin_id d_auto_id;
+CREATE OR ALTER PROCEDURE INSERT_POST (
+    I_POSTID D_POST_NO,
+    I_BLOG_ORIGIN D_BLOG_NAME,
+    I_POST_URL D_POSTURL,
+    I_POST_DATE VARCHAR(26),
+    I_REMOTEID D_POST_NO DEFAULT null,
+    I_REBLOGGED_BLOG_NAME D_BLOG_NAME DEFAULT null )
+AS
+declare variable v_blog_origin_id d_auto_id;
 declare variable v_fetched_reblogged_blog_id d_auto_id default null;
 declare variable v_b_update_gathered d_boolean default 0;
 BEGIN
 
 select AUTO_ID from BLOGS where BLOG_NAME = :i_blog_origin into :v_blog_origin_id;
 
-if (:i_reblogged_blog_name is not null) THEN
-select AUTO_ID from BLOGS where BLOG_NAME = :i_reblogged_blog_name into :v_fetched_reblogged_blog_id;
-
-if ((:i_reblogged_blog_name is distinct from :i_blog_origin) and (:v_fetched_reblogged_blog_id is null))
-THEN v_b_update_gathered = 1;
-
-if ((v_b_update_gathered = 1) and (:i_reblogged_blog_name is not null)) THEN
-INSERT into BLOGS (BLOG_NAME) values (:i_reblogged_blog_name)
-returning (AUTO_ID) into :v_fetched_reblogged_blog_id;
+if (:i_reblogged_blog_name is not null)
+THEN
+execute procedure INSERT_BLOGNAME_GATHERED(:i_reblogged_blog_name)
+returning_values :v_fetched_reblogged_blog_id;
 
 INSERT into POSTS (POST_ID, POST_URL, POST_DATE, REMOTE_ID,
 ORIGIN_BLOGNAME, REBLOGGED_BLOGNAME)
@@ -285,6 +311,8 @@ insert into CONTEXTS (POST_ID, TTIMESTAMP, CONTEXT, REMOTE_ID ) values
 END
 """)
 
+        # replaces an entry if i_post_id and i_remote_id are equal
+        # we consider it to be a self reblog, which is the most up to date
         con.execute_immediate(\
 """
 CREATE OR ALTER PROCEDURE insert_url
@@ -344,7 +372,7 @@ if (exists (select (BLOG_NAME) from BLOGS where ((CRAWL_STATUS = 'resume') and (
     into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated
     as cursor cur do
         update BLOGS set CRAWLING = 1 where current of cur;
-    suspend;
+    exit;
     end
 else
 if (exists (select (BLOG_NAME) from BLOGS where (CRAWL_STATUS = 'new'))) then begin
@@ -353,7 +381,7 @@ if (exists (select (BLOG_NAME) from BLOGS where (CRAWL_STATUS = 'new'))) then be
         order by PRIORITY desc nulls last ROWS 1 with lock
         into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated as cursor tcur do
         update BLOGS set CRAWL_STATUS = 'init' where current of tcur;
-    suspend;
+    exit;
     end
 END
 """)
@@ -513,10 +541,10 @@ def populate_db_with_blogs(database, blogpath):
     cur = con.cursor()
     t0 = time.time()
     with fdb.TransactionContext(con):
-        insert_statement = cur.prep("execute procedure insert_blogname(?,?)")
+        insert_statement = cur.prep("execute procedure insert_blogname(?,?,?)")
 
         for blog, priority in read_csv_bloglist(blogpath):
-            params = (blog.rstrip() , priority)
+            params = (blog.rstrip() , 'new', priority)
             try:
                 cur.execute(insert_statement, params)
             except fdb.fbcore.DatabaseError as e:
@@ -698,7 +726,7 @@ def insert_posts(database, con, blog, update):
             results = inserted_post(cur, post)
             if not results[0]:
                 errors += results[1]
-                continue
+                # continue
             added += 1
 
             results = inserted_context(cur, post)
@@ -795,12 +823,15 @@ def get_remote_id_and_context(post):
                         found_reblog = True
                         reblogged_name          = item_name
                         remote_id               = item_remote_id
+
                 else:   #same name    # could be self reblog
                     if item.get('is_current_item'):     # update / reblog -> update DB context
                         logging.debug(BColors.YELLOW + "Replacing content_raw of:\n{0}\nwith more recently updated version is_current_item:\n{1}"
                         .format(len(attr.get('content_raw')), len(item.get('content_raw'))) + BColors.ENDC)
                         attr['content_raw']     = item.get('content_raw')
-                    elif item.get('is_root_item'):            # just self reblog! normal update name and remote_id, don't update context
+                        reblogged_name          = item_name
+
+                    if item.get('is_root_item'):            # just self reblog! normal update name and remote_id, don't update context
                         found_reblog = True
                         reblogged_name          = item_name
                         remote_id               = item_remote_id
@@ -811,6 +842,7 @@ def get_remote_id_and_context(post):
                         logging.debug(BColors.YELLOW + "Replacing content_raw of:\n{0}\nwith more recently updated version is_current_item:\n{1}"
                         .format(len(attr.get('content_raw')), len(item.get('content_raw'))) + BColors.ENDC)
                         attr['content_raw']     = item.get('content_raw')
+
                     elif item.get('is_root_item'):      # just self reblog!
                         found_reblog = True
                         reblogged_name          = item_name
@@ -835,8 +867,13 @@ def get_remote_id_and_context(post):
     post['reblogged_name']  = reblogged_name
     post['remote_id']       = remote_id
     post['content_raw']     = attr.get('content_raw')
-    post['full_context'],
-    post['filtered_urls']   = filter_content_raw(full_context)
+    post['full_context'], post['filtered_urls'] = filter_content_raw(full_context)
+
+    logging.debug(BColors.CYAN + BColors.BOLD + "Added fields to post {0}:\n{1}:{2}\n{3}:{4}\n\
+{5}:{6}\n{7}:{8}\n{9}:{10}".format(post.get('id'), 'reblogged_name',
+    post.get('reblogged_name'), 'remote_id', post.get('remote_id'), 
+    'content_raw', post.get('content_raw'), 'full_context', post.get('full_context'),
+    'filtered_urls', post.get('filtered_urls')) + BColors.ENDC)
 
     return post
 
@@ -1068,28 +1105,43 @@ def inserted_context(cur, post):
 def inserted_urls(cur, post):
 
     errors = 0
-    photos = post.get('photos', False)
-    if not photos:
-        return True, errors
+    photos = post.get('photos')
+    if photos is not None:
+        # insertstmt = cur.prep('insert into URLS (file_url,post_id,remote_id) values (?,?,?);')
+        for photo in photos:
+            # logging.debug("photo: {0} {1} {2}"
+            # .format(photo, post.get('id'), post.get('remote_id')))
+            try:
+                cur.callproc('insert_url', (
+                            photo.get('original_size').get('url'),
+                            post.get('id'),
+                            post.get('remote_id')
+                            ))
+            except fdb.DatabaseError as e:
+                if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
+                    e = "duplicate"
+                logging.info(BColors.FAIL + "DB ERROR" + BColors.BLUE
+                            + " url\t{0}: {1}".format(
+                            photo.get('original_size').get('url'),
+                            e) + BColors.ENDC)
+                errors += 1
+                continue
 
-    # insertstmt = cur.prep('insert into URLS (file_url,post_id,remote_id) values (?,?,?);')
-    for photo in photos:
-        # logging.debug("photo: {0} {1} {2}"
-        # .format(photo, post.get('id'), post.get('remote_id')))
-        try:
-            cur.callproc('insert_url' (
-                        photo.get('original_size').get('url'),
-                        post.get('id'),
-                        post.get('remote_id')
-                        ))
-        except fdb.DatabaseError as e:
-            if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
-                e = "duplicate"
-            logging.info(BColors.FAIL + "DB ERROR" + BColors.BLUE
-                        + " url\t{0}: {1}".format(
-                        photo.get('original_size').get('url'),
-                        e) + BColors.ENDC)
-            continue
+    if post.get('filtered_urls'):
+        for url in post.get('filtered_urls'):
+            try:
+                cur.callproc('insert_url', (
+                            url,
+                            post.get('id'),
+                            post.get('remote_id')
+                            ))
+            except fdb.DatabaseError as e:
+                logging.info(BColors.FAIL + "DB ERROR" + BColors.BLUE
+                + " url\t{0}: {1}".format(
+                url, e) + BColors.ENDC)
+                errors += 1
+                continue
+
     return True, errors
 
 
@@ -1107,7 +1159,7 @@ def unittest_update_table(db, con, payload):
     update = tumblrmapper.UpdatePayload()
     update.posts_response = json.get('posts') #list
     cur = con.cursor()
-    cur.execute('execute procedure insert_blogname(?,?)', (blog.name, 1))
+    cur.execute('execute procedure insert_blogname(?,?,?)', (blog.name, None, 1))
     con.commit()
     return insert_posts(db, con, blog, update)
 

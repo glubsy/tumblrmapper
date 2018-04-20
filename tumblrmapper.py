@@ -721,18 +721,9 @@ def configure_logging(args):
 
     logging.debug("Debugging Enabled.")
     return logger
+    
 
-
-if __name__ == "__main__":
-    # window = curses.initscr()
-    # window.nodelay(True)
-    # curses.echo()
-    # curses.cbreak()
-
-    # parse command-line arguments
-    args = parse_args()
-    configure_logging(args)
-
+def main(args):
     THREADS = instances.config.getint('tumblrmapper', 'threads')
 
     if args.create_blank_db: # we asked for a brand new DB file
@@ -746,9 +737,7 @@ if __name__ == "__main__":
         db_handler.populate_db_with_blogs(temp_database, blogs_toscrape)
         # Optional archives too
         # db_handler.populate_db_with_archives(temp_database, archives_toload)
-        logging.info(BColors.BLUEOK + BColors.GREEN + \
-        "Done creating blank DB in: {0}"\
-        .format(temp_database.db_filepath) + BColors.ENDC)
+
         sys.exit(0)
 
 
@@ -855,3 +844,16 @@ if __name__ == "__main__":
     #     main()
     # except Exception as e:
     #     logging.debug("Error in main():" + str(e))
+
+
+if __name__ == "__main__":
+    # window = curses.initscr()
+    # window.nodelay(True)
+    # curses.echo()
+    # curses.cbreak()
+
+    # parse command-line arguments
+    args = parse_args()
+    configure_logging(args)
+
+    main(args)
