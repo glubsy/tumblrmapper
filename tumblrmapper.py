@@ -242,7 +242,7 @@ def check_blog_end_of_posts(blog):
 
 
 def first_blog_status_check(db, con, lock, blog, update, isnew=False):
-    """"""
+    """Returns True on update validated, otherwise false"""
 
     # Retry getting /posts until either 404 or success
     attempts = 0

@@ -282,39 +282,63 @@ END
         con.execute_immediate(\
 """
 CREATE OR ALTER PROCEDURE INSERT_CONTEXT (
-    i_post_id D_POST_NO NOT NULL,
-    i_timestamp D_EPOCH,
-    i_remote_id D_POST_NO DEFAULT null,
-    i_context D_SUPER_LONG_TEXT DEFAULT null
- )
+    I_POST_ID D_POST_NO NOT NULL,
+    I_TIMESTAMP D_EPOCH,
+    I_REMOTE_ID D_POST_NO DEFAULT null,
+    I_CONTEXT D_SUPER_LONG_TEXT DEFAULT null )
+RETURNS (
+    O_POST_ID D_POST_NO,
+    O_CONTEXT D_SUPER_LONG_TEXT )
 AS
 BEGIN
+o_post_id = :i_post_id;
+o_context = 'DEFAULT STATE';
 if (:i_remote_id is not null) then 
     begin /* we might not want to keep it*/
     if (exists (select (REMOTE_ID) from CONTEXTS where (REMOTE_ID = :i_remote_id))) then /*if remote_id already in remote_id col*/
-        begin 																				/*keep the latest one, update if newer*/
-        if (:i_timestamp > (select (TTIMESTAMP) from CONTEXTS where (REMOTE_ID = :i_remote_id))) then
-            update CONTEXTS
-            set CONTEXT = :i_context,
-                TTIMESTAMP = :i_timestamp,
-                LATEST_REBLOG = :i_post_id
-                where (REMOTE_ID = :i_remote_id);
-            exit;
+        begin /*keep the latest one, update if newer*/
+            o_post_id = :i_post_id;
+            o_context = 'EXISTS PASSED';
+            if (:i_timestamp > (select (TTIMESTAMP) from CONTEXTS where (REMOTE_ID = :i_remote_id))) then
+            begin
+                update CONTEXTS
+                set CONTEXT = :i_context,
+                    TTIMESTAMP = :i_timestamp,
+                    LATEST_REBLOG = :i_post_id
+                    where (REMOTE_ID = :i_remote_id);
+                    o_post_id = :i_post_id;
+                    o_context = 'updated where remote_id already present in remote_id column and timestamp newser';
+                exit;
+            end
         end
-    else
-    if (:i_post_id = :i_remote_id) THEN /*self reblog, we update*/
+    else if (:i_post_id = :i_remote_id) THEN /*self reblog, we update*/
         begin
             update CONTEXTS
             	set TTIMESTAMP = :i_timestamp,
                     REMOTE_ID = :i_remote_id,
             		CONTEXT = :i_context
-            	   where POST_ID = :i_post_id;
-        exit;
+                    where POST_ID = :i_post_id;
+                    o_post_id = :i_post_id;
+                    o_context = 'same ids, self reblog update';
+                    exit;
+        end
+    else 
+        BEGIN
+            insert into CONTEXTS (POST_ID, TTIMESTAMP, REMOTE_ID, CONTEXT)
+            values (:i_post_id, :i_timestamp, :i_remote_id, :i_context);
+            o_post_id = :i_post_id;
+            o_context = 'got inserted because remote didn''t exist';
+            exit;
         end
     end
 else /* we store everything, it's an original post*/
 insert into CONTEXTS (POST_ID, TTIMESTAMP, REMOTE_ID, CONTEXT)
-    values (:i_post_id, :i_timestamp, :i_remote_id, :i_context );
+    values (:i_post_id, :i_timestamp, :i_remote_id, :i_context);
+    o_post_id = :i_post_id;
+    o_context = 'got inserted because remote_id is null';
+
+when any do
+exit;
 END
 """)
 
@@ -768,7 +792,7 @@ def get_remote_id_and_context(post):
         full_context += ' ' + attr['link_url']
 
     if attr['answer'] is not None:          # type == answer
-        full_context += ' '.join(('', attr['question'], attr['answer'])
+        full_context += ' '.join(('', attr['question'], attr['answer']))
 
 
     if not trail:                       # empty list, there will be no remote_id!
@@ -781,6 +805,16 @@ def get_remote_id_and_context(post):
         else:
             attr['content_raw'] = ' '.join((attr.get('comment', ''),
             attr.get('tree_html', '')))
+
+        # FIXME: request again from API with param &reblog_info=True
+        # if post.get('reblogged_root_id') == post.get('id') and\
+        #     post.get('blog_name') == post.get('reblogged_root_name'):
+        #     remote_id = post.get('reblogged_root_id')
+        #     reblogged_name = post.get('reblogged_root_name')
+        # else:
+        #     remote_id = post.get('reblogged_from_id')
+        #     reblogged_name = post.get('reblogged_from_name')
+
 
     if trail:
         found_reblog = False
