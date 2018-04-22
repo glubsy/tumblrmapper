@@ -286,59 +286,38 @@ CREATE OR ALTER PROCEDURE INSERT_CONTEXT (
     I_TIMESTAMP D_EPOCH,
     I_REMOTE_ID D_POST_NO DEFAULT null,
     I_CONTEXT D_SUPER_LONG_TEXT DEFAULT null )
-RETURNS (
-    O_POST_ID D_POST_NO,
-    O_CONTEXT D_SUPER_LONG_TEXT )
 AS
 BEGIN
-o_post_id = :i_post_id;
-o_context = 'DEFAULT STATE';
-if (:i_remote_id is not null) then 
+if (:i_remote_id is null) then 
+    begin /* we store everything, it's an original post*/
+        insert into CONTEXTS (POST_ID, TTIMESTAMP, REMOTE_ID, CONTEXT)
+        values (:i_post_id, :i_timestamp, :i_remote_id, :i_context);
+    end
+else
     begin /* we might not want to keep it*/
-    if (exists (select (REMOTE_ID) from CONTEXTS where (REMOTE_ID = :i_remote_id))) then /*if remote_id already in remote_id col*/
-        begin /*keep the latest one, update if newer*/
-            o_post_id = :i_post_id;
-            o_context = 'EXISTS PASSED';
-            if (:i_timestamp > (select (TTIMESTAMP) from CONTEXTS where (REMOTE_ID = :i_remote_id))) then
+        if (exists (select (REMOTE_ID) from CONTEXTS where (REMOTE_ID = :i_remote_id))) then /*if remote_id already in remote_id col*/
+            begin                                                                           /*keep the latest one, update if newer*/
+                if (:i_timestamp > (select (TTIMESTAMP) from CONTEXTS where (REMOTE_ID = :i_remote_id))) then
+                begin
+                    update CONTEXTS
+                    set CONTEXT = :i_context,
+                        TTIMESTAMP = :i_timestamp,
+                        LATEST_REBLOG = :i_post_id
+                        where (REMOTE_ID = :i_remote_id);
+                    exit;
+                end
+            end
+        else 
             begin
-                update CONTEXTS
-                set CONTEXT = :i_context,
-                    TTIMESTAMP = :i_timestamp,
-                    LATEST_REBLOG = :i_post_id
-                    where (REMOTE_ID = :i_remote_id);
-                    o_post_id = :i_post_id;
-                    o_context = 'updated where remote_id already present in remote_id column and timestamp newser';
+                insert into CONTEXTS (POST_ID, TTIMESTAMP, REMOTE_ID, CONTEXT)
+                values (:i_post_id, :i_timestamp, :i_remote_id, :i_context);
                 exit;
             end
         end
-    else if (:i_post_id = :i_remote_id) THEN /*self reblog, we update*/
-        begin
-            update CONTEXTS
-            	set TTIMESTAMP = :i_timestamp,
-                    REMOTE_ID = :i_remote_id,
-            		CONTEXT = :i_context
-                    where POST_ID = :i_post_id;
-                    o_post_id = :i_post_id;
-                    o_context = 'same ids, self reblog update';
-                    exit;
-        end
-    else 
-        BEGIN
-            insert into CONTEXTS (POST_ID, TTIMESTAMP, REMOTE_ID, CONTEXT)
-            values (:i_post_id, :i_timestamp, :i_remote_id, :i_context);
-            o_post_id = :i_post_id;
-            o_context = 'got inserted because remote didn''t exist';
-            exit;
-        end
-    end
-else /* we store everything, it's an original post*/
-insert into CONTEXTS (POST_ID, TTIMESTAMP, REMOTE_ID, CONTEXT)
-    values (:i_post_id, :i_timestamp, :i_remote_id, :i_context);
-    o_post_id = :i_post_id;
-    o_context = 'got inserted because remote_id is null';
 
 when any do
 exit;
+
 END
 """)
 
@@ -815,7 +794,6 @@ def get_remote_id_and_context(post):
         #     remote_id = post.get('reblogged_from_id')
         #     reblogged_name = post.get('reblogged_from_name')
 
-
     if trail:
         found_reblog = False
         for item in trail:
@@ -885,11 +863,12 @@ def get_remote_id_and_context(post):
     post['content_raw']     = attr.get('content_raw')
     post['full_context'], post['filtered_urls'] = filter_content_raw(full_context)
 
-#     logging.debug(BColors.CYAN + "Added fields to post {0}:\n{1}:{2}\n{3}:{4}\n\
-# {5}:{6}\n{7}:{8}\n{9}:{10}\nblogname={11}".format(post.get('id'), 'reblogged_name',
-#     post.get('reblogged_name'), 'remote_id', post.get('remote_id'),
-#     'content_raw', repr(post.get('content_raw')), 'full_context', len(post.get('full_context')),
-#     'filtered_urls', post.get('filtered_urls'), post.get('blog_name')) + BColors.ENDC)
+    logging.debug(BColors.CYAN + "Added fields to post {0}:\n{1}:{2}\nremoteid={3}:{4}\n\
+{5}:{6}\n{7}:{8}\n{9}:{10}\nblogname={11}"
+    .format(post.get('id'), 'reblogged_name',
+    post.get('reblogged_name'), 'remote_id', post.get('remote_id'),
+    'content_raw', repr(post.get('content_raw')), 'full_context', len(post.get('full_context')),
+    'filtered_urls', post.get('filtered_urls'), post.get('blog_name')) + BColors.ENDC)
 
     return post
 
