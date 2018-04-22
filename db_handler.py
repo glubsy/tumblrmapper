@@ -19,12 +19,16 @@ from constants import BColors
 SCRIPTDIR = os.path.dirname(__file__) + os.sep
 
 http_url_simple_re = re.compile(r'"(https?(?::\/\/|%3A%2F%2F).*?)"', re.I)
+# for single line with http
 http_url_single_re = re.compile(r'(https?(?::\/\/|%3A%2F%2F).*?)(?:\s)*?$', re.I)
 # matches quoted, between quotes, before html tags
 http_url_super_re = re.compile(r'(?:\"(https?(?::\/\/|%3A%2F%2F).*?)(?:\")(?:<\/)*?)|(?:(https?:\/\/.*?)(?:(?:\s)|(?:<)))', re.I)
-repattern_tumblr_redirect = re.compile(r't\.umblr\.com\/redirect\?z=(.*)(&|&amp;)t=.*', re.I)
+# matches all urls, even without http or www! https://gist.github.com/uogbuji/705383
+http_url_uber_re = re.compile(r'\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:\'\".,<>?\xab\xbb\u201c\u201d\u2018\u2019]))', re.I)
+repattern_tumblr_redirect = re.compile(r't\.umblr\.com\/redirect\?z=(.*)(?:&|&amp;)t=.*', re.I)
 
 htmlparser = HTMLParser()
+FILTERED_URL_GLOBAL_COUNT = 0
 
 class Database():
     """handle the db file itself, creating everything
@@ -139,7 +143,7 @@ REMOTE_ID           D_POST_NO,
 ORIGIN_BLOGNAME     D_AUTO_ID NOT NULL,
 REBLOGGED_BLOGNAME  D_AUTO_ID,
 POST_URL            D_POSTURL NOT NULL,
-POST_DATE           varchar(26),
+POST_DATE           D_EPOCH,
 FOREIGN KEY(ORIGIN_BLOGNAME) REFERENCES BLOGS(AUTO_ID),
 FOREIGN KEY(REBLOGGED_BLOGNAME) REFERENCES BLOGS(AUTO_ID)
 );""")
@@ -152,8 +156,8 @@ CREATE TABLE CONTEXTS (
 POST_ID         D_POST_NO,
 REMOTE_ID       D_POST_NO UNIQUE,
 TTIMESTAMP      D_EPOCH,
-CONTEXT         D_SUPER_LONG_TEXT,
 LATEST_REBLOG   D_POST_NO,
+CONTEXT         D_SUPER_LONG_TEXT,
 PRIMARY KEY(POST_ID),
 FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID)
 );""")
@@ -195,13 +199,13 @@ FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID)
         con.execute_immediate(\
 """
 CREATE OR ALTER PROCEDURE insert_blogname
-( i_blogname d_blog_name, 
+( i_blogname d_blog_name,
 i_crawl_status varchar(10) default 'new',
 i_prio smallint default null )
 AS declare variable v_generated_auto_id d_auto_id;
 BEGIN
 v_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence, 1);
-INSERT into BLOGS (AUTO_ID, BLOG_NAME, CRAWL_STATUS, PRIORITY) 
+INSERT into BLOGS (AUTO_ID, BLOG_NAME, CRAWL_STATUS, PRIORITY)
 values (:v_generated_auto_id, :i_blogname, :i_crawl_status, :i_prio);
 WHEN ANY
 DO
@@ -251,7 +255,7 @@ CREATE OR ALTER PROCEDURE INSERT_POST (
     I_POSTID D_POST_NO,
     I_BLOG_ORIGIN D_BLOG_NAME,
     I_POST_URL D_POSTURL,
-    I_POST_DATE VARCHAR(26),
+    I_POST_DATE D_EPOCH,
     I_REMOTEID D_POST_NO DEFAULT null,
     I_REBLOGGED_BLOG_NAME D_BLOG_NAME DEFAULT null )
 AS
@@ -280,13 +284,15 @@ END
 CREATE OR ALTER PROCEDURE INSERT_CONTEXT (
     i_post_id D_POST_NO NOT NULL,
     i_timestamp D_EPOCH,
-    i_context D_SUPER_LONG_TEXT DEFAULT null,
-    i_remote_id D_POST_NO DEFAULT null )
+    i_remote_id D_POST_NO DEFAULT null,
+    i_context D_SUPER_LONG_TEXT DEFAULT null
+ )
 AS
 BEGIN
-if (:i_remote_id is not null) then /* we might not want to keep it*/
+if (:i_remote_id is not null) then 
+    begin /* we might not want to keep it*/
     if (exists (select (REMOTE_ID) from CONTEXTS where (REMOTE_ID = :i_remote_id))) then /*if remote_id already in remote_id col*/
-    begin 																				/*keep the latest one, update if newer*/
+        begin 																				/*keep the latest one, update if newer*/
         if (:i_timestamp > (select (TTIMESTAMP) from CONTEXTS where (REMOTE_ID = :i_remote_id))) then
             update CONTEXTS
             set CONTEXT = :i_context,
@@ -294,20 +300,21 @@ if (:i_remote_id is not null) then /* we might not want to keep it*/
                 LATEST_REBLOG = :i_post_id
                 where (REMOTE_ID = :i_remote_id);
             exit;
-    end
+        end
     else
     if (:i_post_id = :i_remote_id) THEN /*self reblog, we update*/
         begin
             update CONTEXTS
             	set TTIMESTAMP = :i_timestamp,
-            		CONTEXT = :i_context,
-            		REMOTE_ID = :i_remote_id
+                    REMOTE_ID = :i_remote_id,
+            		CONTEXT = :i_context
             	   where POST_ID = :i_post_id;
         exit;
         end
+    end
 else /* we store everything, it's an original post*/
-insert into CONTEXTS (POST_ID, TTIMESTAMP, CONTEXT, REMOTE_ID ) values
-                    (:i_post_id, :i_timestamp, :i_context, :i_remote_id );
+insert into CONTEXTS (POST_ID, TTIMESTAMP, REMOTE_ID, CONTEXT)
+    values (:i_post_id, :i_timestamp, :i_remote_id, :i_context );
 END
 """)
 
@@ -676,41 +683,6 @@ def update_crawling(database, con, blog=None):
     con.commit()
 
 
-def get_update_response_items(update):
-    """ DEPRECATED """
-    for post in update.posts_response: #dict in list
-        current_post_dict = {}
-        current_post_dict['id'] = post.get('id')
-        current_post_dict['date'] = post.get('date')
-        current_post_dict['updated'] = post.get('updated')
-        current_post_dict['post_url'] = post.get('post_url')
-        current_post_dict['blog_name'] = post.get('blog_name')
-        current_post_dict['timestamp'] = post.get('timestamp')
-        current_post_dict['current_context'] = post.get('reblog').get('')
-
-        if 'trail' in post.keys() and len(post['trail']) > 0: # trail is not empty, it's a reblog
-            #FIXME: put this in a trail subdictionary
-            current_post_dict['trail'] = []
-            for item in post.get('trail'):
-                current_post_dict['trail'].append({})
-                current_post_dict['trail'][item]['reblogged_blog_name'] = post['trail'][item]['blog']['name']
-                current_post_dict['trail'][item]['remote_id'] = int(post['trail'][item]['post']['id'])
-                current_post_dict['trail'][item]['remote_content'] = post['trail'][item]['content_raw'].replace('\n', '')
-
-        else: #trail is an empty list
-            current_post_dict['reblogged_blog_name'] = None
-            current_post_dict['remote_id'] = None
-            current_post_dict['remote_content'] = None
-            pass #FIXME: maybe problematic for the following, might get skipped
-
-        current_post_dict['photos'] = []
-        if 'photos' in post.keys():
-            for item in range(0, len(post['photos'])):
-                current_post_dict['photos'].append(post['photos'][item]['original_size']['url'])
-
-        # update.trimmed_posts_list.append(current_post_dict)
-
-
 
 def insert_posts(database, con, blog, update):
     """ Returns the number of posts processed"""
@@ -718,25 +690,29 @@ def insert_posts(database, con, blog, update):
     t0 = time.time()
     added = 0
     errors = 0
-    with fdb.TransactionContext(con):
-        for post in update.posts_response: # list of dicts
+    # with fdb.TransactionContext(con):
+    for post in update.posts_response: # list of dicts
 
-            get_remote_id_and_context(post)
+        get_remote_id_and_context(post)
 
-            results = inserted_post(cur, post)
-            if not results[0]:
-                errors += results[1]
-                # continue
-            added += 1
+        results = inserted_post(cur, post)
+        if not results[0]: # skip the rest because we need post entry in POSTS table
+            errors += results[1]
+            # continue
 
+        added += 1
+
+        if post.get('content_raw') is not None:
             results = inserted_context(cur, post)
             errors += results[1]
 
-            results = inserted_urls(cur, post)
-            errors += results[1]
-        else:
-            logging.debug(BColors.BLUE + "COMMITTING" + BColors.ENDC)
-            con.commit()
+
+        results = inserted_urls(cur, post)
+        errors += results[1]
+
+    else:
+        logging.debug(BColors.BLUE + "COMMITTING" + BColors.ENDC)
+        con.commit()
 
     t1 = time.time()
     logging.debug(BColors.BLUE + "Procedures to insert took %.2f ms" \
@@ -747,6 +723,7 @@ def insert_posts(database, con, blog, update):
     logging.info(BColors.BLUE + "{0} Failed adding {1} posts."\
     .format(blog.name, errors) + BColors.ENDC)
     update.posts_response = [] #reset
+
     return added
 
 
@@ -765,6 +742,7 @@ def get_remote_id_and_context(post):
         'caption':               post.get('caption'),
         'source_url':            post.get('source_url'),  # type: video, audio
         'answer':                post.get('answer'),    # type: answer
+        'question':              post.get('question'),    # type: answer
         'link_url':              post.get('link_url'), # type: photos
         'content_raw':           ''}
 
@@ -775,7 +753,7 @@ def get_remote_id_and_context(post):
     if attr['reblog'] is not None:
         attr['comment'] = post.get('reblog').get('comment')
         attr['tree_html'] = post.get('reblog').get('tree_html')
-        full_context += ' ' + attr['comment'] + ' ' + attr['tree_html']
+        full_context += ' '.join((attr['comment'], attr['tree_html']))
 
     if attr['body'] is not None:            # type == text
         full_context += ' ' + attr['body']
@@ -790,7 +768,7 @@ def get_remote_id_and_context(post):
         full_context += ' ' + attr['link_url']
 
     if attr['answer'] is not None:          # type == answer
-        full_context += ' ' + attr['answer']
+        full_context += ' '.join(('', attr['question'], attr['answer'])
 
 
     if not trail:                       # empty list, there will be no remote_id!
@@ -799,15 +777,15 @@ def get_remote_id_and_context(post):
         elif post.get('type') in ['photo', 'video']:
             attr['content_raw'] = attr.get('caption')
         elif post.get('type') == 'answer':
-            attr['content_raw'] = attr.get('answer')
+            attr['content_raw'] = ' '.join((attr.get('question'), attr.get('answer')))
         else:
-            attr['content_raw'] = attr.get('comment', '')\
-            + ' ' + attr.get('tree_html', '')
+            attr['content_raw'] = ' '.join((attr.get('comment', ''),
+            attr.get('tree_html', '')))
 
     if trail:
         found_reblog = False
         for item in trail:
-            full_context += item.get('content_raw', '') + ' ' + item.get('content', '')
+            full_context += ' '.join(('', item.get('content_raw', ''), item.get('content', '')))
 
             attr['content_raw'] += ' ' + item.get('content_raw')
 
@@ -825,13 +803,16 @@ def get_remote_id_and_context(post):
                         remote_id               = item_remote_id
 
                 else:   #same name    # could be self reblog
-                    if item.get('is_current_item'):     # update / reblog -> update DB context
-                        logging.debug(BColors.YELLOW + "Replacing content_raw of:\n{0}\nwith more recently updated version is_current_item:\n{1}"
+                    if item.get('is_current_item') and item.get('is_root_item'): #normal post
+                        continue
+
+                    if item.get('is_current_item') and not item.get('is_root_item') :     # update / reblog -> update DB context
+                        logging.debug(BColors.YELLOW + "Replacing content_raw of:{0} with more recently updated version is_current_item: {1}"
                         .format(len(attr.get('content_raw')), len(item.get('content_raw'))) + BColors.ENDC)
                         attr['content_raw']     = item.get('content_raw')
                         reblogged_name          = item_name
 
-                    if item.get('is_root_item'):            # just self reblog! normal update name and remote_id, don't update context
+                    if item.get('is_root_item') and not item.get('is_current_item'):            # just self reblog! normal update name and remote_id, don't update context
                         found_reblog = True
                         reblogged_name          = item_name
                         remote_id               = item_remote_id
@@ -839,7 +820,7 @@ def get_remote_id_and_context(post):
             elif post.get('id') == item_remote_id:      # either a self reblog, or just a blog, + blog name is same
                 if item_name == post.get('blog_name'):  # it's just a normal blog, nothing fancy not a reblog but can be part of a reblog (comment added)
                     if item.get('is_current_item'):     # self reblog that was updated! we keep all to update the context explicitly
-                        logging.debug(BColors.YELLOW + "Replacing content_raw of:\n{0}\nwith more recently updated version is_current_item:\n{1}"
+                        logging.debug(BColors.YELLOW + "Replacing content_raw of:{0} with more recently updated version is_current_item: {1}"
                         .format(len(attr.get('content_raw')), len(item.get('content_raw'))) + BColors.ENDC)
                         attr['content_raw']     = item.get('content_raw')
 
@@ -861,19 +842,20 @@ def get_remote_id_and_context(post):
     # longest_strings = [s for s in stringset if len(s) == maxlength]
     # attr['content_raw'] = longest_strings[0]
 
-
-
+    attr['content_raw'] = attr.get('content_raw').replace('\n', '')
+    if attr.get('content_raw') == '':
+        attr['content_raw'] = None
 
     post['reblogged_name']  = reblogged_name
     post['remote_id']       = remote_id
     post['content_raw']     = attr.get('content_raw')
     post['full_context'], post['filtered_urls'] = filter_content_raw(full_context)
 
-    logging.debug(BColors.CYAN + BColors.BOLD + "Added fields to post {0}:\n{1}:{2}\n{3}:{4}\n\
-{5}:{6}\n{7}:{8}\n{9}:{10}".format(post.get('id'), 'reblogged_name',
-    post.get('reblogged_name'), 'remote_id', post.get('remote_id'), 
-    'content_raw', post.get('content_raw'), 'full_context', post.get('full_context'),
-    'filtered_urls', post.get('filtered_urls')) + BColors.ENDC)
+#     logging.debug(BColors.CYAN + "Added fields to post {0}:\n{1}:{2}\n{3}:{4}\n\
+# {5}:{6}\n{7}:{8}\n{9}:{10}\nblogname={11}".format(post.get('id'), 'reblogged_name',
+#     post.get('reblogged_name'), 'remote_id', post.get('remote_id'),
+#     'content_raw', repr(post.get('content_raw')), 'full_context', len(post.get('full_context')),
+#     'filtered_urls', post.get('filtered_urls'), post.get('blog_name')) + BColors.ENDC)
 
     return post
 
@@ -896,30 +878,27 @@ def extract_urls(content, parsehtml=False):
     """Returns a set of unique urls, unquoted, without redirects,
     None if none is found"""
 
-    found_http_occur = content.count('http')
-    logging.debug("http occurences: {0}".format(found_http_occur))
-
-    if not found_http_occur:
-        return
+    # found_http_occur = content.count('http')
+    # logging.debug("http occurences: {0}".format(found_http_occur))
 
     url_set = set()
     checked = set()
     http_walk = 0
-    t0 = time.time()
-    for item in http_url_super_re.findall(content):
+    # t0 = time.time()
+    for item in http_url_uber_re.findall(content):
         # logging.debug('matched: {0}'.format(item))
         for capped in item:
             if capped in checked or capped is '':
                 http_walk += capped.count('http')
                 continue
-            logging.debug('captured: {0}'.format(capped))
+            # logging.debug('captured: {0}'.format(capped))
             checked.add(capped)
 
-            if capped.find("://tmblr.co/") != -1:
+            if capped.find("://tmblr.co/") != -1: # redirect
                 http_walk += capped.count('http')
                 continue
 
-            reresult = repattern_tumblr_redirect.search(capped) # search for t.umblr
+            reresult = repattern_tumblr_redirect.search(capped) # search t.umblr redirects
             if reresult:
                 http_walk += capped.count('http') # we usually find 3 occurences
                 capped = reresult.group(1)
@@ -932,25 +911,27 @@ def extract_urls(content, parsehtml=False):
 
             url_set.add(capped)
 
-    t1 = time.time()
-    logging.debug(BColors.BLUEOK + BColors.BLUE + "Procedures to insert took %.2f ms" \
-                  % (1000*(t1-t0)) + BColors.ENDC)
+    # t1 = time.time()
+    # logging.debug(BColors.BLUEOK + BColors.BLUE + "URL regexp took %.2f ms" \
+    #               % (1000*(t1-t0)) + BColors.ENDC)
 
     logging.debug(BColors.BLUE + BColors.BOLD + "url_set length: {0},\n{1}"
                   .format(len(url_set), url_set) + BColors.ENDC)
 
-    if len(url_set) < found_http_occur - http_walk:
-        logging.info(BColors.FAIL + "Warning: less urls than HTTP occurences. {0}<{1}"
-                    .format(len(url_set), found_http_occur) + BColors.ENDC)
-        logging.info(BColors.BLUE + "full context was:\n{0}"
-                    .format(repr(content)) + BColors.ENDC)
+    # if len(url_set) < found_http_occur - http_walk:
+    #     logging.info(BColors.FAIL + "Warning: less urls than HTTP occurences. {0}<{1}"
+    #                 .format(len(url_set), found_http_occur) + BColors.ENDC)
+    #     logging.info(BColors.BLUE + "full context was:\n{0}"
+    #                 .format(repr(content)) + BColors.ENDC)
 
-        singleton = http_url_single_re.search(content)
-        if singleton:
-            url_set.add(singleton.group(1))
-            logging.info(BColors.BLUE +  "Added singleton back: "
-            + singleton.group(1) + BColors.ENDC)
+    #     singleton = http_url_single_re.search(content)
+    #     if singleton:
+    #         url_set.add(singleton.group(1))
+    #         logging.info(BColors.BLUE +  "Added singleton back: "
+    #         + singleton.group(1) + BColors.ENDC)
 
+    global FILTERED_URL_GLOBAL_COUNT
+    FILTERED_URL_GLOBAL_COUNT += len(url_set)
     return url_set
 
 
@@ -1054,56 +1035,72 @@ def htmlToText(raw_html):
 
 def inserted_post(cur, post):
     """Returns True to ignore error"""
-
+    # cur = con.cursor()
     errors = 0
     success = True
     try:
-        cur.callproc('insert_post', (\
-                post.get('id'),                 # post_id
-                post.get('blog_name'),          # blog_name
-                post.get('post_url'),           # post_url
-                post.get('date'),               # timestamp
-                post.get('remote_id'),          # remote_id
-                post.get('reblogged_name')      # reblogged_blog_name
-                ))
+        cur.callproc('insert_post', (
+            post.get('id'),                 # post_id
+            post.get('blog_name'),          # blog_name
+            post.get('post_url'),           # post_url
+            post.get('timestamp'),          # timestamp
+            post.get('remote_id'),          # remote_id
+            post.get('reblogged_name')      # reblogged_blog_name
+            ))
     except fdb.DatabaseError as e:
-        if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
-            e = "duplicate"
+        # if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
+        #     e = "duplicate"
         logging.info(BColors.FAIL + "DB ERROR" + BColors.BLUE + \
         " post\t{0}: {1}".format(post.get('id'), e) + BColors.ENDC)
         success = True
     except Exception as e:
-        logging.info(BColors.FAIL + "ERROR" + BColors.BLUE + \
+        logging.info(BColors.FAIL + "ERROR" + \
         " post\t{0}: {1}".format(post.get('id'), e) + BColors.ENDC)
         success = False
+
+    # con.commit()
     return success, errors
 
 
 def inserted_context(cur, post):
+    # cur = con.cursor()
     errors = 0
     success = True
     try:
-        cur.callproc('insert_context', (\
-                    post.get('id'),\
-                    post.get('timestamp'),          #timestamp
-                    post.get('content_raw', None),  #remote_content
-                    post.get('remote_id')           #remote_id
+        logging.debug(BColors.BOLD + "call to insert_context for {0} ({1},{2},{3},{4})".format(
+                    post.get('blog_name'),
+                    post.get('id'),
+                    post.get('timestamp'),         #timestamp
+                    post.get('remote_id'),         #remote_id
+                    post.get('content_raw', None)  #remote_content
+                    ) + BColors.ENDC)
+
+        cur.callproc('insert_context', (
+                    post.get('id'),
+                    post.get('timestamp'),         #timestamp
+                    post.get('remote_id'),         #remote_id
+                    post.get('content_raw', None)  #remote_content
                     ))
+        logging.debug("context returns: {0} ".format(repr(cur.fetchall())))
     except fdb.DatabaseError as e:
-        if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
-            e = "duplicate"
+        # if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
+        #     e = "duplicate"
         logging.info(BColors.FAIL + "DB ERROR" + BColors.BLUE
         + " context\t{0}: {1}".format(post.get('id'), e) + BColors.ENDC)
+        errors += 1
         success = True
     except Exception as e:
-        logging.info(BColors.FAIL + "ERROR" + BColors.BLUE
+        logging.info(BColors.FAIL + "ERROR"
         + " context\t{0}: {1}".format(post.get('id'), e) + BColors.ENDC)
+        errors += 1
         success = False
+
+    # con.commit()
     return success, errors
 
 
 def inserted_urls(cur, post):
-
+    # cur = con.cursor()
     errors = 0
     photos = post.get('photos')
     if photos is not None:
@@ -1111,6 +1108,9 @@ def inserted_urls(cur, post):
         for photo in photos:
             # logging.debug("photo: {0} {1} {2}"
             # .format(photo, post.get('id'), post.get('remote_id')))
+            logging.debug("inserting normal url:{0}".format(photo.get('original_size').get('url')))
+            global FILTERED_URL_GLOBAL_COUNT
+            FILTERED_URL_GLOBAL_COUNT += +1
             try:
                 cur.callproc('insert_url', (
                             photo.get('original_size').get('url'),
@@ -1126,21 +1126,23 @@ def inserted_urls(cur, post):
                             e) + BColors.ENDC)
                 errors += 1
                 continue
-
-    if post.get('filtered_urls'):
-        for url in post.get('filtered_urls'):
-            try:
-                cur.callproc('insert_url', (
-                            url,
-                            post.get('id'),
-                            post.get('remote_id')
-                            ))
-            except fdb.DatabaseError as e:
-                logging.info(BColors.FAIL + "DB ERROR" + BColors.BLUE
-                + " url\t{0}: {1}".format(
-                url, e) + BColors.ENDC)
-                errors += 1
-                continue
+    # con.commit()
+    # cur = con.cursor()
+    for url in post.get('filtered_urls'):
+        logging.debug("inserting filtered url:{0}".format(url))
+        try:
+            cur.callproc('insert_url', (
+                        url,
+                        post.get('id'),
+                        post.get('remote_id')
+                        ))
+        except fdb.DatabaseError as e:
+            logging.info(BColors.FAIL + "DB ERROR" + BColors.BLUE
+            + " url\t{0}: {1}".format(
+            url, e) + BColors.ENDC)
+            errors += 1
+            continue
+    # con.commit()
 
     return True, errors
 
@@ -1172,7 +1174,7 @@ if __name__ == "__main__":
     archives_toload = SCRIPTDIR +  "tools/1280_files_list.txt"
     database = Database(db_filepath="/home/firebird/tumblrmapper_test.fdb", \
                         username="sysdba", password="masterkey")
-    test_jsons = ["jerian-cg-selfreblog.json", "vgf_latest.json", "3dandy.json", "thelewd3dblog_offset0.json",
+    test_jsons = ["komorebi-latest.json", "jerian-cg-selfreblog.json", "vgf_latest.json", "3dandy.json", "thelewd3dblog_offset0.json",
      "leet_01.json", "cosm_01.json"]
 
     os.nice(20)
@@ -1189,4 +1191,6 @@ if __name__ == "__main__":
         processed = unittest_update_table(database, con, myjson)
         print(BColors.BLUEOK + "processed: {0}".format(processed) + BColors.ENDC)
     con.close()
+
+    print('FILTERED_URL_GLOBAL_COUNT: {0}'.format(FILTERED_URL_GLOBAL_COUNT))
 
