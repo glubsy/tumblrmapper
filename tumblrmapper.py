@@ -164,7 +164,7 @@ def process(db, lock, db_update_lock, pill2kill):
 
         if blog.crawl_status == 'new': # not yet updated
 
-            if not first_blog_status_check(db, con, lock, blog, update, isnew=True):
+            if not blog_status_check(db, con, lock, blog, update):
                 continue
 
             if blog.health == 'DEAD':
@@ -176,21 +176,29 @@ def process(db, lock, db_update_lock, pill2kill):
             # we already have the first batch of posts, insert them
             if blog.offset == 0: # DB had no previous offset, it's brand new
                 with db_update_lock:
-                    processed_posts = db_handler.insert_posts(db, con, blog, update)
-                    blog.posts_scraped += processed_posts
-                    blog.offset += blog.posts_scraped
-                    logging.debug("{0} OFFSETS are now: {1}"\
-                    .format(blog.name, blog.offset))
+                    processed_posts, errors = db_handler.insert_posts(db, con, blog, update)
+                    blog.posts_scraped += processed_posts - errors
+                    blog.offset += processed_posts
+                    logging.debug("{0} Post just scraped from first response {1} Offset is now: {2}"\
+                    .format(blog.name, blog.posts_scraped, blog.offset))
+
 
         elif blog.crawl_status == 'resume':
-            if not first_blog_status_check(db, con, lock, blog, update, isnew=False):
+            if not blog_status_check(db, con, lock, blog, update):
                 continue
             if blog.offset > 0: # ignore response, go straight to our previous offset
                 update.posts_response = None
 
-        elif blog.crawl_status == 'DONE': #TODO FIXME
-            if not first_blog_status_check(db, con, lock, blog, update, isnew=False):
+
+        elif blog.crawl_status == 'DONE':
+            if not blog_status_check(db, con, lock, blog, update):
                 continue
+            with db_update_lock:
+                    processed_posts, errors = db_handler.insert_posts(db, con, blog, update)
+                    blog.posts_scraped += processed_posts - errors
+                    blog.offset += processed_posts
+                    logging.debug("{0} Post just scraped from first response {1} Offset is now: {2}"\
+                    .format(blog.name, blog.posts_scraped, blog.offset))
             
         else:
             raise Exception(BColors.FAIL + \
@@ -203,39 +211,42 @@ def process(db, lock, db_update_lock, pill2kill):
 
         update_offset_if_new_posts(blog)
 
-        while not pill2kill.is_set():
-            if not update.posts_response:           #FIXME: could be some other field attached to blog
-                logging.debug(BColors.LIGHTYELLOW + \
-                "{0} Getting at offset {1}".format(blog.name, blog.offset))
+        if blog.total_posts == blog.posts_scraped:
+            break
 
+        while not pill2kill.is_set():
+            if not update.posts_response:  #FIXME: could be some other field attached to blog
+                logging.debug(BColors.LIGHTYELLOW + BColors.BOLD \
+                + "{0} Getting at offset {1}".format(blog.name, blog.offset) + BColors.ENDC)
 
                 try:
-                    api_get_request_wrapper()
-                    update = blog.api_get_request(lock, update, api_key=None, \
-                    reqtype="posts", offset=blog.offset)
-                except:
-                    pass
-
+                    api_get_request_wrapper(db, con, lock, blog, update, blog.crawl_status, offset=blog.offset)
+                except Exception as e:
+                    logging.debug(BColors.FAIL + "Exception in api_get_request_wrapper from loop! {0}"
+                    .format(e) + BColors.ENDC)
+                    break
 
                 check_header_change(db, con, blog, update)
 
                 if not update.posts_response: # nothing more
+                    logging.debug("update.posts_response is {0}! break".format(repr(update.posts_response)))
                     break
             else:
                 logging.debug("{0} inserting new posts".format(blog.name))
-                instances.sleep_here()
     
                 with db_update_lock:
-                    added_posts = db_handler.insert_posts(db, con, blog, update)
-                    blog.posts_scraped += added_posts
-                    blog.offset += added_posts
+                    processed_posts, errors = db_handler.insert_posts(db, con, blog, update)
+                    blog.posts_scraped += processed_posts - errors # added - errors
+                    blog.offset += processed_posts
+                    logging.debug("{0} Post just scraped {1} Offset is now: {2}"\
+                    .format(blog.name, blog.posts_scraped, blog.offset))
     
                 if blog.posts_scraped == blog.total_posts:
                     break
 
         # We're done, no more found
         check_blog_end_of_posts(blog)
-        db_handler.update_blog_info(db, con, blog, init=False, end=True)
+        db_handler.update_blog_info(db, con, blog, ignore_response=True)
         logging.info(BColors.GREENOK + "{0} Done scraping. Total {1}/{2}"\
         .format(blog.name, blog.posts_scraped, blog.total_posts) + BColors.ENDC)
 
@@ -263,45 +274,55 @@ def check_blog_end_of_posts(blog):
 
 
 
-def api_get_request_wrapper(db, con, lock, blog, update, isnew=False)
+def api_get_request_wrapper(db, con, lock, blog, update, crawl_status, offset=None):
     """Updates the update, valid or invalid"""
 
-    update = UpdatePayload()
     # Retry getting /posts until either 404 or success
+    update.__init__()
     attempts = 0
     while not update.valid and attempts < 3:
         attempts += 1
         instances.sleep_here(0,1)
         try:
-            update = blog.api_get_request(lock, update, api_key=None, reqtype="posts")
+           blog.api_get_request(lock, update, api_key=None, reqtype="posts", offset=offset)
         except BaseException as e:
             traceback.print_exc()
             logging.info(BColors.RED + \
             "{0} Too many proxy attempts! Skipping for now. Error:\n{1}"\
             .format(blog.name, e) + BColors.ENDC)
-            if isnew:
-                thread_premature_cleanup(db, con, blog, 'new')
+            if crawl_status != 'resume':
+                thread_premature_cleanup(db, con, blog, crawl_status)
                 return False
             break
-    return update
+    return True
 
 
-def first_blog_status_check(db, con, lock, blog, update, isnew=False):
+def blog_status_check(db, con, lock, blog, update, offset=None):
     """Returns True on update validated, otherwise false"""
 
-    api_get_request_wrapper(db, con, lock, blog, update, isnew=isnew)
+    if blog.crawl_status == 'new':
+        isnew = True
+    else:
+        isnew = False
+
+    api_get_request_wrapper(db, con, lock, blog, update, blog.crawl_status, offset=offset)
 
     if update.valid:
         # update and retrieve remaining blog info
         blog.total_posts = update.total_posts
 
-        db_response = db_handler.update_blog_info(db, con, blog, init=isnew) # tuple
+        if blog.crawl_status is None:
+            blog.crawl_status = "resume"
+        elif  blog.crawl_status == 'DONE':
+            blog.crawl_status = None
 
-        logging.debug(BColors.BLUE + "{0} Got DB response: {1}"\
-        .format(blog.name, db_response) + BColors.ENDC)
+        db_response = db_handler.update_blog_info(db, con, blog)
+
+        # logging.debug(BColors.BLUE + "{0} Got DB response: {1}"\
+        # .format(blog.name, db_response) + BColors.ENDC)
 
         if not check_db_init_response(db_response, blog, isnew=isnew):
-            logging.debug("{0} check_db_init_response: False".format(blog.name))
+            # logging.debug("{0} check_db_init_response: False".format(blog.name))
             return False
 
     if not update.valid:
@@ -330,17 +351,23 @@ def check_db_init_response(db_response, blog, isnew=False):
             logging.debug(BColors.BOLD + \
             "{0} last offset was {1} and superior to current total posts {2}. Resetting to 0."\
             .format(blog.name, db_response['last_offset'], blog.total_posts) + BColors.ENDC)
+
             db_response['last_offset'] = 0
 
+
         if db_response['last_total_posts'] < blog.total_posts:
+
             blog.new_posts = (blog.total_posts - db_response['last_total_posts'])
+
             logging.info(BColors.BOLD + \
             "{0} has been updated. Old total_posts {1}, new total_posts {2}. \
             Offset will be pushed by {3}"\
             .format(blog.name, db_response.get('last_total_posts'), \
             blog.total_posts, blog.new_posts) + BColors.ENDC)
 
+
         elif db_response.get('last_total_posts', 0) > blog.total_posts:
+
             logging.info(BColors.FAIL + BColors.BOLD + \
             "{0} WARNING: number of posts has decreased from {1} to {2}!\
     Blog was recently updated {3}, previously checked on {4}\n\
@@ -349,20 +376,24 @@ def check_db_init_response(db_response, blog, isnew=False):
             blog.total_posts, db_response.get('last_updated'), db_response.get('last_checked')))
             return False
 
+
         if db_response.get('last_health').find("UP") and \
             db_response.get('last_health') != blog.health: # health changed!! Died suddenly?
+
             logging.info(BColors.FAIL + BColors.BOLD + \
             "{0} WARNING: changed health status from {1} to: {2}"\
             .format(blog.name, blog.health, db_response.get('last_health')) + BColors.ENDC)
             return False
 
     # initializing
-    logging.debug("{0} initializing offset to what it was in DB".format(blog.name))
-    blog.offset = db_response.get('last_offset', 0)
-    blog.post_scraped = db_response.get('last_scraped_posts', 0)
+    # logging.debug("{0} initializing offset to what it was in DB".format(blog.name))
+    if blog.crawl_status == 'resume':
+        blog.offset = db_response.get('last_offset', 0)
+        blog.post_scraped = db_response.get('last_scraped_posts', 0)
+    
     blog.crawling = 1 # set by DB by procedure on its side
     blog.db_response = db_response
-    logging.debug("{0} check_db_init_response returning true".format(blog.name))
+    # logging.debug("{0} check_db_init_response returning true".format(blog.name))
     return True
 
 
@@ -370,7 +401,7 @@ def check_header_change(database, con, blog, update):
     """Check if the header changed, update info in DB if needed"""
 
     if update.total_posts > blog.total_posts:
-        # FIXME new posts
+        # FIXME we have new posts
         blog.db_response = db_handler.update_blog_info(database, con, blog)
 
     blog.total_posts = update.total_posts
@@ -382,7 +413,7 @@ def update_offset_if_new_posts(blog):
 
     # to avoid re-inserting previously inserted posts   
     if blog.new_posts > 0:
-        blog.offset +=  blog.new_posts 
+        blog.offset += blog.new_posts 
         logging.debug(BColors.RED + \
         "{0} Offset incremented because of new posts by +{1}: {2}".format(blog.name, blog.new_posts, blog.offset) + BColors.ENDC)
 
@@ -425,7 +456,7 @@ class TumblrBlog:
         self.posts_scraped = 0
         self.offset = 0
         self.health = None
-        self.crawl_status = ""
+        self.crawl_status = None
         self.crawling = 0
         self.last_checked = None
         self.last_updated = None
@@ -529,7 +560,7 @@ class TumblrBlog:
         """Returns requests.response object, reqype=[posts|info]"""
         if not api_key:
             api_key = self.api_key_object_ref
-        if not offset:
+        if not offset or offset == 0:
             offset = ''
         else:
             offset = '&offset=' + str(offset)
@@ -561,8 +592,8 @@ class TumblrBlog:
             break
 
         try:
-            update = self.check_response_validate_update(response, updateobj)
-            return update
+            self.check_response_validate_update(response, updateobj)
+            return 
         except:
             raise
 
@@ -597,12 +628,10 @@ class TumblrBlog:
 
         if not response.get('response') and response.get('errors'): # got errors!
             update.errors_title = response.get('errors')[0]['title']
-            return update
+            return
 
         # BIG PARSE (REMOVE?)
-        update = parse_json_response(response, update)
-
-
+        parse_json_response(response, update)
 
         logging.debug(BColors.LIGHTCYAN + \
         "{0} check_response_validate_update update.meta_msg={1}"\
@@ -617,7 +646,7 @@ class TumblrBlog:
                 self.total_posts = 0
                 self.last_updated = 0
                 update.valid = True
-                return update
+                return
 
             if update.errors_title.find("error") and \
                 update.errors_title.find("Unauthorized"):
@@ -627,17 +656,16 @@ class TumblrBlog:
                 # FIXME: that's assuming only the API key is responsible for unauthorized, might be the IP!
                 self.renew_api_key()
                 update.valid = False
-                return update
+                return
 
             logging.debug(BColors.FAIL + \
             "{0} uncaught error in response: {1}"\
             .format(self.name, update.__dict__) + BColors.ENDC)
             update.valid = False
-            return update
+            return
 
         update.valid = True
         self.health = "UP"
-        self.crawl_status = "resume"
         self.crawling = 1
 
         if update.total_posts < 20:   #FIXME: arbitrary value
@@ -648,7 +676,7 @@ class TumblrBlog:
         "{0} No error in check_response_validate_update()"\
         .format(self.name) + BColors.ENDC)
 
-        return update
+        return
 
 
 
@@ -673,9 +701,9 @@ def parse_json_response(response_json, update):
     update.total_posts = json['blog']['total_posts']
     update.updated = json['blog']['updated']
     if json.get('posts'):
+        logging.debug(BColors.BOLD + "updating update with json" + BColors.ENDC)
         update.posts_response = json['posts'] #list of dicts
 
-    return update
 
 
 
@@ -710,14 +738,16 @@ def thread_good_cleanup(db, con, blog):
     .format(blog.name) + BColors.ENDC )
     blog.crawling = 0
     # db_handler.update_crawling(db, con, blog)
-    db_handler.update_blog_info(db, con, blog)
+    db_handler.update_blog_info(db, con, blog, ignore_response=True)
 
 
 def thread_premature_cleanup(db, con, blog, reset_type):
     """Blog has not been updated in any way, just reset STATUS to NEW if was INIT"""
+
     logging.debug(BColors.LIGHTGRAY + \
     "{0} thread_premature_cleanup, reset_to_brand_new '{1}'"\
     .format(blog.name, reset_type) + BColors.ENDC )
+
     # only resets CRAWL_STATUS to 'new', not CRAWLING which stays 1 to avoid repicking it straight away
     db_handler.reset_to_brand_new(db, con, blog, reset_type='new')
 

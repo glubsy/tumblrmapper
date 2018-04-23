@@ -288,7 +288,7 @@ class ProxyScanner():
                 else:
                     logging.debug(BColors.GREEN + "Response: {0}".format(response) + BColors.ENDC)
         except (requests.exceptions.ProxyError, requests.exceptions.Timeout,\
-            requests.exceptions.ReadTimeout, requests.exceptions.ConnectTimeout) as e:
+            requests.exceptions.ReadTimeout, requests.exceptions.ConnectTimeout, requests.exceptions.SSLError) as e:
             with self.print_lock:
                 logging.debug(BColors.FAIL + "Connnection error for {0}: {1}".format(proxy_ip, e) + BColors.ENDC)
                 logging.debug(BColors.MAGENTA + "Exception! Removing {0}{2} from {1}".format(proxy_ip, 'proxy pool and recovered', BColors.ENDC))
