@@ -625,8 +625,8 @@ def update_blog_info(Database, con, blog, ignore_response=False):
     returns dict(last_total_posts, last_updated, last_checked,
     last_offset, last_scraped_posts)"""
 
-    logging.info(BColors.BLUE + "{0} update DB info."\
-    .format(blog.name) + BColors.ENDC)
+    logging.info(BColors.BLUE + "{0} update DB info. status: {1}"\
+    .format(blog.name, blog.crawl_status) + BColors.ENDC)
     cur = con.cursor()
     if blog.crawl_status == 'new':
         # args: (blogname, UP|DEAD|WIPED, total_posts, updated,
@@ -742,6 +742,13 @@ Failed adding {3} other items."\
 
     return added, post_errors
 
+
+def get_total_post(database, con, blog):
+    """Queries database for total number of post_id linked to blog.name"""
+    cur = con.cursor()
+    cur.execute("select count(*) from (select POST_ID from POSTS where ORIGIN_BLOGNAME =\
+ (select auto_id from BLOGS where BLOG_NAME = '" + blog.name + "'));")
+    return cur.fetchone()[0]
 
 
 def get_remote_id_and_context(post):
@@ -1077,12 +1084,12 @@ def inserted_post(cur, post):
     except fdb.DatabaseError as e:
         if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
             e = "duplicate"
-        logging.error(BColors.FAIL + "DB ERROR" + BColors.BLUE + \
+        logging.debug(BColors.FAIL + "DB ERROR" + BColors.BLUE + \
         " post\t{0}: {1}".format(post.get('id'), e) + BColors.ENDC)
         errors += 1
         success = True
     except Exception as e:
-        logging.error(BColors.FAIL + "ERROR" + \
+        logging.debug(BColors.FAIL + "ERROR" + \
         " post\t{0}: {1}".format(post.get('id'), e) + BColors.ENDC)
         errors += 1
         success = False
@@ -1114,12 +1121,12 @@ def inserted_context(cur, post):
     except fdb.DatabaseError as e:
         if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
             e = "duplicate"
-        logging.error(BColors.FAIL + "DB ERROR" + BColors.BLUE
+        logging.debug(BColors.FAIL + "DB ERROR" + BColors.BLUE
         + " context\t{0}: {1}".format(post.get('id'), e) + BColors.ENDC)
         errors += 1
         success = True
     except Exception as e:
-        logging.error(BColors.FAIL + "ERROR"
+        logging.debug(BColors.FAIL + "ERROR"
         + " context\t{0}: {1}".format(post.get('id'), e) + BColors.ENDC)
         errors += 1
         success = False
@@ -1147,7 +1154,7 @@ def inserted_urls(cur, post):
             except fdb.DatabaseError as e:
                 if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
                     e = "duplicate"
-                logging.error(BColors.FAIL + "DB ERROR" + BColors.BLUE
+                logging.debug(BColors.FAIL + "DB ERROR" + BColors.BLUE
                             + " url\t{0}: {1}".format(
                             photo.get('original_size').get('url'),
                             e) + BColors.ENDC)
@@ -1166,7 +1173,7 @@ def inserted_urls(cur, post):
         except fdb.DatabaseError as e:
             if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
                 e = "duplicate"
-            logging.error(BColors.FAIL + "DB ERROR" + BColors.BLUE
+            logging.debug(BColors.FAIL + "DB ERROR" + BColors.BLUE
             + " url\t{0}: {1}".format(
             url, e) + BColors.ENDC)
             errors += 1

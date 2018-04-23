@@ -18,17 +18,17 @@ def get_api_key_object_list(api_keys_filepath):
     # for key, secret in read_api_keys_from_csv(api_keys_filepath + '.txt').items():
     #     api_key_list.append(APIKey(key, secret))
     for item in read_api_keys_from_json(api_keys_filepath):
-        api_key_list.append(APIKey(\
-                            api_key=item.get('api_key'),\
-                            secret_key=item.get('secret_key'),\
-                            hour_check_time=item.get('hour_check_time'),\
-                            day_check_time=item.get('day_check_time'),\
-                            last_written_time=item.get('last_written_time', 0.0),\
-                            bucket_hour=item.get('bucket_hour'),\
-                            bucket_day=item.get('bucket_day'),\
+        api_key_list.append(APIKey(
+                            api_key=item.get('api_key'),
+                            secret_key=item.get('secret_key'),
+                            hour_check_time=item.get('hour_check_time'),
+                            day_check_time=item.get('day_check_time'),
+                            last_written_time=item.get('last_written_time', 0.0),
+                            bucket_hour=item.get('bucket_hour'),
+                            bucket_day=item.get('bucket_day'),
                             disabled=item.get('disabled'),\
-                            disabled_until=item.get('disabled_until'),\
-                            blacklisted=item.get('blacklisted')\
+                            disabled_until=item.get('disabled_until'),
+                            blacklisted=item.get('blacklisted')
                             ))
 
     return api_key_list
@@ -171,9 +171,11 @@ def threaded_buckets():
     now = time.time()
     for api_obj in instances.api_keys:
         diff = now - api_obj.last_written_time
-        api_obj.bucket_hour = min(api_obj.bucket_hour + diff/5 * 1.390, 1000) # clamped
-        api_obj.bucket_day = min(api_obj.bucket_day +  diff/5 * 0.2892, 5000)
-        logging.warning(BColors.MAGENTA + "State of {0}: {1} {2}".format(api_obj.api_key, api_obj.bucket_hour, api_obj.bucket_day) + BColors.ENDC)
+        api_obj.bucket_hour = min(api_obj.bucket_hour + ((diff/5) * 1.390), 1000) # clamped
+        # 86400 / 5000 = 0.05787037
+        api_obj.bucket_day = min(api_obj.bucket_day +  ((diff/5) * 0.2892), 5000)
+        logging.warning(BColors.MAGENTA + "Req left for API key {0}: hour {1} day {2}"
+        .format(api_obj.api_key, api_obj.bucket_hour, api_obj.bucket_day) + BColors.ENDC)
 
     t = threading.Thread(target=bucket_inc)
     t.daemon = True
