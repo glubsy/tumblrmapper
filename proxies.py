@@ -26,18 +26,6 @@ except errors.FakeUserAgentError as e:
     pass
 
 SCRIPTDIR = os.path.dirname(__file__)
-fakeresponse = {\
-  "args": {},\
-  "headers": {\
-    "Accept": "*/*",\
-    "Accept-Encoding": "gzip, deflate",\
-    "Connection": "close",\
-    "Host": "httpbin.org",\
-    "User-Agent": "Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.90 Safari/537.36"\
-  },\
-  "origin": "108.61.166.245",\
-  "url": "https://httpbin.org/get"\
-}
 
 class ProxyScanner():
     """Gets proxies, associates UA"""
@@ -131,8 +119,7 @@ class ProxyScanner():
         if not data:
             data = self.proxy_ua_dict
 
-        active_list = data.get('proxies')
-        newlist = active_list + self.http_proxies_recovered
+        newlist = data.get('proxies') + self.http_proxies_recovered
         data['proxies'] = newlist # merging with saved blacklisted proxies
 
         # DEBUG
@@ -225,7 +212,7 @@ class ProxyScanner():
         for i in range(0, maxlength): #FIXME: hardcoded
             ua_string = ua.random
             ua_set.add(ua_string)
-        logging.debug("ua_set length:", len(ua_set))
+        logging.debug("ua_set length: {0}".format(len(ua_set)))
         return ua_set
 
 
@@ -273,7 +260,7 @@ class ProxyScanner():
                     proxy = ":".join([i.xpath('.//td[1]/text()')[0], i.xpath('.//td[2]/text()')[0]])
                     proxies.add(proxy)
 
-        logging.debug("Number of proxies fetched:", len(proxies))
+        logging.debug("Number of proxies fetched: {0}".format(len(proxies)))
         return proxies
 
 

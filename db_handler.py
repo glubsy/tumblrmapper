@@ -7,6 +7,7 @@ import sys
 import time
 import traceback
 import logging
+from collections import defaultdict
 # import html.parser
 from urllib import parse
 from html.parser import HTMLParser
@@ -28,7 +29,7 @@ http_url_uber_re = re.compile(r'\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-
 repattern_tumblr_redirect = re.compile(r't\.umblr\.com\/redirect\?z=(.*)(?:&|&amp;)t=.*', re.I)
 
 htmlparser = HTMLParser()
-FILTERED_URL_GLOBAL_COUNT = 0
+FILTERED_URL_GLOBAL_COUNT = set()
 
 class Database():
     """handle the db file itself, creating everything
@@ -239,12 +240,12 @@ END
         con.execute_immediate(\
 """
 CREATE OR ALTER PROCEDURE reset_crawl_status
- ( i_blog_name d_blog_name )
+ ( i_blog_name d_blog_name, i_reset_type varchar(10) )
 AS declare variable v_crawl varchar(10) default null;
 BEGIN
 select (CRAWL_STATUS) from BLOGS where (BLOG_NAME = :i_blog_name) into :v_crawl;
 if (v_crawl is not null) THEN
-update BLOGS set CRAWL_STATUS = 'new' where (BLOG_NAME = :i_blog_name);
+update BLOGS set CRAWL_STATUS = :i_reset_type where (BLOG_NAME = :i_blog_name);
 END
 """)
 
@@ -314,10 +315,8 @@ else
                 exit;
             end
         end
-
-when any do
-exit;
-
+--when any do
+--exit;
 END
 """)
 
@@ -371,12 +370,12 @@ RETURNS (
     O_TOTAL INTEGER,
     O_SCRAPED INTEGER,
     O_CHECKED D_EPOCH,
-    O_UPDATED D_EPOCH)
+    O_UPDATED D_EPOCH )
 AS
 BEGIN
-if (exists (select (BLOG_NAME) from BLOGS where ((CRAWL_STATUS = 'resume') and (CRAWLING != 1)))) then begin
-    for
-    select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED, LAST_UPDATE
+if (exists (select (BLOG_NAME) from BLOGS where ((CRAWL_STATUS = 'resume') and (CRAWLING != 1)))) then 
+    begin
+    for select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED, LAST_UPDATE
     from BLOGS where ((CRAWL_STATUS = 'resume') and (CRAWLING != 1)) order by PRIORITY desc nulls last ROWS 1
     with lock
     into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated
@@ -385,14 +384,27 @@ if (exists (select (BLOG_NAME) from BLOGS where ((CRAWL_STATUS = 'resume') and (
     exit;
     end
 else
-if (exists (select (BLOG_NAME) from BLOGS where (CRAWL_STATUS = 'new'))) then begin
+if (exists (select (BLOG_NAME) from BLOGS where (CRAWL_STATUS = 'new'))) then 
+    begin
     for select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED, LAST_UPDATE
             from BLOGS where (CRAWL_STATUS = 'new')
         order by PRIORITY desc nulls last ROWS 1 with lock
-        into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated as cursor tcur do
-        update BLOGS set CRAWL_STATUS = 'init' where current of tcur;
+        into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated 
+        as cursor tcur do
+            update BLOGS set CRAWL_STATUS = 'init' where current of tcur;
     exit;
     end
+ELSE /*fetch the oldest last checked blog*/
+if (exists (select BLOG_NAME from BLOGS where (CRAWL_STATUS = 'DONE'))) then 
+    BEGIN
+    for select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED, LAST_UPDATE
+        from BLOGS where ((CRAWL_STATUS = 'DONE') and (POSTS_SCRAPED != TOTAL_POSTS))
+        order by (LAST_CHECKED) asc nulls last ROWS 1 with lock
+        into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated 
+        as cursor tcur do
+            update BLOGS set CRAWL_STATUS = 'resume' where current of tcur;
+        exit;
+    END
 END
 """)
 
@@ -645,28 +657,27 @@ def update_blog_info(Database, con, blog, init=False, end=False):
         con.commit()
         return
 
-    db_resp = cur.fetchall()[0]
+    resp_dict = defaultdict(int)
+    resp_dict['last_health'],\
+    resp_dict['last_total_posts'],\
+    resp_dict['last_updated'],\
+    resp_dict['last_checked'],\
+    resp_dict['last_offset'],\
+    resp_dict['last_scraped_posts'] = cur.fetchall()[0]
     # logging.debug(BColors.BLUE + "db_resp: {0}, {1}"\
     # .format(type(db_resp), db_resp) + BColors.ENDC)
 
     con.commit()
 
-    resp_dict = {}
-    resp_dict['last_health'],
-    resp_dict['last_total_posts'],
-    resp_dict['last_updated'],
-    resp_dict['last_checked'],
-    resp_dict['last_offset'],
-    resp_dict['last_scraped_posts'] = db_resp
     # logging.debug(BColors.BLUE + "resp_dict: {0}"\
     # .format(resp_dict) + BColors.ENDC)
     return resp_dict
 
 
-def reset_to_brand_new(database, con, blog):
+def reset_to_brand_new(database, con, blog, reset_type):
     cur = con.cursor()
-    cur.execute(r'execute procedure reset_crawl_status(?);',
-                (blog.name,))
+    cur.execute(r'execute procedure reset_crawl_status(?,?);',
+                (blog.name, reset_type))
     con.commit()
 
 
@@ -725,6 +736,7 @@ def insert_posts(database, con, blog, update):
     .format(blog.name, added) + BColors.ENDC)
     logging.info(BColors.BLUE + "{0} Failed adding {1} posts."\
     .format(blog.name, errors) + BColors.ENDC)
+
     update.posts_response = [] #reset
 
     return added
@@ -944,7 +956,8 @@ def extract_urls(content, parsehtml=False):
     #         + singleton.group(1) + BColors.ENDC)
 
     global FILTERED_URL_GLOBAL_COUNT
-    FILTERED_URL_GLOBAL_COUNT += len(url_set)
+    for item in url_set:
+        FILTERED_URL_GLOBAL_COUNT.add(item)
     return url_set
 
 
@@ -1094,7 +1107,7 @@ def inserted_context(cur, post):
                     post.get('remote_id'),         #remote_id
                     post.get('content_raw', None)  #remote_content
                     ))
-        logging.debug("context returns: {0} ".format(repr(cur.fetchall())))
+        # logging.debug("context returns: {0} ".format(repr(cur.fetchall())))
     except fdb.DatabaseError as e:
         # if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
         #     e = "duplicate"
@@ -1123,7 +1136,7 @@ def inserted_urls(cur, post):
             # .format(photo, post.get('id'), post.get('remote_id')))
             logging.debug("inserting normal url:{0}".format(photo.get('original_size').get('url')))
             global FILTERED_URL_GLOBAL_COUNT
-            FILTERED_URL_GLOBAL_COUNT += +1
+            FILTERED_URL_GLOBAL_COUNT.add(photo.get('original_size').get('url'))
             try:
                 cur.callproc('insert_url', (
                             photo.get('original_size').get('url'),
@@ -1205,5 +1218,5 @@ if __name__ == "__main__":
         print(BColors.BLUEOK + "processed: {0}".format(processed) + BColors.ENDC)
     con.close()
 
-    print('FILTERED_URL_GLOBAL_COUNT: {0}'.format(FILTERED_URL_GLOBAL_COUNT))
+    print('FILTERED_URL_GLOBAL_COUNT: {0}'.format(len(FILTERED_URL_GLOBAL_COUNT)))
 
