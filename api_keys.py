@@ -67,22 +67,22 @@ def write_api_keys_to_json(keylist=None, myfilepath=None):
 def disable_api_key(api_key_object_list):
     """ this API key caused problem, might have been flagged, add to temporary blacklist"""
 
-    logging.info(BColors.RED + "disabling API key {0} from instances.api_keys list".format(api_key_object_list) + BColors.ENDC)
+    logging.warning(BColors.RED + "disabling API key {0} from instances.api_keys list".format(api_key_object_list) + BColors.ENDC)
 
     # key = item for item in instances.api_keys if item == api_key_object_list
     key = next((i for i in instances.api_keys if i == api_key_object_list), None)
 
     if not key:
-        logging.debug(BColors.RED + "Did not find this key in instances.api_keys list!?" + BColors.ENDC)
+        logging.error(BColors.RED + "Did not find this key in instances.api_keys list!?" + BColors.ENDC)
         return
 
     if key.disabled:
-        logging.debug(BColors.BOLD + "Key {0} is already disabled!".format(key.api_key) + BColors.ENDC)
+        logging.error(BColors.BOLD + "Key {0} is already disabled!".format(key.api_key) + BColors.ENDC)
     else:
         key.disabled = True
 
     for key in instances.api_keys:
-        logging.debug(BColors.RED + "API key {0} is disabled: {1}".format(key.api_key, key.disabled) + BColors.ENDC)
+        logging.error(BColors.RED + "API key {0} is disabled: {1}".format(key.api_key, key.disabled) + BColors.ENDC)
 
     write_api_keys_to_json()
 
@@ -102,7 +102,7 @@ def get_random_api_key(apikey_list=None):
             break
         if not keycheck.disabled:
             return keycheck
-    logging.info(BColors.FAIL + BColors.BLINKING + 'Attempts exhausted api_key list length! All keys are disabled! Renew them!' + BColors.ENDC)
+    logging.warning(BColors.FAIL + BColors.BLINKING + 'Attempts exhausted api_key list length! All keys are disabled! Renew them!' + BColors.ENDC)
     #TODO: handle this critical error later (exit gracefully)
 
 
@@ -112,13 +112,13 @@ def remove_key(api_key_object):
     try:
         instances.api_keys.remove(api_key_object)
     except Exception as e:
-        logging.debug(BColors.FAIL + str(e) + BColors.ENDC)
+        logging.error(BColors.FAIL + str(e) + BColors.ENDC)
         pass
 
 
 def inc_key_request(api_key):
     api_key.use_once()
-    logging.info(BColors.LIGHTPINK + "API key used: {0}. Number of request left: {1}/{2}"\
+    logging.warning(BColors.LIGHTPINK + "API key used: {0}. Number of request left: {1}/{2}"\
     .format(api_key.api_key, api_key.bucket_hour, api_key.bucket_day) + BColors.ENDC)
 
 
@@ -173,7 +173,7 @@ def threaded_buckets():
         diff = now - api_obj.last_written_time
         api_obj.bucket_hour = min(api_obj.bucket_hour + diff/5 * 1.390, 1000) # clamped
         api_obj.bucket_day = min(api_obj.bucket_day +  diff/5 * 0.2892, 5000)
-        logging.debug(BColors.MAGENTA + "State of {0}: {1} {2}".format(api_obj.api_key, api_obj.bucket_hour, api_obj.bucket_day) + BColors.ENDC)
+        logging.warning(BColors.MAGENTA + "State of {0}: {1} {2}".format(api_obj.api_key, api_obj.bucket_hour, api_obj.bucket_day) + BColors.ENDC)
 
     t = threading.Thread(target=bucket_inc)
     t.daemon = True

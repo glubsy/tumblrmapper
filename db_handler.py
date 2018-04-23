@@ -47,7 +47,7 @@ class Database():
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """ close all remaining connections"""
-        logging.debug(BColors.BLUE + "Closing connections to DB" + BColors.ENDC)
+        logging.warning(BColors.BLUE + "Closing connections to DB" + BColors.ENDC)
         for con in self.con:
             con.close()
 
@@ -88,7 +88,7 @@ def create_blank_database(database):
     """Creates a new blank DB file and populates with tables"""
     create_blank_db_file(database)
     populate_db_with_tables(database)
-    logging.info(BColors.BLUEOK + BColors.GREEN
+    logging.error(BColors.BLUEOK + BColors.GREEN
     + "Done creating blank DB in: {0}"
     .format(database.db_filepath) + BColors.ENDC)
 
@@ -571,7 +571,7 @@ def populate_db_with_blogs(database, blogpath):
                 cur.execute(insert_statement, params)
             except fdb.fbcore.DatabaseError as e:
                 if "violation of PRIMARY or UNIQUE KEY" in e.__str__():
-                    logging.info(BColors.FAIL + "Error" + BColors.BLUE
+                    logging.error(BColors.FAIL + "Error" + BColors.BLUE
                     + " inserting {0}: duplicate.".format(blog) + BColors.ENDC)
         con.commit()
 
@@ -625,7 +625,7 @@ def update_blog_info(Database, con, blog, ignore_response=False):
     returns dict(last_total_posts, last_updated, last_checked,
     last_offset, last_scraped_posts)"""
 
-    logging.debug(BColors.BLUE + "{0} update DB info."\
+    logging.info(BColors.BLUE + "{0} update DB info."\
     .format(blog.name) + BColors.ENDC)
     cur = con.cursor()
     if blog.crawl_status == 'new':
@@ -664,12 +664,12 @@ def update_blog_info(Database, con, blog, ignore_response=False):
     resp_dict['last_checked'],\
     resp_dict['last_offset'],\
     resp_dict['last_scraped_posts'] = cur.fetchall()[0]
-    # logging.debug(BColors.BLUE + "db_resp: {0}, {1}"\
+    # logging.warning(BColors.BLUE + "db_resp: {0}, {1}"\
     # .format(type(db_resp), db_resp) + BColors.ENDC)
 
     con.commit()
 
-    # logging.debug(BColors.BLUE + "resp_dict: {0}"\
+    # logging.warning(BColors.BLUE + "resp_dict: {0}"\
     # .format(resp_dict) + BColors.ENDC)
     return resp_dict
 
@@ -687,7 +687,7 @@ def update_crawling(database, con, blog=None):
     cur = con.cursor()
     if not blog:
         cur.execute('update BLOGS set CRAWLING = 0;')
-        logging.debug(BColors.BLUEOK + BColors.BLUE
+        logging.info(BColors.BLUEOK + BColors.BLUE
         + "Reset crawling for all" + BColors.ENDC)
     else:
         cur.execute('execute procedure update_crawling_blog_status(?,?);',
@@ -726,14 +726,14 @@ def insert_posts(database, con, blog, update):
         errors += results[1]
 
     else:
-        logging.debug(BColors.BLUE + "COMMITTING" + BColors.ENDC)
+        logging.info(BColors.BLUE + "COMMITTING" + BColors.ENDC)
         con.commit()
 
     t1 = time.time()
     logging.debug(BColors.BLUE + "Procedures to insert took %.2f ms" \
                     % (1000*(t1-t0)) + BColors.ENDC)
 
-    logging.info(BColors.BLUE + BColors.BOLD
+    logging.error(BColors.BLUE + BColors.BOLD
     + "{0} Successfully attempted to insert {1} posts. Failed adding {2} posts. \
 Failed adding {3} other items."\
     .format(blog.name, added, post_errors, errors) + BColors.ENDC)
@@ -832,7 +832,7 @@ def get_remote_id_and_context(post):
                         continue
 
                     if item.get('is_current_item') and not item.get('is_root_item') :     # update / reblog -> update DB context
-                        logging.debug(BColors.YELLOW + "Replacing content_raw of:{0} with more recently updated version is_current_item: {1}"
+                        logging.warning(BColors.YELLOW + "Replacing content_raw of:{0} with more recently updated version is_current_item: {1}"
                         .format(len(attr.get('content_raw')), len(item.get('content_raw'))) + BColors.ENDC)
                         attr['content_raw']     = item.get('content_raw')
                         reblogged_name          = item_name
@@ -845,7 +845,7 @@ def get_remote_id_and_context(post):
             elif post.get('id') == item_remote_id:      # either a self reblog, or just a blog, + blog name is same
                 if item_name == post.get('blog_name'):  # it's just a normal blog, nothing fancy not a reblog but can be part of a reblog (comment added)
                     if item.get('is_current_item'):     # self reblog that was updated! we keep all to update the context explicitly
-                        logging.debug(BColors.YELLOW + "Replacing content_raw of:{0} with more recently updated version is_current_item: {1}"
+                        logging.warning(BColors.YELLOW + "Replacing content_raw of:{0} with more recently updated version is_current_item: {1}"
                         .format(len(attr.get('content_raw')), len(item.get('content_raw'))) + BColors.ENDC)
                         attr['content_raw']     = item.get('content_raw')
 
@@ -876,7 +876,7 @@ def get_remote_id_and_context(post):
     post['content_raw']     = attr.get('content_raw')
     post['full_context'], post['filtered_urls'] = filter_content_raw(full_context)
 
-#     logging.debug(BColors.CYAN + "Added fields to post {0}:\n{1}:{2}\nremoteid={3}:{4}\n\
+#     logging.warning(BColors.CYAN + "Added fields to post {0}:\n{1}:{2}\nremoteid={3}:{4}\n\
 # {5}:{6}\n{7}:{8}\n{9}:{10}\nblogname={11}"
 #     .format(post.get('id'), 'reblogged_name',
 #     post.get('reblogged_name'), 'remote_id', post.get('remote_id'),
@@ -905,19 +905,19 @@ def extract_urls(content, parsehtml=False):
     None if none is found"""
 
     # found_http_occur = content.count('http')
-    # logging.debug("http occurences: {0}".format(found_http_occur))
+    # logging.warning("http occurences: {0}".format(found_http_occur))
 
     url_set = set()
     checked = set()
     http_walk = 0
     # t0 = time.time()
     for item in http_url_uber_re.findall(content):
-        # logging.debug('matched: {0}'.format(item))
+        # logging.warning('matched: {0}'.format(item))
         for capped in item:
             if capped in checked or capped is '':
                 http_walk += capped.count('http')
                 continue
-            # logging.debug('captured: {0}'.format(capped))
+            # logging.warning('captured: {0}'.format(capped))
             checked.add(capped)
 
             if capped.find("://tmblr.co/") != -1: # redirect
@@ -938,22 +938,22 @@ def extract_urls(content, parsehtml=False):
             url_set.add(capped)
 
     # t1 = time.time()
-    # logging.debug(BColors.BLUEOK + BColors.BLUE + "URL regexp took %.2f ms" \
+    # logging.warning(BColors.BLUEOK + BColors.BLUE + "URL regexp took %.2f ms" \
     #               % (1000*(t1-t0)) + BColors.ENDC)
 
-    # logging.info(BColors.BLUE + BColors.BOLD + "url_set length: {0},\n{1}"
+    # logging.error(BColors.BLUE + BColors.BOLD + "url_set length: {0},\n{1}"
     #               .format(len(url_set), url_set) + BColors.ENDC)
 
     # if len(url_set) < found_http_occur - http_walk:
-    #     logging.info(BColors.FAIL + "Warning: less urls than HTTP occurences. {0}<{1}"
+    #     logging.error(BColors.FAIL + "Warning: less urls than HTTP occurences. {0}<{1}"
     #                 .format(len(url_set), found_http_occur) + BColors.ENDC)
-    #     logging.info(BColors.BLUE + "full context was:\n{0}"
+    #     logging.error(BColors.BLUE + "full context was:\n{0}"
     #                 .format(repr(content)) + BColors.ENDC)
 
     #     singleton = http_url_single_re.search(content)
     #     if singleton:
     #         url_set.add(singleton.group(1))
-    #         logging.info(BColors.BLUE +  "Added singleton back: "
+    #         logging.error(BColors.BLUE +  "Added singleton back: "
     #         + singleton.group(1) + BColors.ENDC)
 
     global FILTERED_URL_GLOBAL_COUNT
@@ -967,7 +967,7 @@ def htmlToText(raw_html):
     """https://stackoverflow.com/questions/14694482/converting-html-to-text-with-python
     WARNING: causes infinite loop in some circumstances? """
     ret = raw_html.replace('\n','').replace('\t','')
-    # logging.debug(BColors.BLUE + "RAW html:\n{0}".format(ret) + BColors.ENDC)
+    # logging.warning(BColors.BLUE + "RAW html:\n{0}".format(ret) + BColors.ENDC)
 
     def _getElement(subhtml, name, end=None):
         ename = "<" + name + ">"
@@ -1054,7 +1054,7 @@ def htmlToText(raw_html):
                 ret = ret.replace(element, elementContent)
             else:
                 ret = ret.replace(element, '')
-    logging.debug(BColors.LIGHTPINK + "PARSED html:\n{0}".format(repr(ret)) + BColors.ENDC)
+    logging.warning(BColors.LIGHTPINK + "PARSED html:\n{0}".format(repr(ret)) + BColors.ENDC)
     return ret
 
 
@@ -1077,12 +1077,12 @@ def inserted_post(cur, post):
     except fdb.DatabaseError as e:
         if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
             e = "duplicate"
-        logging.info(BColors.FAIL + "DB ERROR" + BColors.BLUE + \
+        logging.error(BColors.FAIL + "DB ERROR" + BColors.BLUE + \
         " post\t{0}: {1}".format(post.get('id'), e) + BColors.ENDC)
         errors += 1
         success = True
     except Exception as e:
-        logging.info(BColors.FAIL + "ERROR" + \
+        logging.error(BColors.FAIL + "ERROR" + \
         " post\t{0}: {1}".format(post.get('id'), e) + BColors.ENDC)
         errors += 1
         success = False
@@ -1096,7 +1096,7 @@ def inserted_context(cur, post):
     errors = 0
     success = True
     try:
-        # logging.debug(BColors.BOLD + "call to insert_context for {0} ({1},{2},{3},{4})".format(
+        # logging.warning(BColors.BOLD + "call to insert_context for {0} ({1},{2},{3},{4})".format(
         #             post.get('blog_name'),
         #             post.get('id'),
         #             post.get('timestamp'),         #timestamp
@@ -1110,16 +1110,16 @@ def inserted_context(cur, post):
                     post.get('remote_id'),         #remote_id
                     post.get('content_raw', None)  #remote_content
                     ))
-        # logging.debug("context returns: {0} ".format(repr(cur.fetchall())))
+        # logging.warning("context returns: {0} ".format(repr(cur.fetchall())))
     except fdb.DatabaseError as e:
         if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
             e = "duplicate"
-        logging.info(BColors.FAIL + "DB ERROR" + BColors.BLUE
+        logging.error(BColors.FAIL + "DB ERROR" + BColors.BLUE
         + " context\t{0}: {1}".format(post.get('id'), e) + BColors.ENDC)
         errors += 1
         success = True
     except Exception as e:
-        logging.info(BColors.FAIL + "ERROR"
+        logging.error(BColors.FAIL + "ERROR"
         + " context\t{0}: {1}".format(post.get('id'), e) + BColors.ENDC)
         errors += 1
         success = False
@@ -1135,7 +1135,7 @@ def inserted_urls(cur, post):
     if photos is not None:
         # insertstmt = cur.prep('insert into URLS (file_url,post_id,remote_id) values (?,?,?);')
         for photo in photos:
-            # logging.debug("inserting normal url:{0}".format(photo.get('original_size').get('url')))
+            # logging.warning("inserting normal url:{0}".format(photo.get('original_size').get('url')))
             global FILTERED_URL_GLOBAL_COUNT
             FILTERED_URL_GLOBAL_COUNT.add(photo.get('original_size').get('url'))
             try:
@@ -1147,7 +1147,7 @@ def inserted_urls(cur, post):
             except fdb.DatabaseError as e:
                 if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
                     e = "duplicate"
-                logging.info(BColors.FAIL + "DB ERROR" + BColors.BLUE
+                logging.error(BColors.FAIL + "DB ERROR" + BColors.BLUE
                             + " url\t{0}: {1}".format(
                             photo.get('original_size').get('url'),
                             e) + BColors.ENDC)
@@ -1156,7 +1156,7 @@ def inserted_urls(cur, post):
     # con.commit()
     # cur = con.cursor()
     for url in post.get('filtered_urls'):
-        # logging.debug("inserting filtered url:{0}".format(url))
+        # logging.warning("inserting filtered url:{0}".format(url))
         try:
             cur.callproc('insert_url', (
                         url,
@@ -1166,7 +1166,7 @@ def inserted_urls(cur, post):
         except fdb.DatabaseError as e:
             if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
                 e = "duplicate"
-            logging.info(BColors.FAIL + "DB ERROR" + BColors.BLUE
+            logging.error(BColors.FAIL + "DB ERROR" + BColors.BLUE
             + " url\t{0}: {1}".format(
             url, e) + BColors.ENDC)
             errors += 1
