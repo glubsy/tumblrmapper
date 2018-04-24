@@ -22,6 +22,11 @@ import re
 # exclude revision
 tumblr_base_norev_noext_nongreedy_re = re.compile(r'(tumblr_(?:inline_)?.*?)(?:_r\d)?_.{3,4}.*')
 
+SCRIPTDIR = os.path.dirname(__file__)
+DEBUG = False
+to_delete_archives_set_debug_path = SCRIPTDIR + os.sep + "tools/to_delete_archives_set_debug.txt" #debug
+
+
 
 def get_raw_files_from_db(database):
     """Returns tuple of all _raw files found"""
@@ -110,7 +115,7 @@ def remove_file_string_extensions(myset):
     return newset
 
 
-def remove_todelete_from_list(current_1280_set, todelete_txt, slow=False):
+def remove_todelete_from_list(current_1280_set, todelete_txt, slow=False, debug=False):
     """Returns current_set minus the files found in todelete_txt
     if slow, without extension"""
 
@@ -123,17 +128,20 @@ def remove_todelete_from_list(current_1280_set, todelete_txt, slow=False):
                 reresult = match.group(1)
                 for item in current_1280_set:
                     if item == reresult:
-                        print("found {0} to delete, removing {1}"
+                        print("Found {0} to delete, removing {1}"
                         .format(item, reresult))
                         current_1280_set.remove(item)
 
     else:
         todelete_set = remove_file_string_extensions(readfile(todelete_txt))
-        # print("length of todelete set: {0}".format(len(todelete_set)))
+        if DEBUG:
+            print("Length of generated todelete_set: {0}".format(len(todelete_set)))
+            write_to_file(to_delete_archives_set_debug_path, todelete_set)
 
-        # print("doing difference between current_set: {0} and todelete_set: {1}"
-        # .format(len(current_1280_set), len(todelete_set)))
-        return current_1280_set.difference(todelete_txt)
+            print("doing difference between current_set: {0} and todelete_set: {1}"
+            .format(len(current_1280_set), len(todelete_set)))
+
+        return current_1280_set.difference(todelete_set)
 
 
 
@@ -168,12 +176,7 @@ def write_to_file(filepath, mylist, use_pickle=False):
                 f.write("{}\n".format(item))
 
 
-
-
-
-if __name__ == "__main__":
-    SCRIPTDIR = os.path.dirname(__file__)
-    debug = True
+def main(output_pickle=False):
 
     # _1280 files listing
     archives_1280_txt_path = SCRIPTDIR + os.sep + "tools/archives_1280_list.txt"
@@ -183,16 +186,15 @@ if __name__ == "__main__":
     # _raw files listing
     raw_downloads_txt_path = SCRIPTDIR + os.sep + "tools/downloads_raw_list.txt"
     raw_downloads_txt_cache = SCRIPTDIR + os.sep + "tools/downloads_raw_cache.txt" #caching
-    raw_downloads_set_debug = SCRIPTDIR + os.sep + "tools/downloads_raw_set_debug.txt" #caching
+    raw_downloads_set_debug = SCRIPTDIR + os.sep + "tools/downloads_raw_set_debug.txt" #debug
 
     # optional todelete files (filter out)
     to_delete_archives_txt = os.path.expanduser("~/Documents/DOCUMENTS/archive_files_to_delete.txt")
 
-    # debug
+    # final filtered file outputs
     archives_minus_raw_path = SCRIPTDIR + os.sep + "tools/archives_minus_raw.txt"
-
-    # final filtered file output
-    archives_files_list_minus_raw_minus_todelete_path = SCRIPTDIR + os.sep + "tools/archives_files_list_minus_raw_minus_todelete.txt"
+    archives_minus_raw_minus_todelete_path = SCRIPTDIR + os.sep + "tools/archives_minus_raw_minus_todelete.txt"
+    archives_minus_raw_minus_todelete_path_pickle = SCRIPTDIR + os.sep + "tools/archives_minus_raw_minus_todelete_pickle.txt"
 
     # current downloads _raw
     downloads_database = db_handler.Database(db_filepath="/home/firebird/downloads.vvv", \
@@ -208,18 +210,18 @@ if __name__ == "__main__":
     if not os.path.exists(archives_1280_txt_path):
         if not os.path.exists(archives_1280_txt_cache):
             archives_1280_set = get_1280_from_db(CGI_database)
-            print("length of archives_1280_set: {}".format(len(archives_1280_set)))
+            print("Length of generated archives_1280_set: {}".format(len(archives_1280_set)))
             write_to_file(archives_1280_txt_cache, archives_1280_set, use_pickle=True)
-            if debug:
+            if DEBUG:
                 write_to_file(archives_1280_set_debug, archives_1280_set, use_pickle=False)
 
     # fetch _raw files from DB if text file doesn't already exist
     if not os.path.exists(raw_downloads_txt_path):
         if not os.path.exists(raw_downloads_txt_cache):
             raw_downloads_set = get_raw_files_from_db(downloads_database)
-            print("length of raw_downloads_set: {}".format(len(raw_downloads_set)))
+            print("Length of generated raw_downloads_set: {}".format(len(raw_downloads_set)))
             write_to_file(raw_downloads_txt_cache, raw_downloads_set, use_pickle=True)
-            if debug:
+            if DEBUG:
                 write_to_file(raw_downloads_set_debug, raw_downloads_set, use_pickle=False)
 
 
@@ -260,7 +262,16 @@ if __name__ == "__main__":
 
     # archives1280_final = archives1280_minus_raw - to_delete_archives_txt
     if os.path.exists(to_delete_archives_txt):
-        archives_files_list_minus_raw_minus_todelete = remove_todelete_from_list(archives1280_minus_raw_set, to_delete_archives_txt)
+        archives_files_list_minus_raw_minus_todelete = remove_todelete_from_list(archives1280_minus_raw_set, to_delete_archives_txt, debug=DEBUG)
         print("archives_files_list_minus_raw_minus_todelete: {0}".format(len(archives_files_list_minus_raw_minus_todelete)))
-        write_to_file(archives_files_list_minus_raw_minus_todelete_path, archives_files_list_minus_raw_minus_todelete)
+        if output_pickle:
+            write_to_file(archives_minus_raw_minus_todelete_path_pickle, archives_files_list_minus_raw_minus_todelete, use_pickle=True)
+        else:
+            write_to_file(archives_minus_raw_minus_todelete_path, archives_files_list_minus_raw_minus_todelete)
+
+
+
+if __name__ == "__main__":
+    main(output_pickle=True)
+
 

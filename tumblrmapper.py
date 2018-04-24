@@ -807,8 +807,7 @@ def main(args):
         temp_database = db_handler.Database(
             db_filepath=instances.config.get('tumblrmapper', 'db_filepath')\
 + os.sep + instances.config.get('tumblrmapper', 'db_filename'),
-            username="sysdba",
-            password="masterkey")
+            username="sysdba", password="masterkey")
         try:
             db_handler.create_blank_database(temp_database)
         except Exception as e:
@@ -821,8 +820,7 @@ def main(args):
         temp_database = db_handler.Database(
             db_filepath=instances.config.get('tumblrmapper', 'db_filepath')\
 + os.sep + instances.config.get('tumblrmapper', 'db_filename'),
-            username="sysdba",
-            password="masterkey")
+            username="sysdba", password="masterkey")
         db_handler.populate_db_with_blogs(temp_database, blogs_toscrape)
         sys.exit(0)
 
@@ -831,9 +829,13 @@ def main(args):
         temp_database = db_handler.Database(
             db_filepath=instances.config.get('tumblrmapper', 'db_filepath')\
 + os.sep + instances.config.get('tumblrmapper', 'db_filename'),
-            username="sysdba",
-            password="masterkey")
-        db_handler.populate_db_with_archives(temp_database, archives_toload)
+            username="sysdba", password="masterkey")
+        if "pickle" in archives_toload:
+            db_handler.update_db_with_archives(temp_database, 
+            archives_toload, usepickle=True)
+        else:
+            db_handler.update_db_with_archives(temp_database, 
+            archives_toload, usepickle=False)
         sys.exit(0)
 
 

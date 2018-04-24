@@ -16,6 +16,7 @@ import fdb
 # import cProfile
 import tumblrmapper
 from constants import BColors
+import update_archive_lists
 
 
 
@@ -524,13 +525,30 @@ END""")
         # WHERE POSTS.BLOG_ORIGIN = BLOGS.AUTO_ID, POSTS.BLOG_REBLOGGED = GATHERED_BLOGS.BLOG_NAME \
         # );")
 
+def update_db_with_archives(db, archivepath, usepickle=True):
+    """Reads the trimmed archive list and updates DB table OLD_1280"""
+    con = database.connect()
+    cur = con.cursor()
+    t0 = time.time()
+    if usepickle:
+        oldfiles = update_archive_lists.readfile_pickle(archivepath)
+    else:
+        oldfiles = update_archive_lists.readfile(archivepath)
+
+    with fdb.TransactionContext(con):
+        for item in oldfiles:
+            cur.execute("INSERT INTO OLD_1280 (FILENAME) VALUES (?)", (item,))
+        con.commit()
+    t1 = time.time()
+    logging.debug(BColors.BLUE + "Inserting records into OLD_1280 Took %.2f ms"
+                  % (1000*(t1-t0)) + BColors.ENDC)
+    
 
 def populate_db_with_archives(database, archivepath):
-    """read archive list and populate the OLD_1280 table with the base filename
-    without revision (_r1, _r2) nor extension"""
-    con = fdb.connect(database=database.db_filepath, \
-    user=database.username, password=database.password)
-
+    """Reads archive list with full _1280.jpg and populate the OLD_1280 table 
+    with the base filename with and without revision (_r1, _r2) nor extension 
+    : DEPRECATED"""
+    con = database.connect()
     cur = con.cursor()
     oldfiles = readlines(archivepath)
 
@@ -549,7 +567,7 @@ def populate_db_with_archives(database, archivepath):
                 basefilename = reresult2.group(1) #tumblr_azec_azceniaoiz1
             argsseq.append((line, basefilename))
 
-        sql = cur.prep("INSERT INTO OLD_1280 (FILENAME, FILEBASENAME) VALUES (?, ?)")
+        sql = cur.prep("INSERT INTO OLD_1280 (FILENAME, FILEBASENAME) VALUES (?,?)")
         cur.executemany(sql, argsseq)
         con.commit()
 

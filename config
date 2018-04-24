@@ -31,4 +31,4 @@ blogs_to_scrape = tools/tumblr_blogs_toscrape_test.txt
 # blogs_to_scrape = tools/tumblr_blogs_toscrape.txt
 
 # will be looked up from script directory root
-archives = tools/archives_files_list_minus_todelete.txt
+archives = tools/archives_minus_raw_minus_todelete.txt
