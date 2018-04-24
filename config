@@ -1,0 +1,34 @@
+[tumblrmapper]
+
+nice_level = 15
+
+username = sysdba
+
+password = masterkey
+
+data_path = /home/firebird
+
+db_filepath = /home/firebird
+
+db_filename = tumblrmapper_test.fdb
+
+threads = 1
+
+# only version 2 is implemented for now
+api_version = 2
+
+# no proxy use is not implemented
+use_proxies = True
+
+proxies = proxies.json
+
+log_level = INFO
+
+api_keys = api_keys.json
+
+# will be looked up from script directory root
+blogs_to_scrape = tools/tumblr_blogs_toscrape_test.txt
+# blogs_to_scrape = tools/tumblr_blogs_toscrape.txt
+
+# will be looked up from script directory root
+archives = tools/archives_files_list_minus_todelete.txt

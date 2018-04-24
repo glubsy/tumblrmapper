@@ -39,11 +39,12 @@ class Database():
     def __init__(self, *args, **kwargs):
         """initialize with environment"""
         self.host = kwargs.get('db_host', 'localhost') #not implemented
-        self.db_filepath = kwargs.get('db_filepath', SCRIPTDIR + "blank_db.fdb")
+        self.db_filepath = kwargs.get('db_filepath', None)
         self.username = kwargs.get('username', "sysdba")
         self.password = kwargs.get('password', "masterkey")
         self.con = []
-
+        if not self.db_filepath:
+            raise "Need a filepath for database"
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """ close all remaining connections"""
