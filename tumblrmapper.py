@@ -43,19 +43,24 @@ def parse_args():
                         help="Path to config directory.")
     parser.add_argument('-d', '--data_path', action="store", default=None,
                         help="Set default path to data directory, where logs and DB are stored")
-    parser.add_argument('-l', '--log_level', action="store", default="INFO",
-                        help="Set log level: DEBUG, INFO (default), WARNING, ERROR, CRITICAL")
+    parser.add_argument('-l', '--log_level', action="store", default="CRITICAL",
+                        help="Set log level: DEBUG, INFO, WARNING, ERROR, CRITICAL (default)")
+
+    actiongrp = parser.add_mutually_exclusive_group()
+
+    actiongrp.add_argument('-n', '--create_blank_db', action="store_true",
+                        help="Create a blank DB in data_dir and populate it")
+    actiongrp.add_argument('-s', '--update_archives', action="store_true",
+                    help="Populate DB with archives")
+    actiongrp.add_argument('-b', '--update_blogs', action="store_true",
+                    help="Populate DB with blogs")
 
     parser.add_argument('-p', '--proxies', action="store_true", default=False,
                         help="Use randomly selected proxies")
     parser.add_argument('-v', '--api_version', action="store", type=int, default=2,
                         help="API version to query, default is 2.")
-    parser.add_argument('-b', '--blog_list', action="store",
-                        help="Path to initial blog list to populate DB")
-    parser.add_argument('-s', '--archive_list', action="store",
-                        help="Path to initial archive list to populate DB")
-    parser.add_argument('-n', '--create_blank_db', action="store_true",
-                        help="Create a blank DB in data_dir and populate it")
+
+
 
     return parser.parse_args()
 
@@ -73,8 +78,8 @@ def parse_config(config_path=SCRIPTDIR, data_path=None):
                         "blogs_to_scrape": config_path + "blogs_to_scrape.txt", #initial blog list to populate DB
                         "archives": config_path, #initial blog list to populate DB
                         "log_path": data_path + os.sep + "scraper.log", #log for downloads and proxies
-                        "blank_db": data_path + os.sep + "blank_db.fdb", #blank initial DB file
                         "db_filepath": data_path + os.sep, #blank initial DB file
+                        "db_filename": 'tumblrmapper.fdb', #blank initial DB file
                         "api_version": "2", #use api v2 by default
                         "use_proxies": False, #use random proxies, or not
                         "api_keys": data_path + os.sep + "api_keys.json",
@@ -98,6 +103,7 @@ def parse_config(config_path=SCRIPTDIR, data_path=None):
     SCRIPTDIR + os.sep + config.get('tumblrmapper', 'blogs_to_scrape'))
     config.set('tumblrmapper', 'archives', \
     SCRIPTDIR + os.sep + config.get('tumblrmapper', 'archives'))
+
     config.set('tumblrmapper', 'db_filepath', \
     os.path.expanduser(config.get('tumblrmapper', 'db_filepath')))
     config.set('tumblrmapper', 'blank_db', \
@@ -244,7 +250,7 @@ def process(db, lock, db_update_lock, pill2kill):
 
     logging.warning(BColors.LIGHTGRAY + "Terminating thread {0}"\
     .format(threading.current_thread()) + BColors.ENDC)
-    
+
     if blog is None or blog.name is None:
         return
     else:
@@ -772,7 +778,7 @@ def thread_premature_cleanup(db, con, blog, reset_type):
 
 def configure_logging(args):
 
-    logging.basicConfig(format='{levelname}:\t{message}', style='{',
+    logging.basicConfig(format='{levelname}:    \t{message}', style='{',
                         level=getattr(logging, args.log_level.upper()))
     logger = logging.getLogger()
 
@@ -783,7 +789,7 @@ def configure_logging(args):
 
     fh.setLevel(getattr(logging, instances.config.get('tumblrmapper', "log_level")))
     fh.setFormatter(logging.Formatter(
-                    '{asctime} {levelname}:\t{message}',
+                    '{asctime} {levelname}:    \t{message}',
                     '%y/%m/%d %H:%M:%S', '{'))
     logger.addHandler(fh)
 
@@ -800,17 +806,36 @@ def main(args):
     THREADS = instances.config.getint('tumblrmapper', 'threads')
 
     if args.create_blank_db: # we asked for a brand new DB file
+        temp_database = db_handler.Database(
+            db_filepath=instances.config.get('tumblrmapper', 'db_filepath')\
++ os.sep + instances.config.get('tumblrmapper', 'db_filename'),
+            username="sysdba",
+            password="masterkey")
+        try:
+            db_handler.create_blank_database(temp_database)
+        except Exception as e:
+            logging.critical(BColors.FAIL + "Database creation failed:{0}"
+            .format(e) + BColors.ENDC)
+        sys.exit(0)
+
+    elif args.update_blogs:
         blogs_toscrape = instances.config.get('tumblrmapper', 'blogs_to_scrape')
-        archives_toload = instances.config.get('tumblrmapper', 'archives')
-        temp_database_path = instances.config.get('tumblrmapper', 'blank_db')
-        temp_database = db_handler.Database(db_filepath=temp_database_path, \
-                                username="sysdba", password="masterkey")
-
-        db_handler.create_blank_database(temp_database)
+        temp_database = db_handler.Database(
+            db_filepath=instances.config.get('tumblrmapper', 'db_filepath')\
++ os.sep + instances.config.get('tumblrmapper', 'db_filename'),
+            username="sysdba",
+            password="masterkey")
         db_handler.populate_db_with_blogs(temp_database, blogs_toscrape)
-        # Optional archives too
-        # db_handler.populate_db_with_archives(temp_database, archives_toload)
+        sys.exit(0)
 
+    elif args.update_archives:
+        archives_toload = instances.config.get('tumblrmapper', 'archives')
+        temp_database = db_handler.Database(
+            db_filepath=instances.config.get('tumblrmapper', 'db_filepath')\
++ os.sep + instances.config.get('tumblrmapper', 'db_filename'),
+            username="sysdba",
+            password="masterkey")
+        db_handler.populate_db_with_archives(temp_database, archives_toload)
         sys.exit(0)
 
 

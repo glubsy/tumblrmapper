@@ -17,7 +17,7 @@ import fdb
 import tumblrmapper
 from constants import BColors
 
-SCRIPTDIR = os.path.dirname(__file__) + os.sep
+
 
 http_url_simple_re = re.compile(r'"(https?(?::\/\/|%3A%2F%2F).*?)"', re.I)
 # for single line with http
@@ -74,20 +74,20 @@ class Database():
 
 
 
-def create_blank_db_file(database):
-    """creates the db at host"""
+def create_blank_database(database):
+    """Creates a new blank DB file and populates with tables"""
 
     # ("create database 'host:/temp/db.db' user 'sysdba' password 'pass'")
     c = r"create database " + r"'" + database.db_filepath + \
     r"' user '" + database.username + r"' password '" + database.password + r"'"
-    fdb.create_database(c)
+    
+    try:
+        fdb.create_database(c)
+    except:
+        raise
 
-
-
-def create_blank_database(database):
-    """Creates a new blank DB file and populates with tables"""
-    create_blank_db_file(database)
     populate_db_with_tables(database)
+
     logging.error(BColors.BLUEOK + BColors.GREEN
     + "Done creating blank DB in: {0}"
     .format(database.db_filepath) + BColors.ENDC)
@@ -525,7 +525,8 @@ END""")
 
 
 def populate_db_with_archives(database, archivepath):
-    """read archive list and populate the OLD_1280 table"""
+    """read archive list and populate the OLD_1280 table with the base filename
+    without revision (_r1, _r2) nor extension"""
     con = fdb.connect(database=database.db_filepath, \
     user=database.username, password=database.password)
 
@@ -533,7 +534,7 @@ def populate_db_with_archives(database, archivepath):
     oldfiles = readlines(archivepath)
 
     repattern_tumblr = re.compile(r'(tumblr_.*)_.*\..*', re.I) #eliminate '_resol.ext'
-    repattern_revisions = re.compile(r'(tumblr_.*)(?:_r\d)', re.I) #elimitane '_r\d'
+    repattern_revisions = re.compile(r'(tumblr_.*)(?:_r\d)', re.I) #elimitane '_r1'
 
     t0 = time.time()
 
@@ -587,6 +588,8 @@ def read_csv_bloglist(blogpath):
     with open(blogpath, 'r') as f:
         reader = csv.reader(f, delimiter=',')
         for row in reader:
+            if row.startswith('#'):
+                continue
             priority = None
             blog = row[0]
             if len(row) > 1:
@@ -1203,6 +1206,7 @@ def unittest_update_table(db, con, payload):
 
 
 if __name__ == "__main__":
+    SCRIPTDIR = os.path.dirname(__file__) + os.sep
     args = tumblrmapper.parse_args()
     tumblrmapper.configure_logging(args)
 
