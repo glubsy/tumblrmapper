@@ -20,6 +20,7 @@ import db_handler
 import instances
 import proxies
 from constants import BColors
+import update_archive_lists
 
 # import curses
 # import ratelimit
@@ -93,10 +94,10 @@ def parse_config(config_path=SCRIPTDIR, data_path=None):
 
     # Try to read config file (either passed in, or default value)
     # conf_file = os.path.join(config.get('tumblrmapper', 'config_path'), 'config')
-    logging.warning("Trying to read config file: %s", config_path)
+    logging.debug("Trying to read config file: %s", config_path)
     result = config.read(config_path)
     if not result:
-        logging.warning("Unable to read config file: %s", config_path)
+        logging.critical("Unable to read config file: %s", config_path)
 
     config.set('tumblrmapper', 'blogs_to_scrape', \
     SCRIPTDIR + os.sep + config.get('tumblrmapper', 'blogs_to_scrape'))
@@ -107,7 +108,7 @@ def parse_config(config_path=SCRIPTDIR, data_path=None):
     config.set('tumblrmapper', 'db_filepath', \
     os.path.expanduser(config.get('tumblrmapper', 'db_filepath')))
 
-    logging.warning("Merged config: %s",
+    logging.debug("Merged config: %s",
                 sorted(dict(config.items('tumblrmapper')).items()))
 
     return config
@@ -180,20 +181,20 @@ def process(db, lock, db_update_lock, pill2kill):
 
             # we already have the first batch of posts, insert them
             if blog.offset == 0: # DB had no previous offset, it's brand new
-                update_first_batch_of_posts(db, con, db_update_lock, blog, update)
+                insert_posts(db, con, db_update_lock, blog, update)
 
 
         elif blog.crawl_status == 'resume':
             if not blog_status_check(db, con, lock, blog, update):
                 continue
             if blog.offset > 0: # ignore response, go straight to our previous offset
-                update.posts_response = None
+                update.posts_response = []
 
 
         elif blog.crawl_status == 'DONE':
             if not blog_status_check(db, con, lock, blog, update):
                 continue
-            update_first_batch_of_posts(db, con, db_update_lock, blog, update)
+            insert_posts(db, con, db_update_lock, blog, update)
 
         else:
             raise Exception(BColors.FAIL + \
@@ -205,8 +206,9 @@ def process(db, lock, db_update_lock, pill2kill):
 
         while not pill2kill.is_set():
             if blog.posts_scraped >= blog.total_posts or blog.offset >= blog.total_posts:
-                logging.debug("{0} before loop: posts_scraped or offset >= total_posts , breaking loop!"
-                .format(blog.name))
+                logging.debug(
+                "{0} before loop: posts_scraped {1} or offset {2} >= total_posts {3}, breaking loop!"
+                .format(blog.name, blog.posts_scraped, blog.offset, blog.total_posts))
                 break
 
             if not update.posts_response:  #FIXME: could be some other field attached to blog
@@ -214,7 +216,9 @@ def process(db, lock, db_update_lock, pill2kill):
                 + "{0} Getting at offset {1}".format(blog.name, blog.offset) + BColors.ENDC)
 
                 try:
-                    api_get_request_wrapper(db, con, lock, blog, update, blog.crawl_status, offset=blog.offset)
+                    if not api_get_request_wrapper(db, con, lock, blog, update, blog.crawl_status, offset=blog.offset):
+                        logging.debug(BColors.FAIL + "{0} request_wrapper returns fase, break!".format(blog.name) + BColors.ENDC)
+                        break
                 except Exception as e:
                     logging.warning(BColors.FAIL + "Exception in api_get_request_wrapper from loop! {0}"
                     .format(e) + BColors.ENDC)
@@ -228,7 +232,7 @@ def process(db, lock, db_update_lock, pill2kill):
             else:
                 logging.debug("{0} inserting new posts".format(blog.name))
 
-                update_first_batch_of_posts(db, con, db_update_lock, blog, update)
+                insert_posts(db, con, db_update_lock, blog, update)
 
                 if blog.posts_scraped >= blog.total_posts or blog.offset >= blog.total_posts :
                     logging.debug("{0} else loop: total_posts >= posts_scraped or >= offset, breaking loop!"
@@ -236,7 +240,7 @@ def process(db, lock, db_update_lock, pill2kill):
                     break
 
         # We're done, no more found
-        check_blog_end_of_posts(blog)
+        check_blog_end_of_posts(db, con, blog)
         db_handler.update_blog_info(db, con, blog, ignore_response=True)
 
         logging.critical(BColors.GREENOK + "{0} Done scraping. Total {1}/{2}"\
@@ -255,7 +259,8 @@ def process(db, lock, db_update_lock, pill2kill):
         thread_good_cleanup(db, con, blog)
 
 
-def update_first_batch_of_posts(db, con, db_update_lock, blog, update):
+
+def insert_posts(db, con, db_update_lock, blog, update):
     with db_update_lock:
         processed_posts, errors = db_handler.insert_posts(db, con, blog, update)
         blog.posts_scraped += processed_posts - errors # added - errors
@@ -272,12 +277,12 @@ def update_first_batch_of_posts(db, con, db_update_lock, blog, update):
 
 
 
-def check_blog_end_of_posts(blog):
+def check_blog_end_of_posts(db, con, blog):
     """Check if we have indeed done everything right"""
 
     logging.debug("{0} check_blog_end_of_posts".format(blog.name))
 
-    if blog.total_posts == blog.posts_scraped:
+    if blog.posts_scraped >= blog.total_posts or blog.offset >= blog.total_posts:
         logging.debug("Marking {0} as DONE".format(blog.name))
         blog.crawl_status = 'DONE'
         blog.offset = 0
@@ -286,6 +291,9 @@ def check_blog_end_of_posts(blog):
         blog.crawl_status = 'resume'
 
     blog.crawling = 0
+
+    if blog.posts_scraped == 0:
+        blog.posts_scraped = db_handler.get_total_post(db, con, blog)
     return
 
 
@@ -304,7 +312,7 @@ def api_get_request_wrapper(db, con, lock, blog, update, crawl_status, offset=No
         except BaseException as e:
             traceback.print_exc()
             logging.error(BColors.RED + \
-            "{0} Too many proxy attempts! Skipping for now. Error:\n{1}"\
+            "{0} Too many proxy attempts! Skipping for now. Error:{1}"\
             .format(blog.name, e) + BColors.ENDC)
             if crawl_status != 'resume':
                 thread_premature_cleanup(db, con, blog, crawl_status)
@@ -334,11 +342,11 @@ def blog_status_check(db, con, lock, blog, update, offset=None):
 
         db_response = db_handler.update_blog_info(db, con, blog)
 
-        # logging.warning(BColors.BLUE + "{0} Got DB response: {1}"\
-        # .format(blog.name, db_response) + BColors.ENDC)
+        logging.debug(BColors.BLUE + "{0} Got DB response: {1}"\
+        .format(blog.name, db_response) + BColors.ENDC)
 
         if not check_db_init_response(db_response, blog, isnew=isnew):
-            # logging.warning("{0} check_db_init_response: False".format(blog.name))
+            logging.debug("{0} check_db_init_response: False".format(blog.name))
             return False
 
     if not update.valid:
@@ -363,10 +371,10 @@ def check_db_init_response(db_response, blog, isnew=False):
         db_response['last_offset'] = 0
 
     if not isnew:
-        if db_response['last_offset'] >= blog.total_posts:
+        if db_response['last_offset'] > blog.total_posts:
             logging.warning(BColors.BOLD + \
-            "{0} last offset was {1} and superior to current total posts {2}. Resetting to 0."\
-            .format(blog.name, db_response['last_offset'], blog.total_posts) + BColors.ENDC)
+            "{0} last offset was {1} and superior or equal to current total posts {2}.\
+ Resetting to 0.".format(blog.name, db_response['last_offset'], blog.total_posts) + BColors.ENDC)
 
             db_response['last_offset'] = 0
 
@@ -448,6 +456,9 @@ def blog_generator(db, con):
 
     if blog.offset is None:
         blog.offset = 0
+
+    if blog.posts_scraped is None:
+        blog.posts_scraped = 0
 
     # attach a proxy
     blog.attach_proxy()
@@ -552,11 +563,12 @@ class TumblrBlog:
         .format(self.name, self.proxy_object.get('ip_address')) + BColors.ENDC)
 
 
-    # @ratelimit(1000, 3600)
     def requester(self, url, requests_session=None, api_key=None):
         """ Does a request, returns json """
         # url = 'https://httpbin.org/get'
 
+        response = {'meta': {'status': 500, 'msg': 'Server Error'}, 
+            'response': [], 'errors': [{"error": "Malformed JSON or HTML was returned."}]}
         if not requests_session:
             self.init_session()
             logging.warning("---\n{0}Requested new session: {1} {2}\n----"\
@@ -566,13 +578,11 @@ class TumblrBlog:
         "{0} GET: {1}".format(self.name, url) + BColors.ENDC)
         try:
             response = self.requests_session.get(url, timeout=10)
-            # if response.status_code == 200:
-            if response.status_code > 200:
-                api_keys.inc_key_request(api_key)
-                # json_data = response.json()
-            return response
-        except:
+            api_keys.inc_key_request(api_key)
+        except (ConnectionError, requests.exceptions.RequestException):
             raise
+        finally:
+            return response
 
 
     def api_get_request(self, lock, updateobj, api_key=None, reqtype="posts", offset=None):
@@ -583,7 +593,7 @@ class TumblrBlog:
             offset = ''
         else:
             offset = '&offset=' + str(offset)
-        instances.sleep_here(0, 1)
+        instances.sleep_here(0, 3)
         attempt = 0
         apiv2_url = 'https://api.tumblr.com/v2/blog/{0}/{1}?api_key={2}{3}'\
         .format(self.name, reqtype, api_key.api_key, offset)
@@ -607,7 +617,6 @@ class TumblrBlog:
                 self.get_new_proxy(lock)
                 attempt += 1
                 continue
-            api_keys.inc_key_request(api_key)
             break
 
         try:
@@ -626,44 +635,42 @@ class TumblrBlog:
         # (SCRIPTDIR + "/tools/test/videogame-fantasy_july_reblogfalse_dupe.json", 'r')))
 
         try:
-            response = response.json()
+            response_json = response.json()
         except ValueError:
+            response_json = {'meta': {'status': 500, 'msg': 'Server Error'}, 
+            'response': [], 'errors': [{"title": "Malformed JSON or HTML was returned."}]}
+        except:
             logging.exception(BColors.YELLOW
-            + "{0} Error trying to get json from response"
-            .format(self.name) + BColors)
+            + "{0} Error trying to get json from response: {1}"
+            .format(self.name, response.text) + BColors)
             raise
 
-        logging.info(BColors.LIGHTCYAN + \
-        "{0} check_response_validate_update response status={1}"\
-        .format(self.name, response.get('meta')['status']) + BColors.ENDC)
-
-
-        update.meta_status = response.get('meta')['status']
-        update.meta_msg = response.get('meta')['msg']
-
-        # if not 200 <= json['meta']['status'] <= 399:
-        #     update.errors = json['errors']
-        #     return update
-
-        if not response.get('response') and response.get('errors'): # got errors!
-            update.errors_title = response.get('errors')[0]['title']
-            return
-
-        # BIG PARSE (REMOVE?)
-        parse_json_response(response, update)
 
         logging.info(BColors.LIGHTCYAN + \
-        "{0} check_response_validate_update update.meta_msg={1}"\
-        .format(self.name, update.meta_msg) + BColors.ENDC)
+        "{0} Before parsing reponse check_response_validate_update response_json status={1} response_json msg {2}"\
+        .format(self.name, response_json.get('meta').get('status'), 
+        response_json.get('meta').get('msg')) + BColors.ENDC)
+
+
+        update.meta_status = response_json.get('meta').get('status')
+        update.meta_msg = response_json.get('meta').get('msg')
+
+
+        if not response_json.get('response') or not (200 <= update.meta_status <= 399):
+            if response_json.get('errors') is not None: # got errors!
+                update.errors_title = response_json.get('errors')[0]['title']
+
+
+        logging.debug(BColors.LIGHTCYAN +
+        "{0} After parsing reponse, check_response_validate_update update.meta_msg={1} update.meta_status {2}"
+        .format(self.name, update.meta_msg, update.meta_status) + BColors.ENDC)
 
         if update.errors_title is not None:
-            if update.meta_status == 404 and update.meta_msg == 'Not Found':
+            if update.meta_status == 404 or update.meta_msg.find('Not Found'):
                 logging.error(BColors.FAIL + "{0} update has error status {1} {2}"\
                 .format(self.name, update.meta_status, update.meta_msg) + BColors.ENDC)
                 self.health = "DEAD"
                 self.crawl_status = "DEAD"
-                self.total_posts = 0
-                self.last_updated = 0
                 update.valid = True
                 return
 
@@ -688,6 +695,15 @@ class TumblrBlog:
         self.health = "UP"
         self.crawling = 1
 
+        # BIG PARSE (REMOVE?)
+        resp_json = response_json.get('response', {})
+        update.blogname = resp_json.get('blog').get('name')
+        update.total_posts = resp_json.get('blog').get('total_posts')
+        update.updated = resp_json.get('blog').get('updated')
+        resp_json.get('posts', []) #list of dicts
+
+
+
         if update.total_posts < 20:   #FIXME: arbitrary value
             logging.error("{0} considered WIPED!".format(self.name))
             self.health = "WIPED"
@@ -709,22 +725,7 @@ class UpdatePayload(requests.Response):
         self.meta_msg = None
         self.total_posts = None
         self.updated = None
-        self.posts_response = None
-
-
-def parse_json_response(response_json, update):
-    """returns a UpdatePayload() object that holds the fields to update in DB"""
-    # t0 = time.time()
-
-    json = response_json.get('response')
-    update.blogname = json.get('blog').get('name')
-    update.total_posts = json.get('blog').get('total_posts')
-    update.updated = json.get('blog').get('updated')
-    if json.get('posts'):
-        logging.debug(BColors.BOLD + "updating update with json" + BColors.ENDC)
-        update.posts_response = json['posts'] #list of dicts
-
-
+        self.posts_response = []
 
 
 class SignalHandler:
@@ -796,7 +797,7 @@ def configure_logging(args):
     # sh.setFormatter(logging.Formatter('{levelname}:\t{message}', None, '{'))
     # logger.addHandler(sh)
 
-    logging.warning("Debugging Enabled.")
+    logging.debug("Debugging Enabled.")
     return logger
 
 
@@ -850,7 +851,7 @@ def main(args):
     fresh_proxy_dict = instances.proxy_scanner.get_proxies_from_internet()
     # print(fresh_proxy_dict)
 
-    # fresh_proxy_dict = {'proxies': [{'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36(KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '47.206.51.67:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.4; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2225.0 Safari/537.36', 'disabled': False}, {'ip_address': '92.53.73.138:8118', 'user_agent': 'Mozilla/5.0 (Windows NT6.1; WOW64; rv:21.0) Gecko/20130331 Firefox/21.0', 'disabled': False}, {'ip_address': '45.77.247.164:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '80.211.4.187:8080', 'user_agent': 'Mozilla/5.0 (Microsoft Windows NT 6.2.9200.0); rv:22.0) Gecko/20130405 Firefox/22.0', 'disabled': False}, {'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '66.82.123.234:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1985.67 Safari/537.36', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64;x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh;Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '52.164.249.198:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.2309.372 Safari/537.36', 'disabled': False}, {'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '47.206.51.67:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.4; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2225.0 Safari/537.36', 'disabled':False}, {'ip_address': '92.53.73.138:8118', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:21.0) Gecko/20130331 Firefox/21.0', 'disabled': False}, {'ip_address': '45.77.247.164:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '80.211.4.187:8080', 'user_agent': 'Mozilla/5.0 (Microsoft Windows NT 6.2.9200.0); rv:22.0) Gecko/20130405 Firefox/22.0', 'disabled': False}, {'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '191.34.157.243:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.124 Safari/537.36', 'disabled': False}, {'ip_address': '61.91.251.235:8080', 'user_agent': 'Opera/9.80 (Windows NT 5.1; U; zh-tw) Presto/2.8.131 Version/11.10', 'disabled': False}, {'ip_address': '41.190.33.162:8080', 'user_agent': 'Mozilla/5.0 (X11; CrOS i686 4319.74.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/29.0.1547.57 Safari/537.36', 'disabled': False}, {'ip_address': '80.48.119.28:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '213.99.103.187:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/28.0.1464.0 Safari/537.36', 'disabled': False}, {'ip_address': '141.105.121.181:80', 'user_agent': 'Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 7.0; InfoPath.3; .NET CLR 3.1.40767; Trident/6.0; en-IN)', 'disabled': False}]}
+    fresh_proxy_dict = {'proxies': [{'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36(KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '47.206.51.67:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.4; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2225.0 Safari/537.36', 'disabled': False}, {'ip_address': '92.53.73.138:8118', 'user_agent': 'Mozilla/5.0 (Windows NT6.1; WOW64; rv:21.0) Gecko/20130331 Firefox/21.0', 'disabled': False}, {'ip_address': '45.77.247.164:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '80.211.4.187:8080', 'user_agent': 'Mozilla/5.0 (Microsoft Windows NT 6.2.9200.0); rv:22.0) Gecko/20130405 Firefox/22.0', 'disabled': False}, {'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '66.82.123.234:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1985.67 Safari/537.36', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64;x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh;Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '52.164.249.198:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.2309.372 Safari/537.36', 'disabled': False}, {'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '47.206.51.67:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.4; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2225.0 Safari/537.36', 'disabled':False}, {'ip_address': '92.53.73.138:8118', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:21.0) Gecko/20130331 Firefox/21.0', 'disabled': False}, {'ip_address': '45.77.247.164:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '80.211.4.187:8080', 'user_agent': 'Mozilla/5.0 (Microsoft Windows NT 6.2.9200.0); rv:22.0) Gecko/20130405 Firefox/22.0', 'disabled': False}, {'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '191.34.157.243:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.124 Safari/537.36', 'disabled': False}, {'ip_address': '61.91.251.235:8080', 'user_agent': 'Opera/9.80 (Windows NT 5.1; U; zh-tw) Presto/2.8.131 Version/11.10', 'disabled': False}, {'ip_address': '41.190.33.162:8080', 'user_agent': 'Mozilla/5.0 (X11; CrOS i686 4319.74.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/29.0.1547.57 Safari/537.36', 'disabled': False}, {'ip_address': '80.48.119.28:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '213.99.103.187:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/28.0.1464.0 Safari/537.36', 'disabled': False}, {'ip_address': '141.105.121.181:80', 'user_agent': 'Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 7.0; InfoPath.3; .NET CLR 3.1.40767; Trident/6.0; en-IN)', 'disabled': False}]}
 
     # Associate api_key to each proxy in fresh list
     #FIXME remove the two next lines; deprecated
