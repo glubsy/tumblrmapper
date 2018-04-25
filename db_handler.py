@@ -29,6 +29,12 @@ http_url_super_re = re.compile(r'(?:\"(https?(?::\/\/|%3A%2F%2F).*?)(?:\")(?:<\/
 http_url_uber_re = re.compile(r'\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:\'\".,<>?\xab\xbb\u201c\u201d\u2018\u2019]))', re.I)
 repattern_tumblr_redirect = re.compile(r't\.umblr\.com\/redirect\?z=(.*)(?:&|&amp;)t=.*', re.I)
 
+# Deprecated:
+repattern_tumblr = re.compile(r'(tumblr_.*)_.*\..*', re.I) #eliminate '_resol.ext'
+
+repattern_revisions = re.compile(r'(tumblr_.*?)(?:_r\d)?\s*$', re.I) #elimitane '_r1' 
+
+
 htmlparser = HTMLParser()
 FILTERED_URL_GLOBAL_COUNT = set()
 
@@ -525,19 +531,25 @@ END""")
         # WHERE POSTS.BLOG_ORIGIN = BLOGS.AUTO_ID, POSTS.BLOG_REBLOGGED = GATHERED_BLOGS.BLOG_NAME \
         # );")
 
-def update_db_with_archives(db, archivepath, usepickle=True):
+def update_db_with_archives(db, archivepath, use_pickle=True):
     """Reads the trimmed archive list and updates DB table OLD_1280"""
     con = database.connect()
     cur = con.cursor()
     t0 = time.time()
-    if usepickle:
+    if use_pickle:
         oldfiles = update_archive_lists.readfile_pickle(archivepath)
     else:
         oldfiles = update_archive_lists.readfile(archivepath)
 
     with fdb.TransactionContext(con):
         for item in oldfiles:
-            cur.execute("INSERT INTO OLD_1280 (FILENAME) VALUES (?)", (item,))
+            match = repattern_revisions.search(item)
+            if match:
+                trimmeditem = match.group(1)
+            else:
+                trimmeditem = item
+            params = (item, trimmeditem)
+            cur.execute("INSERT INTO OLD_1280 (FILENAME, FILEBASENAME) VALUES (?,?)", params)
         con.commit()
     t1 = time.time()
     logging.debug(BColors.BLUE + "Inserting records into OLD_1280 Took %.2f ms"
@@ -551,9 +563,6 @@ def populate_db_with_archives(database, archivepath):
     con = database.connect()
     cur = con.cursor()
     oldfiles = readlines(archivepath)
-
-    repattern_tumblr = re.compile(r'(tumblr_.*)_.*\..*', re.I) #eliminate '_resol.ext'
-    repattern_revisions = re.compile(r'(tumblr_.*)(?:_r\d)', re.I) #elimitane '_r1'
 
     t0 = time.time()
 

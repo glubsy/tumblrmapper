@@ -832,10 +832,10 @@ def main(args):
             username="sysdba", password="masterkey")
         if "pickle" in archives_toload:
             db_handler.update_db_with_archives(temp_database, 
-            archives_toload, usepickle=True)
+            archives_toload, use_pickle=True)
         else:
             db_handler.update_db_with_archives(temp_database, 
-            archives_toload, usepickle=False)
+            archives_toload, use_pickle=False)
         sys.exit(0)
 
 
