@@ -17,13 +17,13 @@ from collections import Counter
 import fdb
 import re
 
-# tumblr_base_noext_re = re.compile(r'(tumblr_.*)_.{3,4}.*') # tumblr_xxx_r1
+tumblr_base_noext_re = re.compile(r'(tumblr_(?:inline_)?.*?(?:r\d)?.*)_.{3,4}.*') # tumblr_xxx_r1
 # tumblr_base_norev_noext_re = re.compile(r'(tumblr_.*)(?:_r\d)?_.{3,4}.*')
 # exclude revision
 tumblr_base_norev_noext_nongreedy_re = re.compile(r'(tumblr_(?:inline_)?.*?)(?:_r\d)?_.{3,4}.*')
 
 SCRIPTDIR = os.path.dirname(__file__)
-DEBUG = False
+DEBUG = True
 to_delete_archives_set_debug_path = SCRIPTDIR + os.sep + "tools/to_delete_archives_set_debug.txt" #debug
 
 
@@ -58,7 +58,7 @@ and (FILE_NAME NOT SIMILAR TO 'tumblr\_%\_raw.%' escape '\');
     return results
 
 
-def remove_raw_alternatives_from_1280(list_1280, list_raw, slow=False):
+def remove_raw_alternatives_from_1280(list_1280, list_raw, keep_rev=False, slow=False):
     """Returns a set of difference"""
     if not isinstance(set(), type(list_1280)):
         if not "cache" in list_1280 and isinstance(str(), type(list_1280)):
@@ -76,12 +76,12 @@ def remove_raw_alternatives_from_1280(list_1280, list_raw, slow=False):
     else:       # must be a set()
         _raw_set = list_raw
 
-    if slow:
+    # below, assuming the two input sets have the exact same file format!
+    if slow: # FIXME untested! not really needed
         for item in _list_1280:
-            match = tumblr_base_norev_noext_nongreedy_re.match(item)
+            match = tumblr_base_noext_re.match(item)
             if match:
                 reresult = match.group(1)
-
                 for item in _raw_set:
                     if item == reresult:
                         print("found {0} to delete, removing {1}"
@@ -90,19 +90,22 @@ def remove_raw_alternatives_from_1280(list_1280, list_raw, slow=False):
         return _list_1280
 
     else:
-        filtered_list_1280 = remove_file_string_extensions(_list_1280)
+        filtered_list_1280 = remove_file_string_extensions(_list_1280, keep_rev=keep_rev)
 
-        filetered_list_raw = remove_file_string_extensions(_raw_set)
+        filetered_list_raw = remove_file_string_extensions(_raw_set, keep_rev=keep_rev)
 
         # _list_1280 minus common items with _raw_set
         return filtered_list_1280.difference(filetered_list_raw)
 
 
-def remove_file_string_extensions(myset):
+def remove_file_string_extensions(myset, keep_rev=False):
     newset = set()
     # count = 0
     for item in myset:
-        match = tumblr_base_norev_noext_nongreedy_re.search(item)
+        if not keep_rev:
+            match = tumblr_base_noext_re.search(item)
+        else:
+            match = tumblr_base_norev_noext_nongreedy_re.search(item)
         if match:
             # count += 1
             newset.add(match.group(1))
@@ -115,15 +118,16 @@ def remove_file_string_extensions(myset):
     return newset
 
 
-def remove_todelete_from_list(current_1280_set, todelete_txt, slow=False, debug=False):
+def remove_todelete_from_list(current_1280_set, todelete_txt, keep_rev=False, slow=False, debug=False):
     """Returns current_set minus the files found in todelete_txt
     if slow, without extension"""
 
-    if slow:
+    # below, assuming the two input sets have the exact same file format!
+    if slow: # FIXME untested! not really needed
         todelete_set = readfile(todelete_txt)
 
         for item in todelete_set:
-            match = tumblr_base_norev_noext_nongreedy_re.match(item)
+            match = tumblr_base_noext_re.match(item)
             if match:
                 reresult = match.group(1)
                 for item in current_1280_set:
@@ -131,9 +135,10 @@ def remove_todelete_from_list(current_1280_set, todelete_txt, slow=False, debug=
                         print("Found {0} to delete, removing {1}"
                         .format(item, reresult))
                         current_1280_set.remove(item)
+        return current_1280_set
 
     else:
-        todelete_set = remove_file_string_extensions(readfile(todelete_txt))
+        todelete_set = remove_file_string_extensions(readfile(todelete_txt), keep_rev=keep_rev)
         if DEBUG:
             print("Length of generated todelete_set: {0}".format(len(todelete_set)))
             write_to_file(to_delete_archives_set_debug_path, todelete_set)
@@ -176,7 +181,7 @@ def write_to_file(filepath, mylist, use_pickle=False):
                 f.write("{}\n".format(item))
 
 
-def main(output_pickle=False):
+def main(output_pickle=False, keep_revision=False):
 
     # _1280 files listing
     archives_1280_txt_path = SCRIPTDIR + os.sep + "tools/archives_1280_list.txt"
@@ -227,12 +232,12 @@ def main(output_pickle=False):
 
     if raw_downloads_set is not None:
         if archives_1280_set is not None:
-            archives1280_minus_raw_set = remove_raw_alternatives_from_1280(archives_1280_set, raw_downloads_set)
+            archives1280_minus_raw_set = remove_raw_alternatives_from_1280(archives_1280_set, raw_downloads_set, keep_revision)
         else: # use path
             if os.path.exists(archives_1280_txt_path):
-                archives1280_minus_raw_set = remove_raw_alternatives_from_1280(archives_1280_txt_path, raw_downloads_set)
+                archives1280_minus_raw_set = remove_raw_alternatives_from_1280(archives_1280_txt_path, raw_downloads_set, keep_revision)
             elif os.path.exists(archives_1280_txt_cache):
-                archives1280_minus_raw_set = remove_raw_alternatives_from_1280(archives_1280_txt_cache, raw_downloads_set)
+                archives1280_minus_raw_set = remove_raw_alternatives_from_1280(archives_1280_txt_cache, raw_downloads_set, keep_revision)
             else:
                 print("ERROR: no 1280 listing found!")
                 sys.exit(0)
@@ -240,19 +245,19 @@ def main(output_pickle=False):
     else: # we have raw_downloads_txt_path
         if archives_1280_set is not None:
             if os.path.exists(raw_downloads_txt_path):
-                archives1280_minus_raw_set = remove_raw_alternatives_from_1280(archives_1280_set, raw_downloads_txt_path)
+                archives1280_minus_raw_set = remove_raw_alternatives_from_1280(archives_1280_set, raw_downloads_txt_path, keep_revision)
                 print(archives1280_minus_raw_set)
             elif os.path.exists(raw_downloads_txt_cache):
-                archives1280_minus_raw_set = remove_raw_alternatives_from_1280(archives_1280_set, raw_downloads_txt_cache)
+                archives1280_minus_raw_set = remove_raw_alternatives_from_1280(archives_1280_set, raw_downloads_txt_cache, keep_revision)
             else:
                 print("ERROR: no raw listing found!")
         else: # we have no 1280 set nor raw set
             if os.path.exists(archives_1280_txt_path) and os.path.exists(raw_downloads_txt_path):
-                archives1280_minus_raw_set = remove_raw_alternatives_from_1280(archives_1280_txt_path, raw_downloads_txt_path)
+                archives1280_minus_raw_set = remove_raw_alternatives_from_1280(archives_1280_txt_path, raw_downloads_txt_path, keep_revision)
             elif os.path.exists(archives_1280_txt_cache) and os.path.exists(raw_downloads_txt_path):
-                archives1280_minus_raw_set = remove_raw_alternatives_from_1280(archives_1280_txt_cache, raw_downloads_txt_path)
+                archives1280_minus_raw_set = remove_raw_alternatives_from_1280(archives_1280_txt_cache, raw_downloads_txt_path, keep_revision)
             elif os.path.exists(archives_1280_txt_cache) and os.path.exists(raw_downloads_txt_cache):
-                archives1280_minus_raw_set = remove_raw_alternatives_from_1280(archives_1280_txt_cache, raw_downloads_txt_cache)
+                archives1280_minus_raw_set = remove_raw_alternatives_from_1280(archives_1280_txt_cache, raw_downloads_txt_cache, keep_revision)
             else:
                 print("ERROR: no 1280 listing nor raw listing found!")
 
@@ -262,7 +267,8 @@ def main(output_pickle=False):
 
     # archives1280_final = archives1280_minus_raw - to_delete_archives_txt
     if os.path.exists(to_delete_archives_txt):
-        archives_files_list_minus_raw_minus_todelete = remove_todelete_from_list(archives1280_minus_raw_set, to_delete_archives_txt, debug=DEBUG)
+        archives_files_list_minus_raw_minus_todelete = remove_todelete_from_list(archives1280_minus_raw_set, 
+        to_delete_archives_txt, debug=DEBUG)
         print("archives_files_list_minus_raw_minus_todelete: {0}".format(len(archives_files_list_minus_raw_minus_todelete)))
         if output_pickle:
             write_to_file(archives_minus_raw_minus_todelete_path_pickle, archives_files_list_minus_raw_minus_todelete, use_pickle=True)
