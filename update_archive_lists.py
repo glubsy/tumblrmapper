@@ -183,6 +183,7 @@ def write_to_file(filepath, mylist, use_pickle=False):
 
 def main(output_pickle=False, keep_revision=False):
 
+    # FIXME: lots of hard coded values could be in config
     # _1280 files listing
     archives_1280_txt_path = SCRIPTDIR + os.sep + "tools/archives_1280_list.txt"
     archives_1280_txt_cache = SCRIPTDIR + os.sep + "tools/archives_1280_cache.txt" # caching

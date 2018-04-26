@@ -96,7 +96,7 @@ def create_blank_database(database):
 
     populate_db_with_tables(database)
 
-    logging.error(BColors.BLUEOK + BColors.GREEN
+    logging.critical(BColors.BLUEOK + BColors.GREEN
     + "Done creating blank DB in: {0}"
     .format(database.db_filepath) + BColors.ENDC)
 
@@ -190,7 +190,7 @@ FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID)
             # if it's not null, it's from a reblog,
 
         con.execute_immediate(
-            "CREATE TABLE OLD_1280 ( FILENAME varchar(60), FILEBASENAME varchar(60) );")
+            "CREATE TABLE OLD_1280 ( FILENAME varchar(60) PRIMARY KEY, FILEBASENAME varchar(60) );")
 
         # CREATE generators and triggers
         con.execute_immediate("CREATE SEQUENCE tBLOGS_autoid_sequence;")
@@ -531,7 +531,7 @@ END""")
         # WHERE POSTS.BLOG_ORIGIN = BLOGS.AUTO_ID, POSTS.BLOG_REBLOGGED = GATHERED_BLOGS.BLOG_NAME \
         # );")
 
-def update_db_with_archives(db, archivepath, use_pickle=True):
+def update_db_with_archives(database, archivepath, use_pickle=True):
     """Reads the trimmed archive list and updates DB table OLD_1280"""
     con = database.connect()
     cur = con.cursor()
@@ -616,7 +616,7 @@ def read_csv_bloglist(blogpath):
     with open(blogpath, 'r') as f:
         reader = csv.reader(f, delimiter=',')
         for row in reader:
-            if row.startswith('#'):
+            if row[0].startswith('#'):
                 continue
             priority = None
             blog = row[0]

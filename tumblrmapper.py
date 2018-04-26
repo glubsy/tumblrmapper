@@ -46,13 +46,15 @@ def parse_args():
     parser.add_argument('-l', '--log_level', action="store", default="CRITICAL",
                         help="Set log level: DEBUG, INFO, WARNING, ERROR, CRITICAL (default)")
 
-    actiongrp = parser.add_mutually_exclusive_group()
+    # actiongrp = parser.add_mutually_exclusive_group()
+    parser.add_argument('-u', '--update_archive_list', action="store_true",
+                    help="Recreate archive file listing.")
 
-    actiongrp.add_argument('-n', '--create_blank_db', action="store_true",
+    parser.add_argument('-n', '--create_blank_db', action="store_true",
                         help="Create a blank DB in data_dir and populate it")
-    actiongrp.add_argument('-s', '--update_archives', action="store_true",
+    parser.add_argument('-s', '--update_archives', action="store_true",
                     help="Populate DB with archives")
-    actiongrp.add_argument('-b', '--update_blogs', action="store_true",
+    parser.add_argument('-b', '--update_blogs', action="store_true",
                     help="Populate DB with blogs")
 
     parser.add_argument('-p', '--proxies', action="store_true", default=False,
@@ -823,40 +825,43 @@ def configure_logging(args):
 def main(args):
     THREADS = instances.config.getint('tumblrmapper', 'threads')
 
-    if args.create_blank_db: # we asked for a brand new DB file
-        temp_database = db_handler.Database(
-            db_filepath=instances.config.get('tumblrmapper', 'db_filepath')\
-+ os.sep + instances.config.get('tumblrmapper', 'db_filename'),
-            username="sysdba", password="masterkey")
-        try:
-            db_handler.create_blank_database(temp_database)
-        except Exception as e:
-            logging.critical(BColors.FAIL + "Database creation failed:{0}"
-            .format(e) + BColors.ENDC)
-        sys.exit(0)
+    if args.create_blank_db or args.update_blogs or args.update_archives:
 
-    elif args.update_blogs:
-        blogs_toscrape = instances.config.get('tumblrmapper', 'blogs_to_scrape')
-        temp_database = db_handler.Database(
-            db_filepath=instances.config.get('tumblrmapper', 'db_filepath')\
-+ os.sep + instances.config.get('tumblrmapper', 'db_filename'),
-            username="sysdba", password="masterkey")
-        db_handler.populate_db_with_blogs(temp_database, blogs_toscrape)
-        sys.exit(0)
+        if args.update_archive_list:
+            update_archive_lists.main()
 
-    elif args.update_archives:
-        archives_toload = instances.config.get('tumblrmapper', 'archives')
-        temp_database = db_handler.Database(
-            db_filepath=instances.config.get('tumblrmapper', 'db_filepath')\
-+ os.sep + instances.config.get('tumblrmapper', 'db_filename'),
-            username="sysdba", password="masterkey")
-        if "pickle" in archives_toload:
-            db_handler.update_db_with_archives(temp_database, 
-            archives_toload, use_pickle=True)
-        else:
-            db_handler.update_db_with_archives(temp_database, 
-            archives_toload, use_pickle=False)
-        sys.exit(0)
+        if args.create_blank_db:
+            temp_database = db_handler.Database(
+                db_filepath=instances.config.get('tumblrmapper', 'db_filepath')\
+    + os.sep + instances.config.get('tumblrmapper', 'db_filename'),
+                username="sysdba", password="masterkey")
+            try:
+                db_handler.create_blank_database(temp_database)
+            except Exception as e:
+                logging.critical(BColors.FAIL + "Database creation failed:{0}"
+                .format(e) + BColors.ENDC)
+
+        if args.update_blogs:
+            blogs_toscrape = instances.config.get('tumblrmapper', 'blogs_to_scrape')
+            temp_database = db_handler.Database(
+                db_filepath=instances.config.get('tumblrmapper', 'db_filepath')\
+    + os.sep + instances.config.get('tumblrmapper', 'db_filename'),
+                username="sysdba", password="masterkey")
+            db_handler.populate_db_with_blogs(temp_database, blogs_toscrape)
+
+        if args.update_archives:
+            archives_toload = instances.config.get('tumblrmapper', 'archives')
+            temp_database = db_handler.Database(
+                db_filepath=instances.config.get('tumblrmapper', 'db_filepath')\
+    + os.sep + instances.config.get('tumblrmapper', 'db_filename'),
+                username="sysdba", password="masterkey")
+            if "pickle" in archives_toload:
+                db_handler.update_db_with_archives(temp_database, 
+                archives_toload, use_pickle=True)
+            else:
+                db_handler.update_db_with_archives(temp_database, 
+                archives_toload, use_pickle=False)
+    sys.exit(0)
 
 
     # === API KEY ===
