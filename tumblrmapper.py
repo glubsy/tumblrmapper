@@ -181,13 +181,15 @@ def process(db, lock, db_update_lock, pill2kill):
 
             # we already have the first batch of posts, insert them
             if blog.offset == 0: # DB had no previous offset, it's brand new
+                if blog.posts_scraped is None:
+                    blog.posts_scraped = 0
                 insert_posts(db, con, db_update_lock, blog, update)
 
 
         elif blog.crawl_status == 'resume':
             if not blog_status_check(db, con, lock, blog, update):
                 continue
-            if blog.offset > 0: # ignore response, go straight to our previous offset
+            if blog.offset > 0: # skip this first response, go straight to our previous offset
                 update.posts_response = []
 
 
@@ -266,7 +268,7 @@ def insert_posts(db, con, db_update_lock, blog, update):
         blog.posts_scraped += processed_posts - errors # added - errors
         blog.offset += processed_posts
 
-        logging.debug("{0} Post just scraped {1} Offset is now: {2}"\
+        logging.debug("{0} Posts just scraped {1} Offset is now: {2}"\
         .format(blog.name, blog.posts_scraped, blog.offset))
 
     # we may have 0 due to dupes causing errors to negate our processed_posts count
@@ -328,6 +330,12 @@ def blog_status_check(db, con, lock, blog, update, offset=None):
         isnew = True
     else:
         isnew = False
+
+    if blog.offset != blog.posts_scraped:
+        logging.info(BColors.DARKGRAY + "{0} Error: blog.offset={1} blog.posts_scraped={2}.\
+Getting actual posts_scraped from DB".format(blog.name, blog.offset, blog.posts_scraped) + BColors.ENDC)
+        blog.posts_scraped = db_handler.get_total_post(db, con, blog)
+        logging.info(BColors.DARKGRAY + "{0} Got {1} posts_scraped from DB".format(blog.name, blog.posts_scraped) + BColors.ENDC)
 
     api_get_request_wrapper(db, con, lock, blog, update, blog.crawl_status, offset=offset)
 
@@ -413,7 +421,7 @@ def check_db_init_response(db_response, blog, isnew=False):
     # logging.warning("{0} initializing offset to what it was in DB".format(blog.name))
     if isnew:
         blog.offset = db_response.get('last_offset', 0)
-        blog.post_scraped = db_response.get('last_scraped_posts', 0)
+        blog.posts_scraped = db_response.get('last_scraped_posts', 0)
 
     blog.crawling = 1 # set by DB by procedure on its side
     blog.db_response = db_response
@@ -448,7 +456,7 @@ def blog_generator(db, con):
 
     blog = TumblrBlog()
     blog.name, blog.offset, blog.health, blog.crawl_status, blog.total_posts, \
-    blog.post_scraped, blog.last_checked, blog.last_updated = db_handler.fetch_random_blog(db, con)
+    blog.posts_scraped, blog.last_checked, blog.last_updated = db_handler.fetch_random_blog(db, con)
 
     if not blog.name:
         logging.warning(BColors.FAIL + "No blog fetched in blog_generator()!" + BColors.ENDC)
@@ -567,8 +575,7 @@ class TumblrBlog:
         """ Does a request, returns json """
         # url = 'https://httpbin.org/get'
 
-        response = {'meta': {'status': 500, 'msg': 'Server Error'}, 
-            'response': [], 'errors': [{"error": "Malformed JSON or HTML was returned."}]}
+        response = requests.Response()
         if not requests_session:
             self.init_session()
             logging.warning("---\n{0}Requested new session: {1} {2}\n----"\
@@ -637,28 +644,45 @@ class TumblrBlog:
         try:
             response_json = response.json()
         except ValueError:
+            logging.exception(BColors.YELLOW
+            + "{0} Error trying to parse response into json. Exerpt: {1}"
+            .format(self.name, response.text[:1000]) + BColors.ENDC)
+
             response_json = {'meta': {'status': 500, 'msg': 'Server Error'}, 
             'response': [], 'errors': [{"title": "Malformed JSON or HTML was returned."}]}
         except:
             logging.exception(BColors.YELLOW
             + "{0} Error trying to get json from response: {1}"
-            .format(self.name, response.text) + BColors)
+            .format(self.name, response.text) + BColors.ENDC)
             raise
 
 
-        logging.info(BColors.LIGHTCYAN + \
+        logging.info(BColors.LIGHTCYAN +
         "{0} Before parsing reponse check_response_validate_update response_json status={1} response_json msg {2}"\
         .format(self.name, response_json.get('meta').get('status'), 
         response_json.get('meta').get('msg')) + BColors.ENDC)
-
+        logging.debug(BColors.LIGHTCYAN + "{0} JSON is: {1}".format(self.name, str(response_json)[:1000]) + BColors.ENDC)
 
         update.meta_status = response_json.get('meta').get('status')
         update.meta_msg = response_json.get('meta').get('msg')
 
 
         if not response_json.get('response') or not (200 <= update.meta_status <= 399):
+            logging.debug(BColors.BOLD + "{0} Got errors in Json! response: {1} meta_status: {2}"
+            .format(self.name, response_json.get('response'), update.meta_status) + BColors.ENDC)
+
             if response_json.get('errors') is not None: # got errors!
+                logging.debug(BColors.BOLD + "{0} errors in Json are {1}"
+                .format(self.name, response_json.get('errors')) + BColors.ENDC)
                 update.errors_title = response_json.get('errors')[0]['title']
+
+        # BIG PARSE (REMOVE?)
+        resp_json = response_json.get('response')
+        if resp_json is not None and resp_json != []:
+            update.blogname = resp_json.get('blog', {}).get('name')
+            update.total_posts = resp_json.get('blog', {}).get('total_posts')
+            update.updated = resp_json.get('blog', {}).get('updated')
+            update.posts_response = resp_json.get('posts', []) #list of dicts
 
 
         logging.debug(BColors.LIGHTCYAN +
@@ -667,7 +691,7 @@ class TumblrBlog:
 
         if update.errors_title is not None:
             if update.meta_status == 404 or update.meta_msg.find('Not Found'):
-                logging.error(BColors.FAIL + "{0} update has error status {1} {2}"\
+                logging.error(BColors.FAIL + "{0} update has error status {1} {2}\nSetting to DEAD!"\
                 .format(self.name, update.meta_status, update.meta_msg) + BColors.ENDC)
                 self.health = "DEAD"
                 self.crawl_status = "DEAD"
@@ -695,12 +719,7 @@ class TumblrBlog:
         self.health = "UP"
         self.crawling = 1
 
-        # BIG PARSE (REMOVE?)
-        resp_json = response_json.get('response', {})
-        update.blogname = resp_json.get('blog').get('name')
-        update.total_posts = resp_json.get('blog').get('total_posts')
-        update.updated = resp_json.get('blog').get('updated')
-        resp_json.get('posts', []) #list of dicts
+
 
 
 

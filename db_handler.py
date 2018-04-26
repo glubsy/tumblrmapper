@@ -641,11 +641,8 @@ def fetch_random_blog(database, con):
     """
     cur = con.cursor()
     with fdb.TransactionContext(con):
-        # sql = cur.prep("execute procedure fetch_one_blogname;")
         cur.execute("execute procedure fetch_one_blogname;")
-        # cur.execute("select * from blogs;")
         return cur.fetchone()
-        #tuple ('blog', None, None, 'new', None, None, None, None, None)
 
 
 def update_blog_info(Database, con, blog, ignore_response=False):
@@ -742,8 +739,8 @@ def insert_posts(database, con, blog, update):
         get_remote_id_and_context(post)
 
         results = inserted_post(cur, post)
-        # if not results[0]: # skip the rest because we need post entry in POSTS table
-        post_errors += results[1]
+        if not results[0]: # skip the rest because we need post entry in POSTS table
+            post_errors += results[1]
             # continue
 
         added += 1
