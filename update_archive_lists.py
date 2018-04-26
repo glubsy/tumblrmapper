@@ -77,7 +77,7 @@ def remove_raw_alternatives_from_1280(list_1280, list_raw, keep_rev=False, slow=
         _raw_set = list_raw
 
     # below, assuming the two input sets have the exact same file format!
-    if slow: # FIXME untested! not really needed
+    if slow: # FIXME untested! not really needed and HORRIBLE CODE (mutating while iterating)
         for item in _list_1280:
             match = tumblr_base_noext_re.match(item)
             if match:
@@ -123,7 +123,7 @@ def remove_todelete_from_list(current_1280_set, todelete_txt, keep_rev=False, sl
     if slow, without extension"""
 
     # below, assuming the two input sets have the exact same file format!
-    if slow: # FIXME untested! not really needed
+    if slow: # FIXME untested! not really needed and HORRIBLE CODE (mutating while iterating)
         todelete_set = readfile(todelete_txt)
 
         for item in todelete_set:

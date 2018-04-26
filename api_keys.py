@@ -103,6 +103,7 @@ def get_random_api_key(apikey_list=None):
         if not keycheck.disabled:
             return keycheck
     logging.warning(BColors.FAIL + BColors.BLINKING + 'Attempts exhausted api_key list length! All keys are disabled! Renew them!' + BColors.ENDC)
+    raise BaseException("No more enabled API Key available")
     #TODO: handle this critical error later (exit gracefully)
 
 

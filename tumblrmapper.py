@@ -156,7 +156,10 @@ def process(db, lock, db_update_lock, pill2kill):
     while not pill2kill.is_set():
 
         with lock:
-            blog = blog_generator(db, con)
+            try:
+                blog = blog_generator(db, con)
+            except:
+                pill2kill.set()
 
         if blog.name is None:
             logging.error(BColors.DARKGRAY + \
@@ -345,7 +348,7 @@ Getting actual posts_scraped from DB".format(blog.name, blog.offset, blog.posts_
         # update and retrieve remaining blog info
         blog.total_posts = update.total_posts
 
-        if blog.crawl_status is None:
+        if blog.crawl_status is None or blog.crawl_status == 'new':
             blog.crawl_status = "resume"
         elif  blog.crawl_status == 'DONE':
             blog.crawl_status = None
@@ -490,7 +493,7 @@ def blog_generator(db, con):
 class TumblrBlog:
     """blog object, holding retrieved values to pass along"""
 
-    def __init__(self):
+    def __init__(self, *args):
         self.name = None
         self.total_posts = 0
         self.posts_scraped = 0
@@ -540,13 +543,15 @@ class TumblrBlog:
     def attach_random_api_key(self):
         """ attach api key fetched from global list to proxy object already attached"""
 
-        self.api_key_object_ref = api_keys.get_random_api_key(instances.api_keys)
-        # print("APIKEY attached: {0}".format(self.api_key_object_ref.api_key))
-        # self.proxy_object.api_key = temp_key.api_key
-        # self.proxy_object.secret_key =  temp_key.secret_key
-
-        # attach string to local proxy dict, in case we need to keep the proxy for later use
-        self.proxy_object.update({'api_key': self.api_key_object_ref.api_key})
+        try:
+            self.api_key_object_ref = api_keys.get_random_api_key(instances.api_keys)
+            # print("APIKEY attached: {0}".format(self.api_key_object_ref.api_key))
+            # self.proxy_object.api_key = temp_key.api_key
+            # self.proxy_object.secret_key =  temp_key.secret_key
+            # attach string to local proxy dict, in case we need to keep the proxy for later use
+            self.proxy_object.update({'api_key': self.api_key_object_ref.api_key})
+        except (AttributeError, BaseException):
+            raise
 
 
     def renew_api_key(self, old_api_key=None):
@@ -573,26 +578,6 @@ class TumblrBlog:
         .format(self.name, self.proxy_object.get('ip_address')) + BColors.ENDC)
 
 
-    def requester(self, url, requests_session=None, api_key=None):
-        """ Does a request, returns json """
-        # url = 'https://httpbin.org/get'
-
-        response = requests.Response()
-        if not requests_session:
-            self.init_session()
-            logging.warning("---\n{0}Requested new session: {1} {2}\n----"\
-            .format(self.name, self.requests_session.proxies, self.requests_session.headers))
-
-        logging.warning(BColors.GREEN + BColors.BOLD + \
-        "{0} GET: {1}".format(self.name, url) + BColors.ENDC)
-        try:
-            response = self.requests_session.get(url, timeout=10)
-            api_keys.inc_key_request(api_key)
-        except (ConnectionError, requests.exceptions.RequestException):
-            raise
-        finally:
-            return response
-
 
     def api_get_request(self, lock, updateobj, api_key=None, reqtype="posts", offset=None):
         """Returns requests.response object, reqype=[posts|info]"""
@@ -602,30 +587,41 @@ class TumblrBlog:
             offset = ''
         else:
             offset = '&offset=' + str(offset)
+
         instances.sleep_here(0, 3)
         attempt = 0
+        response = requests.Response()
+
+        if not self.requests_session:
+            self.init_session()
+            logging.warning("---\n{0}Initializing new requests session: {1} {2}\n----"\
+            .format(self.name, self.requests_session.proxies, self.requests_session.headers))
+
         apiv2_url = 'https://api.tumblr.com/v2/blog/{0}/{1}?api_key={2}{3}'\
         .format(self.name, reqtype, api_key.api_key, offset)
-        logging.warning("{0} GET: proxy: {1}"\
-        .format(self.name, self.proxy_object.get('ip_address')))
-        # renew proxy n times if it fails
+
         while attempt < 10:
             try:
-                response = self.requester(url=apiv2_url,
-                                        requests_session=self.requests_session,
-                                        api_key=api_key)
-            except requests.exceptions.ProxyError as e:
-                logging.error(BColors.FAIL + "{0} Proxy error: {1}"\
+                logging.warning(BColors.GREEN + BColors.BOLD +
+                "{0} GET ip: {1} url: {2}".format(self.name, 
+                self.proxy_object.get('ip_address'), apiv2_url) + BColors.ENDC)
+
+                response = self.requests_session.get(url=apiv2_url, timeout=10)
+
+                api_keys.inc_key_request(api_key)
+
+            except (requests.exceptions.ProxyError, requests.exceptions.Timeout) as e:
+                logging.error(BColors.FAIL + "{0} Proxy error (continuing): {1}"\
                 .format(self.name, e.__repr__()) + BColors.ENDC)
+
                 self.get_new_proxy(lock)
                 attempt += 1
                 continue
-            except requests.exceptions.Timeout as e:
-                logging.error(BColors.FAIL + "{0} Proxy Timeout: {1}"\
-                .format(self.name, e.__repr__()) + BColors.ENDC )
-                self.get_new_proxy(lock)
-                attempt += 1
-                continue
+            except (ConnectionError, requests.exceptions.RequestException) as e:
+                logging.error(BColors.FAIL + "{0} Connection error (passing): {1}"\
+                .format(self.name, e.__repr__()) + BColors.ENDC)
+                # raise
+                pass
             break
 
         try:
@@ -645,23 +641,35 @@ class TumblrBlog:
 
         try:
             response_json = response.json()
-        except ValueError:
+        except (ValueError, json.decoder.JSONDecodeError):
             logging.exception(BColors.YELLOW
             + "{0} Error trying to parse response into json. Exerpt: {1}"
             .format(self.name, response.text[:1000]) + BColors.ENDC)
 
-            response_json = {'meta': {'status': 500, 'msg': 'Server Error'}, 
+            try:
+                response_json = response.text.split('''"response":{''')[1]
+                response_json = r'{"meta": {"status": 200,"msg": "OK","x_tumblr_content_rating": "adult"},' + response_json
+                logging.debug(BColors.YELLOW + "split: {0}"
+                .format(response_json[:1000]) + BColors.ENDC)
+                try:
+                    response_json = response.json()
+                except:
+                    logging.debug(BColors.FAIL + "Fucking damnit can't get a good json!\n{0}"
+                    .format(response_json) + BColors.ENDC)
+                    raise
+            except:
+                response_json = {'meta': {'status': 500, 'msg': 'Server Error'},
             'response': [], 'errors': [{"title": "Malformed JSON or HTML was returned."}]}
         except:
             logging.exception(BColors.YELLOW
-            + "{0} Error trying to get json from response: {1}"
+            + "{0} Fatal Error trying to get json from response: {1}"
             .format(self.name, response.text) + BColors.ENDC)
             raise
 
 
         logging.info(BColors.LIGHTCYAN +
         "{0} Before parsing reponse check_response_validate_update response_json status={1} response_json msg {2}"\
-        .format(self.name, response_json.get('meta').get('status'), 
+        .format(self.name, response_json.get('meta').get('status'),
         response_json.get('meta').get('msg')) + BColors.ENDC)
         logging.debug(BColors.LIGHTCYAN + "{0} JSON is: {1}".format(self.name, str(response_json)[:1000]) + BColors.ENDC)
 
@@ -672,11 +680,6 @@ class TumblrBlog:
         if not response_json.get('response') or not (200 <= update.meta_status <= 399):
             logging.debug(BColors.BOLD + "{0} Got errors in Json! response: {1} meta_status: {2}"
             .format(self.name, response_json.get('response'), update.meta_status) + BColors.ENDC)
-
-            if response_json.get('errors') is not None: # got errors!
-                logging.debug(BColors.BOLD + "{0} errors in Json are {1}"
-                .format(self.name, response_json.get('errors')) + BColors.ENDC)
-                update.errors_title = response_json.get('errors')[0]['title']
 
         # BIG PARSE (REMOVE?)
         resp_json = response_json.get('response')
@@ -691,29 +694,29 @@ class TumblrBlog:
         "{0} After parsing reponse, check_response_validate_update update.meta_msg={1} update.meta_status {2}"
         .format(self.name, update.meta_msg, update.meta_status) + BColors.ENDC)
 
-        if update.errors_title is not None:
-            if update.meta_status == 404 or update.meta_msg.find('Not Found'):
-                logging.error(BColors.FAIL + "{0} update has error status {1} {2}\nSetting to DEAD!"\
+        if response_json.get('errors') is not None:
+            if update.meta_status == 404 or update.meta_msg.find('Not Found') != -1:
+                logging.error(BColors.FAIL + "{0} update has 404 error status {1} {2}\nSetting to DEAD!"\
                 .format(self.name, update.meta_status, update.meta_msg) + BColors.ENDC)
                 self.health = "DEAD"
                 self.crawl_status = "DEAD"
                 update.valid = True
                 return
 
-            if update.errors_title.find("error") and \
-                update.errors_title.find("Unauthorized"):
+            if update.errors_title.find("error") != -1 and\
+                update.errors_title.find("Unauthorized") != -1:
 
-                logging.error(BColors.FAIL + \
-                "{0} is unauthorized! Missing API key? REROLL!"\
-                .format(self.name) + BColors.ENDC)
+                logging.error(BColors.FAIL +
+                "{0} is unauthorized! Missing API key? REROLL!\n{1}"\
+                .format(self.name, response_json) + BColors.ENDC)
                 # FIXME: that's assuming only the API key is responsible for unauthorized, might be the IP!
                 self.renew_api_key()
                 update.valid = False
                 return
 
-            logging.warning(BColors.FAIL + \
-            "{0} uncaught error in response: {1}"\
-            .format(self.name, update.__dict__) + BColors.ENDC)
+            logging.warning(BColors.FAIL +
+            "{0} uncaught error in response: {1}"
+            .format(self.name, repr(update.__dict__)[:1000]) + BColors.ENDC)
             update.valid = False
             return
 
@@ -807,9 +810,9 @@ def configure_logging(args):
     fh = logging.FileHandler(filename=instances.config.get('tumblrmapper', 'log_path'),
                             mode='w')
 
-    fh.setLevel(getattr(logging, instances.config.get('tumblrmapper', "log_level")))
+    fh.setLevel(getattr(logging, instances.config.get('tumblrmapper', 'log_level')))
     fh.setFormatter(logging.Formatter(
-                    '{asctime} {levelname}:    \t{message}',
+                    '{asctime} {levelname}:{threadName}\t{message}',
                     '%y/%m/%d %H:%M:%S', '{'))
     logger.addHandler(fh)
 
@@ -848,6 +851,8 @@ def main(args):
     + os.sep + instances.config.get('tumblrmapper', 'db_filename'),
                 username="sysdba", password="masterkey")
             db_handler.populate_db_with_blogs(temp_database, blogs_toscrape)
+            logging.critical(BColors.BLUEOK + BColors.GREEN + "Done inserting blogs"
+             + BColors.ENDC)
 
         if args.update_archives:
             archives_toload = instances.config.get('tumblrmapper', 'archives')
@@ -856,12 +861,15 @@ def main(args):
     + os.sep + instances.config.get('tumblrmapper', 'db_filename'),
                 username="sysdba", password="masterkey")
             if "pickle" in archives_toload:
-                db_handler.update_db_with_archives(temp_database, 
+                db_handler.update_db_with_archives(temp_database,
                 archives_toload, use_pickle=True)
             else:
-                db_handler.update_db_with_archives(temp_database, 
+                db_handler.update_db_with_archives(temp_database,
                 archives_toload, use_pickle=False)
-    sys.exit(0)
+            logging.critical(BColors.BLUEOK + BColors.GREEN +
+            "Done inserting archives" + BColors.ENDC)
+
+        sys.exit(0)
 
 
     # === API KEY ===
@@ -883,7 +891,7 @@ def main(args):
     instances.proxy_scanner.gen_proxy_cycle(fresh_proxy_dict.get('proxies')) # dictionaries
 
     # === DATABASE ===
-    db = db_handler.Database(db_filepath=instances.config.get('tumblrmapper', 'db_filepath') 
+    db = db_handler.Database(db_filepath=instances.config.get('tumblrmapper', 'db_filepath')
                             + os.sep + instances.config.get('tumblrmapper', 'db_filename'),
                             username=instances.config.get('tumblrmapper', 'username'),
                             password=instances.config.get('tumblrmapper', 'password'))

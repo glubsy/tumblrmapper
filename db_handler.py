@@ -34,6 +34,7 @@ repattern_tumblr = re.compile(r'(tumblr_.*)_.*\..*', re.I) #eliminate '_resol.ex
 
 repattern_revisions = re.compile(r'(tumblr_.*?)(?:_r\d)?\s*$', re.I) #elimitane '_r1' 
 
+urls_blacklist_filter = ['://tmblr.co/', 'strawpoll.me']
 
 htmlparser = HTMLParser()
 FILTERED_URL_GLOBAL_COUNT = set()
@@ -399,7 +400,7 @@ if (exists (select (BLOG_NAME) from BLOGS where (CRAWL_STATUS = 'new'))) then
         order by PRIORITY desc nulls last ROWS 1 with lock
         into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated 
         as cursor tcur do
-            update BLOGS set CRAWL_STATUS = 'init' where current of tcur;
+            update BLOGS set CRAWL_STATUS = 'init', CRAWLING = 1 where current of tcur;
     exit;
     end
 ELSE /*fetch the oldest last checked blog*/
@@ -410,7 +411,7 @@ if (exists (select BLOG_NAME from BLOGS where (CRAWL_STATUS = 'DONE'))) then
         order by (LAST_CHECKED) asc nulls last ROWS 1 with lock
         into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated 
         as cursor tcur do
-            update BLOGS set CRAWL_STATUS = 'resume' where current of tcur;
+            update BLOGS set CRAWL_STATUS = 'resume', CRAWLING = 1 where current of tcur;
         exit;
     END
 END
@@ -640,9 +641,15 @@ def fetch_random_blog(database, con):
     scraped posts, last checked, last updated
     """
     cur = con.cursor()
-    with fdb.TransactionContext(con):
+    # with fdb.TransactionContext(con):
+    try:
         cur.execute("execute procedure fetch_one_blogname;")
         return cur.fetchone()
+    except:
+        return [None * 8]
+    finally:
+        con.commit()
+       
 
 
 def update_blog_info(Database, con, blog, ignore_response=False):
@@ -653,8 +660,8 @@ def update_blog_info(Database, con, blog, ignore_response=False):
     returns dict(last_total_posts, last_updated, last_checked,
     last_offset, last_scraped_posts)"""
 
-    logging.info(BColors.BLUE + "{0} update DB info. status: {1}"\
-    .format(blog.name, blog.crawl_status) + BColors.ENDC)
+    logging.info(BColors.BLUE + "{0} update DB info. crawl_status: {1} crawling: {2}"\
+    .format(blog.name, blog.crawl_status, blog.crawling) + BColors.ENDC)
     cur = con.cursor()
     if blog.crawl_status == 'new':
         # args: (blogname, UP|DEAD|WIPED, total_posts, updated,
@@ -681,7 +688,7 @@ def update_blog_info(Database, con, blog, ignore_response=False):
 
     cur.execute(statmt, params)
 
-    if ignore_response: # we don't care about return values
+    if ignore_response or blog.health == 'DEAD': # we don't care about return values
         con.commit()
         return
 
@@ -714,9 +721,10 @@ def update_crawling(database, con, blog=None):
 
     cur = con.cursor()
     if not blog:
-        cur.execute('update BLOGS set CRAWLING = 0;')
-        logging.info(BColors.BLUEOK + BColors.BLUE
-        + "Reset crawling for all" + BColors.ENDC)
+        cur.execute('''update BLOGS set CRAWLING = 0;''')
+        cur.execute('''update BLOGS set CRAWL_STATUS = 'new' where CRAWL_STATUS = 'init';''')
+        logging.debug(BColors.BLUEOK + BColors.BLUE
+        + "Reset crawl_status & crawling for all" + BColors.ENDC)
     else:
         cur.execute('execute procedure update_crawling_blog_status(?,?);',
                     (blog.name, blog.crawling))
@@ -867,8 +875,10 @@ def get_remote_id_and_context(post):
                         continue
 
                     if item.get('is_current_item') and not item.get('is_root_item') :     # update / reblog -> update DB context
-                        logging.warning(BColors.YELLOW + "Replacing content_raw of:{0} with more recently updated version is_current_item: {1}"
-                        .format(len(attr.get('content_raw')), len(item.get('content_raw'))) + BColors.ENDC)
+                        logging.warning(BColors.YELLOW + "{0} Replacing {1} content_raw of:{2} \
+with more recently updated version is_current_item: {3}\n{4}"
+                        .format(post.get('blog_name'), post.get('id'), len(attr.get('content_raw')), 
+                        len(item.get('content_raw')), item.get('content_raw')[:1000]) + BColors.ENDC)
                         attr['content_raw']     = item.get('content_raw')
                         reblogged_name          = item_name
 
@@ -935,6 +945,14 @@ def filter_content_raw(content, parsehtml=False):
     return content, urls
 
 
+def found_filtered(capped):
+    for filtered in urls_blacklist_filter:
+        if capped.find(filtered) != -1: # redirect
+            break
+    else:
+        return False
+    return True
+
 def extract_urls(content, parsehtml=False):
     """Returns a set of unique urls, unquoted, without redirects,
     None if none is found"""
@@ -943,32 +961,33 @@ def extract_urls(content, parsehtml=False):
     # logging.warning("http occurences: {0}".format(found_http_occur))
 
     url_set = set()
-    checked = set()
-    http_walk = 0
+    cache = set()
+    # http_walk = 0
+  
     # t0 = time.time()
     for item in http_url_uber_re.findall(content):
         # logging.warning('matched: {0}'.format(item))
         for capped in item:
-            if capped in checked or capped is '':
-                http_walk += capped.count('http')
+            if capped in cache or capped is '':
+                # http_walk += capped.count('http')
                 continue
             # logging.warning('captured: {0}'.format(capped))
-            checked.add(capped)
+            cache.add(capped)
 
-            if capped.find("://tmblr.co/") != -1: # redirect
-                http_walk += capped.count('http')
+            if found_filtered(capped):
+                # http_walk += capped.count('http')
                 continue
 
             reresult = repattern_tumblr_redirect.search(capped) # search t.umblr redirects
             if reresult:
-                http_walk += capped.count('http') # we usually find 3 occurences
+                # http_walk += capped.count('http') # we usually find 3 occurences
                 capped = reresult.group(1)
 
             # capped = htmlparser.unescape(capped) # remove &amp;
             capped = parse.unquote(capped)         # remove %3A%2F%2F and %20 spaces
 
-            if capped in url_set:
-                http_walk += capped.count('http')
+            # if capped in url_set:
+            #     http_walk += capped.count('http')
 
             url_set.add(capped)
 
