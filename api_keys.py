@@ -64,22 +64,23 @@ def write_api_keys_to_json(keylist=None, myfilepath=None):
         json.dump(api_dict, f, indent=True)
 
 
-def disable_api_key(api_key_object_list):
-    """ this API key caused problem, might have been flagged, add to temporary blacklist"""
+def disable_api_key(api_key_object, duration=3600):
+    """This API key caused problem, might have been flagged, add to temporary blacklist
+    for a default of one hour"""
 
-    logging.warning(BColors.RED + "disabling API key {0} from instances.api_keys list".format(api_key_object_list) + BColors.ENDC)
+    logging.warning(BColors.RED + "disabling API key {0} from instances.api_keys list".format(api_key_object) + BColors.ENDC)
 
-    # key = item for item in instances.api_keys if item == api_key_object_list
-    key = next((i for i in instances.api_keys if i == api_key_object_list), None)
+    # key = item for item in instances.api_keys if item == api_key_list_object
+    key = next((i for i in instances.api_keys if i == api_key_object), None)
 
-    if not key:
+    if not key: # should never happen
         logging.error(BColors.RED + "Did not find this key in instances.api_keys list!?" + BColors.ENDC)
         return
 
     if key.disabled:
         logging.error(BColors.BOLD + "Key {0} is already disabled!".format(key.api_key) + BColors.ENDC)
     else:
-        key.disabled = True
+        key.disable_until(duration=duration)
 
     for key in instances.api_keys:
         logging.error(BColors.RED + "API key {0} is disabled: {1}".format(key.api_key, key.disabled) + BColors.ENDC)
@@ -100,7 +101,10 @@ def get_random_api_key(apikey_list=None):
         attempt += 1
         if attempt >= len(apikey_list):
             break
-        if not keycheck.disabled:
+        if keycheck.is_disabled():
+            if keycheck.enable():
+                return keycheck
+        else:
             return keycheck
     logging.warning(BColors.FAIL + BColors.BLINKING + 'Attempts exhausted api_key list length! All keys are disabled! Renew them!' + BColors.ENDC)
     raise BaseException("No more enabled API Key available")
@@ -145,13 +149,23 @@ class APIKey:
         self.bucket_hour = kwargs.get('bucket_hour', float(1000))
         self.bucket_day = kwargs.get('bucket_day', float(5000))
 
-    def disable_until(self, duration):
+    def disable_until(self, duration=3600):
         """returns date until it's disabled"""
         now = time.time()
+        self.disabled = True
         self.disabled_until = now + duration
 
     def is_disabled(self):
         if self.disabled or self.blacklisted:
+            return True
+        return False
+
+    def enable(self):
+        now = time.time()
+        if not self.disabled and not self.blacklisted:
+            return True
+        if (now >= self.disabled_until):
+            self.disabled = False
             return True
         return False
 
@@ -160,9 +174,9 @@ class APIKey:
         self.bucket_day -= 1
 
         if self.bucket_hour <= 0:
-            self.disable_until(1800) # half an hour
+            self.disable_until(3600) # an hour
         if self.bucket_day <= 0:
-            self.disable_until(44200) # 12 hours
+            self.disable_until(86400) # 24 hours
 
 
 def threaded_buckets():

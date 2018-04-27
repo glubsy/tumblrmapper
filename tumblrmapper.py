@@ -554,12 +554,14 @@ class TumblrBlog:
             raise
 
 
-    def renew_api_key(self, old_api_key=None):
+    def renew_api_key(self, disable=True, old_api_key=None):
         # mark as disabled from global list pool
         if not old_api_key:
             old_api_key = self.api_key_object_ref
 
-        api_keys.disable_api_key(old_api_key)
+        if disable:
+            api_keys.disable_api_key(old_api_key)
+
         self.attach_random_api_key()
 
 
@@ -583,6 +585,9 @@ class TumblrBlog:
         """Returns requests.response object, reqype=[posts|info]"""
         if not api_key:
             api_key = self.api_key_object_ref
+        if api_key.is_disabled():
+            self.attach_random_api_key()
+
         if not offset or offset == 0:
             offset = ''
         else:
@@ -603,7 +608,7 @@ class TumblrBlog:
         while attempt < 10:
             try:
                 logging.warning(BColors.GREEN + BColors.BOLD +
-                "{0} GET ip: {1} url: {2}".format(self.name, 
+                "{0} GET ip: {1} url: {2}".format(self.name,
                 self.proxy_object.get('ip_address'), apiv2_url) + BColors.ENDC)
 
                 response = self.requests_session.get(url=apiv2_url, timeout=10)
@@ -706,11 +711,11 @@ class TumblrBlog:
             if update.errors_title.find("error") != -1 and\
                 update.errors_title.find("Unauthorized") != -1:
 
-                logging.error(BColors.FAIL +
-                "{0} is unauthorized! Missing API key? REROLL!\n{1}"\
+                logging.critical(BColors.FAIL +
+                "{0} is unauthorized! Rerollin for a new API key.\n{1}"\
                 .format(self.name, response_json) + BColors.ENDC)
                 # FIXME: that's assuming only the API key is responsible for unauthorized, might be the IP!
-                self.renew_api_key()
+                self.renew_api_key(disable=True)
                 update.valid = False
                 return
 

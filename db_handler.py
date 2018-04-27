@@ -208,18 +208,37 @@ FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID)
         # decrements auto_id in case an exception occured (on non unique inputs)
         con.execute_immediate(\
 """
-CREATE OR ALTER PROCEDURE insert_blogname
-( i_blogname d_blog_name,
-i_crawl_status varchar(10) default 'new',
-i_prio smallint default null )
-AS declare variable v_generated_auto_id d_auto_id;
+CREATE OR ALTER PROCEDURE INSERT_BLOGNAME (
+    I_BLOGNAME D_BLOG_NAME,
+    I_CRAWL_STATUS VARCHAR(10) DEFAULT 'new',
+    I_PRIO SMALLINT DEFAULT null )
+AS
+declare variable v_generated_auto_id d_auto_id;
 BEGIN
-v_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence, 1);
-INSERT into BLOGS (AUTO_ID, BLOG_NAME, CRAWL_STATUS, PRIORITY)
-values (:v_generated_auto_id, :i_blogname, :i_crawl_status, :i_prio);
-WHEN ANY
-DO
-v_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence, -1);
+if (exists (select BLOG_NAME from BLOGS where (BLOG_NAME = :i_blogname))) THEN
+BEGIN
+    if ((select CRAWL_STATUS from BLOGS where (BLOG_NAME = :i_blogname)) is NULL) then
+    begin
+        update BLOGS set CRAWL_STATUS = :i_crawl_status, PRIORITY = :i_prio 
+        where BLOG_NAME = :i_blogname;
+        exit;
+    END
+    ELSE begin 
+        exit; /* just in case, I don't know...*/
+    end
+end
+else
+begin
+    v_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence, 1);
+    INSERT into BLOGS (AUTO_ID, BLOG_NAME, CRAWL_STATUS, PRIORITY)
+    values (:v_generated_auto_id, :i_blogname, :i_crawl_status, :i_prio);
+    exit;
+end
+WHEN GDSCODE unique_key_violation
+DO begin
+    v_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence, -1);
+    exception;
+    end
 END
 """)
         # insert gathered blog names
@@ -592,6 +611,7 @@ def populate_db_with_blogs(database, blogpath):
                       user=database.username, password=database.password)
     cur = con.cursor()
     t0 = time.time()
+    dupecount = 0
     with fdb.TransactionContext(con):
         insert_statement = cur.prep("execute procedure insert_blogname(?,?,?)")
 
@@ -601,8 +621,12 @@ def populate_db_with_blogs(database, blogpath):
                 cur.execute(insert_statement, params)
             except fdb.fbcore.DatabaseError as e:
                 if "violation of PRIMARY or UNIQUE KEY" in e.__str__():
-                    logging.error(BColors.FAIL + "Error" + BColors.BLUE
+                    dupecount += 1
+                    logging.debug(BColors.FAIL + "Error" + BColors.BLUE
                     + " inserting {0}: duplicate.".format(blog) + BColors.ENDC)
+        if dupecount > 0:
+            logging.warning(BColors.BLUE + "Found {0} blogs already recorded."
+            .format(dupecount) + BColors.ENDC)
         con.commit()
 
     t1 = time.time()
