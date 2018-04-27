@@ -171,27 +171,33 @@ CONTEXT         D_SUPER_LONG_TEXT,
 PRIMARY KEY(POST_ID),
 FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID)
 );""")
-            # to update
-            # if remote_id is null, then it's an original post, not reblogged, we store everything no problem
-            # if we already have that remote_id, we don't want to store context again -> we skip
-            # otherwise only IF the timestamp we hold is newer, then we UPDATE the context
-            # LATEST_REBLOG is the latest reblog that we used to update the timestamp and context fields of an original post
-            # that we had recorded.
-            # REMOTE_ID can be NULL! (allowed with unique)
-            # if we input an existing REMOTE_ID (with a new POST_ID, because reblogged by many POST_ID), then EXCEPTION!
+# to update
+# if remote_id is null, then it's an original post, not reblogged, we store everything no problem
+# if we already have that remote_id, we don't want to store context again -> we skip
+# otherwise only IF the timestamp we hold is newer, then we UPDATE the context
+# LATEST_REBLOG is the latest reblog that we used to update the timestamp and context fields of an original post
+# that we had recorded.
+# REMOTE_ID can be NULL! (allowed with unique)
+# if we input an existing REMOTE_ID (with a new POST_ID, because reblogged by many POST_ID), then EXCEPTION!
 
         con.execute_immediate(
-            """CREATE TABLE URLS (
-            FILE_URL             D_URL PRIMARY KEY,
-            POST_ID              D_POST_NO NOT NULL,
-            REMOTE_ID            D_POST_NO,
-            FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID)
-            ); """)
-            # if remote_id is null, it means it was not a reblog
-            # if it's not null, it's from a reblog,
+"""CREATE TABLE URLS (
+FILE_URL             D_URL PRIMARY KEY,
+POST_ID              D_POST_NO NOT NULL,
+REMOTE_ID            D_POST_NO,
+FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID)
+);""")
+# if remote_id is null, it means it was not a reblog
+# if it's not null, it's from a reblog,
 
         con.execute_immediate(
-            "CREATE TABLE OLD_1280 ( FILENAME varchar(60) PRIMARY KEY, FILEBASENAME varchar(60) );")
+"""
+CREATE TABLE OLD_1280 ( 
+FILENAME varchar(60) PRIMARY KEY, 
+FILEBASENAME varchar(60) 
+DL d_boolean,
+DIRPATH varchar(100)
+);""")
 
         # CREATE generators and triggers
         con.execute_immediate("CREATE SEQUENCE tBLOGS_autoid_sequence;")
@@ -206,7 +212,7 @@ FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID)
         # CREATE procedures
         # Records given blogname into BLOG table, increments auto_id,
         # decrements auto_id in case an exception occured (on non unique inputs)
-        con.execute_immediate(\
+        con.execute_immediate(
 """
 CREATE OR ALTER PROCEDURE INSERT_BLOGNAME (
     I_BLOGNAME D_BLOG_NAME,
@@ -242,7 +248,7 @@ DO begin
 END
 """)
         # insert gathered blog names
-        con.execute_immediate(\
+        con.execute_immediate(
 """
 CREATE OR ALTER PROCEDURE INSERT_BLOGNAME_GATHERED (
     i_blogname D_BLOG_NAME)
@@ -265,7 +271,7 @@ o_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence2, -1);
 END
 """)
 
-        con.execute_immediate(\
+        con.execute_immediate(
 """
 CREATE OR ALTER PROCEDURE reset_crawl_status
  ( i_blog_name d_blog_name, i_reset_type varchar(10) )
@@ -556,6 +562,7 @@ def update_db_with_archives(database, archivepath, use_pickle=True):
     con = database.connect()
     cur = con.cursor()
     t0 = time.time()
+    dupecount = 0
     if use_pickle:
         oldfiles = update_archive_lists.readfile_pickle(archivepath)
     else:
@@ -569,8 +576,15 @@ def update_db_with_archives(database, archivepath, use_pickle=True):
             else:
                 trimmeditem = item
             params = (item, trimmeditem)
-            cur.execute("INSERT INTO OLD_1280 (FILENAME, FILEBASENAME) VALUES (?,?)", params)
+            try:
+                cur.execute("INSERT INTO OLD_1280 (FILENAME, FILEBASENAME) VALUES (?,?)", 
+                params)
+            except BaseException as e:
+                if "violation of PRIMARY or UNIQUE KEY" in e.__str__():
+                    dupecount += 1
         con.commit()
+        logging.info(BColors.BLUE + "Found {0} already present while inserting archives."
+        .format(dupecount) + BColors.ENDC)
     t1 = time.time()
     logging.debug(BColors.BLUE + "Inserting records into OLD_1280 Took %.2f ms"
                   % (1000*(t1-t0)) + BColors.ENDC)

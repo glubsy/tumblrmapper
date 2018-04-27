@@ -3,8 +3,8 @@
 # Build the file list of archived files for which we need to recover their _raw
 #
 # Generates archives_files_list_minus_todelete.txt which is a result of:
-#   archives_1280_set.txt
-#   minus -> raw_downloads_set.txt (or raw_archives_autogen.txt if not present)
+#   archives_1280_tuple.txt
+#   minus -> raw_downloads_tuple.txt (or raw_archives_autogen.txt if not present)
 #   minus -> archive_files_to_delete (if exists)
 #
 
@@ -34,46 +34,64 @@ def get_raw_files_from_db(database):
     cur = con.cursor()
 
     cur.execute(r"""select * from FILES where (FILE_NAME SIMILAR TO 'tumblr\_%\_raw.%' escape '\');""")
-    results = set()
-    for item in cur.fetchall():
-        results.add(item[1])
-    print("Got {0} _raw items from DB".format(len(results)))
-    return results
+    cur.execute(
+r"""execute BLOCK
+returns (v_f varchar(500), v_fp varchar(500))
+as 
+declare variable v_p bigint;
+BEGIN
+for select FILE_NAME, PATH_ID from FILES where (FILE_NAME SIMILAR TO 'tumblr\_%\_raw.%' escape '\') into :v_f, v_p
+do 
+begin
+    execute procedure SP_GET_FULL_PATH(v_p, '/') returning_values :v_fp;
+    suspend;
+END
+END""") 
+    # return {k:v for k,v in cur.fetchall()} # dictionaries where key is filename, dirpath is value
+    return  tuple(map(list, zip(*cur.fetchall()))) # tuple of two lists of [filenames, filepath]
 
 
 def get_1280_from_db(database):
-    """Returns tuple of all _1280, _500, _250 files but not _raw found in DB"""
+    """Returns a dict of all _1280, _500, _250 files but not _raw found in DB,
+    key is filename, value is filepath"""
 
     con = database.connect()
     cur = con.cursor()
     cur.execute(
-r"""
-select * from FILES where (FILE_NAME SIMILAR TO 'tumblr\_%\_[0-9]{3,4}.%' escape '\')
-and (FILE_NAME NOT SIMILAR TO 'tumblr\_%\_raw.%' escape '\');
-""")
-    results = set()
-    for item in cur.fetchall():
-        results.add(item[1])
-    print("Got {0} 1280 items from DB".format(len(results)))
-    return results
+r"""execute BLOCK
+returns (v_f varchar(500), v_fp varchar(500))
+as 
+declare variable v_p bigint;
+BEGIN
+for select FILE_NAME, PATH_ID from FILES where (FILE_NAME SIMILAR TO 'tumblr\_%\_[0-9]{3,4}.%' escape '\')
+and (FILE_NAME NOT SIMILAR TO 'tumblr\_%\_raw.%' escape '\') into :v_f, v_p
+do 
+begin
+    execute procedure SP_GET_FULL_PATH(v_p, '/') returning_values :v_fp;
+    suspend;
+END
+END""") 
+    # return {k:v for k,v in cur.fetchall()} # dictionaries where key is filename, dirpath is value
+    return  tuple(map(list, zip(*cur.fetchall()))) # tuple of two lists of [filenames, filepath]
 
 
 def remove_raw_alternatives_from_1280(list_1280, list_raw, keep_rev=False, slow=False):
     """Returns a set of difference"""
-    if not isinstance(set(), type(list_1280)):
+    if not isinstance(tuple(), type(list_1280)):
         if not "cache" in list_1280 and isinstance(str(), type(list_1280)):
-            _list_1280 = readfile(list_1280)
+            _list_1280 = readfile(list_1280, evaluate=True)
         else:   # is string path to pickle
             _list_1280 = readfile_pickle(list_1280)
-    else:       # must be a set()
+    else:       # must be a tuple()
         _list_1280 = list_1280
+    # write_to_file(SCRIPTDIR + os.sep + "tools/_list_1280", _list_1280)
 
-    if not isinstance(set(), type(list_raw)):
+    if not isinstance(tuple(), type(list_raw)):
         if not "cache" in list_raw and isinstance(str(), type(list_raw)):
-            _raw_set = readfile(list_raw)
+            _raw_set = readfile(list_raw, evaluate=True)
         else:   # is string path to pickle
             _raw_set = readfile_pickle(list_raw)
-    else:       # must be a set()
+    else:       # must be a tuple()
         _raw_set = list_raw
 
     # below, assuming the two input sets have the exact same file format!
@@ -90,16 +108,39 @@ def remove_raw_alternatives_from_1280(list_1280, list_raw, keep_rev=False, slow=
         return _list_1280
 
     else:
-        filtered_list_1280 = remove_file_string_extensions(_list_1280, keep_rev=keep_rev)
+        trimmed_list_1280 = remove_file_string_extensions(_list_1280[0], keep_rev=keep_rev)
 
-        filetered_list_raw = remove_file_string_extensions(_raw_set, keep_rev=keep_rev)
+        trimmed_list_raw = remove_file_string_extensions(_raw_set[0], keep_rev=keep_rev)
 
         # _list_1280 minus common items with _raw_set
-        return filtered_list_1280.difference(filetered_list_raw)
+        # return filtered_list_1280.difference(filetered_list_raw)
 
+        # zip filtered back with _list_1280[1] together
+        # same for _raw
+
+        # remove dupes at index, for both _list_1280[0] and _list_1280[1]
+        return difference(trimmed_list_1280, _list_1280[1], trimmed_list_raw)
+
+            
+
+def difference(trimmed_list_1280, trimmed_paths_1280, trimmed_list_raw):
+
+    filtered_files = list()
+    filtered_paths = list()
+    index = 0
+    for trimmed_file in trimmed_list_1280:
+        index += 1
+        if trimmed_file in trimmed_list_raw:
+            continue
+        else:
+            filtered_files.append(trimmed_file)
+            filtered_paths.append(trimmed_paths_1280[index])
+
+    return (filtered_files, filtered_paths)
+    
 
 def remove_file_string_extensions(myset, keep_rev=False):
-    newset = set()
+    newset = list()
     # count = 0
     for item in myset:
         if not keep_rev:
@@ -108,7 +149,7 @@ def remove_file_string_extensions(myset, keep_rev=False):
             match = tumblr_base_norev_noext_nongreedy_re.search(item)
         if match:
             # count += 1
-            newset.add(match.group(1))
+            newset.append(match.group(1))
 
     # print("count: " + str(count))
 
@@ -124,7 +165,7 @@ def remove_todelete_from_list(current_1280_set, todelete_txt, keep_rev=False, sl
 
     # below, assuming the two input sets have the exact same file format!
     if slow: # FIXME untested! not really needed and HORRIBLE CODE (mutating while iterating)
-        todelete_set = readfile(todelete_txt)
+        todelete_set = readfile(todelete_txt, evaluate=False)
 
         for item in todelete_set:
             match = tumblr_base_noext_re.match(item)
@@ -138,20 +179,21 @@ def remove_todelete_from_list(current_1280_set, todelete_txt, keep_rev=False, sl
         return current_1280_set
 
     else:
-        todelete_set = remove_file_string_extensions(readfile(todelete_txt), keep_rev=keep_rev)
+        todelete_tuple = remove_file_string_extensions(readfile(todelete_txt, evaluate=False), keep_rev=keep_rev)
+        todelete_set = set(todelete_tuple)
         if DEBUG:
             print("Length of generated todelete_set: {0}".format(len(todelete_set)))
             write_to_file(to_delete_archives_set_debug_path, todelete_set)
 
-            print("doing difference between current_set: {0} and todelete_set: {1}"
-            .format(len(current_1280_set), len(todelete_set)))
+        print("doing difference between current_set: {0} and todelete_set: {1}"
+        .format(len(current_1280_set[0]), len(todelete_set)))
 
-        return current_1280_set.difference(todelete_set)
+        return difference(current_1280_set[0], current_1280_set[1], todelete_set)
 
 
 
 def readfile_pickle(filepath):
-    """Returns a set of each line in file"""
+    """Returns the object written as a pickle in a file"""
 
     with open (filepath, 'rb') as fp:
         fileset = pickle.load(fp)
@@ -159,16 +201,21 @@ def readfile_pickle(filepath):
     return fileset
 
 
-def readfile(filepath):
+def readfile(filepath, evaluate=False):
     """Returns a set of each line in file"""
 
-    fileset = set()
+    listoflists = list()
 
     with open(filepath, 'r') as f:
         for line in f:
-            fileset.add(line)
+            if line.startswith('#'):
+                continue
+            if evaluate:
+                listoflists.append(eval(line))
+            else:
+                listoflists.append(line)
 
-    return fileset
+    return tuple(listoflists)
 
 
 def write_to_file(filepath, mylist, use_pickle=False):
@@ -176,10 +223,14 @@ def write_to_file(filepath, mylist, use_pickle=False):
         with open(filepath, 'wb') as fp:
             pickle.dump(mylist, fp)
     else:
-        with open(filepath, 'w') as f:
-            for item in mylist:
-                f.write("{}\n".format(item))
-
+        if not isinstance(tuple(), type(mylist)):
+            with open(filepath, 'w') as f:
+                for item in mylist:
+                    f.write("{}\n".format(item))
+        else: # isinstance(set(), type(mylist))
+            with open(filepath, 'w') as f:
+                for item in tuple(map(list, zip(mylist[0], mylist[1]))):
+                    f.write("{}\n".format(item))
 
 def main(output_pickle=False, keep_revision=False):
 
@@ -187,12 +238,12 @@ def main(output_pickle=False, keep_revision=False):
     # _1280 files listing
     archives_1280_txt_path = SCRIPTDIR + os.sep + "tools/archives_1280_list.txt"
     archives_1280_txt_cache = SCRIPTDIR + os.sep + "tools/archives_1280_cache.txt" # caching
-    archives_1280_set_debug = SCRIPTDIR + os.sep + "tools/archives_1280_set_debug.txt" # debug
+    archives_1280_tuple_debug = SCRIPTDIR + os.sep + "tools/archives_1280_tuple_debug.txt" # debug
 
     # _raw files listing
     raw_downloads_txt_path = SCRIPTDIR + os.sep + "tools/downloads_raw_list.txt"
     raw_downloads_txt_cache = SCRIPTDIR + os.sep + "tools/downloads_raw_cache.txt" #caching
-    raw_downloads_set_debug = SCRIPTDIR + os.sep + "tools/downloads_raw_set_debug.txt" #debug
+    raw_downloads_tuple_debug = SCRIPTDIR + os.sep + "tools/downloads_raw_set_debug.txt" #debug
 
     # optional todelete files (filter out)
     to_delete_archives_txt = os.path.expanduser("~/Documents/DOCUMENTS/archive_files_to_delete.txt")
@@ -210,75 +261,81 @@ def main(output_pickle=False, keep_revision=False):
     CGI_database = db_handler.Database(db_filepath="/home/firebird/CGI.vvv", \
                         username="sysdba", password="masterkey")
 
-    archives_1280_set = None
-    raw_downloads_set = None
+    archives_1280_tuple = None
+    raw_downloads_tuple = None
 
     if not os.path.exists(archives_1280_txt_path):
         if not os.path.exists(archives_1280_txt_cache):
-            archives_1280_set = get_1280_from_db(CGI_database)
-            print("Length of generated archives_1280_set: {}".format(len(archives_1280_set)))
-            write_to_file(archives_1280_txt_cache, archives_1280_set, use_pickle=True)
+            archives_1280_tuple = get_1280_from_db(CGI_database)
+            print("Length of generated archives_1280_tuple: {}".format(len(archives_1280_tuple[0])))
+            write_to_file(archives_1280_txt_cache, archives_1280_tuple, use_pickle=True)
             if DEBUG:
-                write_to_file(archives_1280_set_debug, archives_1280_set, use_pickle=False)
+                write_to_file(archives_1280_tuple_debug, archives_1280_tuple, use_pickle=False)
 
     # fetch _raw files from DB if text file doesn't already exist
     if not os.path.exists(raw_downloads_txt_path):
         if not os.path.exists(raw_downloads_txt_cache):
-            raw_downloads_set = get_raw_files_from_db(downloads_database)
-            print("Length of generated raw_downloads_set: {}".format(len(raw_downloads_set)))
-            write_to_file(raw_downloads_txt_cache, raw_downloads_set, use_pickle=True)
+            raw_downloads_tuple = get_raw_files_from_db(downloads_database)
+            print("Length of generated raw_downloads_tuple: {}".format(len(raw_downloads_tuple[0])))
+            write_to_file(raw_downloads_txt_cache, raw_downloads_tuple, use_pickle=True)
             if DEBUG:
-                write_to_file(raw_downloads_set_debug, raw_downloads_set, use_pickle=False)
+                write_to_file(raw_downloads_tuple_debug, raw_downloads_tuple, use_pickle=False)
 
 
-    if raw_downloads_set is not None:
-        if archives_1280_set is not None:
-            archives1280_minus_raw_set = remove_raw_alternatives_from_1280(archives_1280_set, raw_downloads_set, keep_revision)
+    if raw_downloads_tuple is not None:
+        if archives_1280_tuple is not None:
+            archives1280_minus_raw_tuple = remove_raw_alternatives_from_1280(archives_1280_tuple, raw_downloads_tuple, keep_revision)
         else: # use path
             if os.path.exists(archives_1280_txt_path):
-                archives1280_minus_raw_set = remove_raw_alternatives_from_1280(archives_1280_txt_path, raw_downloads_set, keep_revision)
+                archives1280_minus_raw_tuple = remove_raw_alternatives_from_1280(archives_1280_txt_path, raw_downloads_tuple, keep_revision)
             elif os.path.exists(archives_1280_txt_cache):
-                archives1280_minus_raw_set = remove_raw_alternatives_from_1280(archives_1280_txt_cache, raw_downloads_set, keep_revision)
+                archives1280_minus_raw_tuple = remove_raw_alternatives_from_1280(archives_1280_txt_cache, raw_downloads_tuple, keep_revision)
             else:
                 print("ERROR: no 1280 listing found!")
                 sys.exit(0)
 
     else: # we have raw_downloads_txt_path
-        if archives_1280_set is not None:
+        if archives_1280_tuple is not None:
             if os.path.exists(raw_downloads_txt_path):
-                archives1280_minus_raw_set = remove_raw_alternatives_from_1280(archives_1280_set, raw_downloads_txt_path, keep_revision)
-                print(archives1280_minus_raw_set)
+                archives1280_minus_raw_tuple = remove_raw_alternatives_from_1280(archives_1280_tuple, raw_downloads_txt_path, keep_revision)
+                print(archives1280_minus_raw_tuple)
             elif os.path.exists(raw_downloads_txt_cache):
-                archives1280_minus_raw_set = remove_raw_alternatives_from_1280(archives_1280_set, raw_downloads_txt_cache, keep_revision)
+                archives1280_minus_raw_tuple = remove_raw_alternatives_from_1280(archives_1280_tuple, raw_downloads_txt_cache, keep_revision)
             else:
                 print("ERROR: no raw listing found!")
         else: # we have no 1280 set nor raw set
             if os.path.exists(archives_1280_txt_path) and os.path.exists(raw_downloads_txt_path):
-                archives1280_minus_raw_set = remove_raw_alternatives_from_1280(archives_1280_txt_path, raw_downloads_txt_path, keep_revision)
+                archives1280_minus_raw_tuple = remove_raw_alternatives_from_1280(archives_1280_txt_path, raw_downloads_txt_path, keep_revision)
             elif os.path.exists(archives_1280_txt_cache) and os.path.exists(raw_downloads_txt_path):
-                archives1280_minus_raw_set = remove_raw_alternatives_from_1280(archives_1280_txt_cache, raw_downloads_txt_path, keep_revision)
+                archives1280_minus_raw_tuple = remove_raw_alternatives_from_1280(archives_1280_txt_cache, raw_downloads_txt_path, keep_revision)
             elif os.path.exists(archives_1280_txt_cache) and os.path.exists(raw_downloads_txt_cache):
-                archives1280_minus_raw_set = remove_raw_alternatives_from_1280(archives_1280_txt_cache, raw_downloads_txt_cache, keep_revision)
+                archives1280_minus_raw_tuple = remove_raw_alternatives_from_1280(archives_1280_txt_cache, raw_downloads_txt_cache, keep_revision)
             else:
                 print("ERROR: no 1280 listing nor raw listing found!")
 
-    print("archives_minus_raw_set: {0}".format(len(archives1280_minus_raw_set)))
-    write_to_file(archives_minus_raw_path, archives1280_minus_raw_set, use_pickle=False)
+    print("archives_minus_raw_tuple: {0}".format(len(archives1280_minus_raw_tuple[0])))
+    write_to_file(archives_minus_raw_path, archives1280_minus_raw_tuple, use_pickle=False)
 
 
     # archives1280_final = archives1280_minus_raw - to_delete_archives_txt
     if os.path.exists(to_delete_archives_txt):
-        archives_files_list_minus_raw_minus_todelete = remove_todelete_from_list(archives1280_minus_raw_set, 
+
+        archives_minus_raw_minus_todelete_tuple = remove_todelete_from_list(archives1280_minus_raw_tuple, 
         to_delete_archives_txt, debug=DEBUG)
-        print("archives_files_list_minus_raw_minus_todelete: {0}".format(len(archives_files_list_minus_raw_minus_todelete)))
+
+        print("archives_minus_raw_minus_todelete_tuple: {0}, type {1}"
+        .format(len(archives_minus_raw_minus_todelete_tuple[0]), type(archives1280_minus_raw_tuple)))
+
+        # final_archives_minus_raw_minus_todelete = tuple(map(list, zip(archives_minus_raw_minus_todelete_tuple[0], archives_minus_raw_minus_todelete_tuple[1])))
+        
         if output_pickle:
-            write_to_file(archives_minus_raw_minus_todelete_path_pickle, archives_files_list_minus_raw_minus_todelete, use_pickle=True)
+            write_to_file(archives_minus_raw_minus_todelete_path_pickle, archives_minus_raw_minus_todelete_tuple, use_pickle=True)
         else:
-            write_to_file(archives_minus_raw_minus_todelete_path, archives_files_list_minus_raw_minus_todelete)
+            write_to_file(archives_minus_raw_minus_todelete_path, archives_minus_raw_minus_todelete_tuple)
 
 
 
 if __name__ == "__main__":
-    main(output_pickle=True)
+    main(output_pickle=False)
 
 
