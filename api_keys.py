@@ -68,7 +68,7 @@ def disable_api_key(api_key_object, duration=3600):
     """This API key caused problem, might have been flagged, add to temporary blacklist
     for a default of one hour"""
 
-    logging.warning(BColors.RED + "disabling API key {0} from instances.api_keys list".format(api_key_object) + BColors.ENDC)
+    logging.info(BColors.RED + "Disabling API key {0} from instances.api_keys list".format(api_key_object) + BColors.ENDC)
 
     # key = item for item in instances.api_keys if item == api_key_list_object
     key = next((i for i in instances.api_keys if i == api_key_object), None)
@@ -78,12 +78,12 @@ def disable_api_key(api_key_object, duration=3600):
         return
 
     if key.disabled:
-        logging.error(BColors.BOLD + "Key {0} is already disabled!".format(key.api_key) + BColors.ENDC)
+        logging.debug(BColors.BOLD + "Key {0} is already disabled!".format(key.api_key) + BColors.ENDC)
     else:
         key.disable_until(duration=duration)
 
     for key in instances.api_keys:
-        logging.error(BColors.RED + "API key {0} is disabled: {1}".format(key.api_key, key.disabled) + BColors.ENDC)
+        logging.debug(BColors.RED + "API key {0} is disabled: {1}".format(key.api_key, key.disabled) + BColors.ENDC)
 
     write_api_keys_to_json()
 
@@ -106,7 +106,7 @@ def get_random_api_key(apikey_list=None):
                 return keycheck
         else:
             return keycheck
-    logging.warning(BColors.FAIL + BColors.BLINKING + 'Attempts exhausted api_key list length! All keys are disabled! Renew them!' + BColors.ENDC)
+    logging.critical(BColors.FAIL + BColors.BLINKING + 'Attempts exhausted api_key list length! All keys are disabled! Renew them!' + BColors.ENDC)
     raise BaseException("No more enabled API Key available")
     #TODO: handle this critical error later (exit gracefully)
 
@@ -117,13 +117,13 @@ def remove_key(api_key_object):
     try:
         instances.api_keys.remove(api_key_object)
     except Exception as e:
-        logging.error(BColors.FAIL + str(e) + BColors.ENDC)
+        logging.error(BColors.FAIL + "Error trying to remove API key {}".format(str(e)) + BColors.ENDC)
         pass
 
 
 def inc_key_request(api_key):
     api_key.use_once()
-    logging.warning(BColors.LIGHTPINK + "API key used: {0}. Number of request left: {1}/{2}"\
+    logging.debug(BColors.LIGHTPINK + "API key used: {0}. Number of request left: {1}/{2}"\
     .format(api_key.api_key, api_key.bucket_hour, api_key.bucket_day) + BColors.ENDC)
 
 
@@ -189,7 +189,7 @@ def threaded_buckets():
         api_obj.bucket_hour = min(api_obj.bucket_hour + ((diff/5) * 1.390), 1000) # clamped
         # 86400 / 5000 = 0.05787037
         api_obj.bucket_day = min(api_obj.bucket_day +  ((diff/5) * 0.2892), 5000)
-        logging.warning(BColors.MAGENTA + "Req left for API key {0}: hour {1} day {2}"
+        logging.warning(BColors.MAGENTA + "Request left for API key {0}: hour {1} day {2}"
         .format(api_obj.api_key, api_obj.bucket_hour, api_obj.bucket_day) + BColors.ENDC)
 
     t = threading.Thread(target=bucket_inc)

@@ -26,7 +26,7 @@ http_url_single_re = re.compile(r'(https?(?::\/\/|%3A%2F%2F).*?)(?:\s)*?$', re.I
 # matches quoted, between quotes, before html tags
 http_url_super_re = re.compile(r'(?:\"(https?(?::\/\/|%3A%2F%2F).*?)(?:\")(?:<\/)*?)|(?:(https?:\/\/.*?)(?:(?:\s)|(?:<)))', re.I)
 # matches all urls, even without http or www! https://gist.github.com/uogbuji/705383
-http_url_uber_re = re.compile(r'\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:\'\".,<>?\xab\xbb\u201c\u201d\u2018\u2019]))', re.I)
+http_url_uber_re = re.compile(r'\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:\'\"\\\/.,<>?\xab\xbb\u201c\u201d\u2018\u2019]))', re.I)
 repattern_tumblr_redirect = re.compile(r't\.umblr\.com\/redirect\?z=(.*)(?:&|&amp;)t=.*', re.I)
 
 # Deprecated:
@@ -56,7 +56,7 @@ class Database():
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """ close all remaining connections"""
-        logging.warning(BColors.BLUE + "Closing connections to DB" + BColors.ENDC)
+        logging.info(BColors.BLUE + "Closing connections to DB" + BColors.ENDC)
         for con in self.con:
             con.close()
 
@@ -97,7 +97,7 @@ def create_blank_database(database):
 
     populate_db_with_tables(database)
 
-    logging.critical(BColors.BLUEOK + BColors.GREEN
+    logging.warning(BColors.BLUEOK + BColors.GREEN
     + "Done creating blank DB in: {0}"
     .format(database.db_filepath) + BColors.ENDC)
 
@@ -194,9 +194,9 @@ FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID)
 """
 CREATE TABLE OLD_1280 ( 
 FILENAME varchar(60) PRIMARY KEY, 
-FILEBASENAME varchar(60) 
-DL d_boolean,
-DIRPATH varchar(100)
+FILEBASENAME varchar(60),
+PATH varchar(100),
+DL d_boolean
 );""")
 
         # CREATE generators and triggers
@@ -563,27 +563,28 @@ def update_db_with_archives(database, archivepath, use_pickle=True):
     cur = con.cursor()
     t0 = time.time()
     dupecount = 0
+    # tuple of lists:
     if use_pickle:
         oldfiles = update_archive_lists.readfile_pickle(archivepath)
     else:
-        oldfiles = update_archive_lists.readfile(archivepath)
+        oldfiles = update_archive_lists.readfile(archivepath, evaluate=True)
 
     with fdb.TransactionContext(con):
         for item in oldfiles:
-            match = repattern_revisions.search(item)
+            match = repattern_revisions.search(item[0])
             if match:
                 trimmeditem = match.group(1)
             else:
-                trimmeditem = item
-            params = (item, trimmeditem)
+                trimmeditem = item[0]
+            params = (item[0], trimmeditem, item[1])
             try:
-                cur.execute("INSERT INTO OLD_1280 (FILENAME, FILEBASENAME) VALUES (?,?)", 
+                cur.execute("INSERT INTO OLD_1280 (FILENAME, FILEBASENAME, PATH) VALUES (?,?,?)", 
                 params)
-            except BaseException as e:
+            except fdb.DatabaseError as e:
                 if "violation of PRIMARY or UNIQUE KEY" in e.__str__():
                     dupecount += 1
         con.commit()
-        logging.info(BColors.BLUE + "Found {0} already present while inserting archives."
+        logging.warning(BColors.BLUE + "Found {0} already present while inserting archives."
         .format(dupecount) + BColors.ENDC)
     t1 = time.time()
     logging.debug(BColors.BLUE + "Inserting records into OLD_1280 Took %.2f ms"
@@ -698,7 +699,7 @@ def update_blog_info(Database, con, blog, ignore_response=False):
     returns dict(last_total_posts, last_updated, last_checked,
     last_offset, last_scraped_posts)"""
 
-    logging.info(BColors.BLUE + "{0} update DB info. crawl_status: {1} crawling: {2}"\
+    logging.debug(BColors.BLUE + "{0} update DB info. crawl_status: {1} crawling: {2}"\
     .format(blog.name, blog.crawl_status, blog.crawling) + BColors.ENDC)
     cur = con.cursor()
     if blog.crawl_status == 'new':
@@ -737,12 +738,12 @@ def update_blog_info(Database, con, blog, ignore_response=False):
     resp_dict['last_checked'],\
     resp_dict['last_offset'],\
     resp_dict['last_scraped_posts'] = cur.fetchall()[0]
-    # logging.warning(BColors.BLUE + "db_resp: {0}, {1}"\
+    # logging.debug(BColors.BLUE + "db_resp: {0}, {1}"\
     # .format(type(db_resp), db_resp) + BColors.ENDC)
 
     con.commit()
 
-    # logging.warning(BColors.BLUE + "resp_dict: {0}"\
+    # logging.debug(BColors.BLUE + "resp_dict: {0}"\
     # .format(resp_dict) + BColors.ENDC)
     return resp_dict
 
@@ -761,7 +762,7 @@ def update_crawling(database, con, blog=None):
     if not blog:
         cur.execute('''update BLOGS set CRAWLING = 0;''')
         cur.execute('''update BLOGS set CRAWL_STATUS = 'new' where CRAWL_STATUS = 'init';''')
-        logging.debug(BColors.BLUEOK + BColors.BLUE
+        logging.info(BColors.BLUEOK + BColors.BLUE
         + "Reset crawl_status & crawling for all" + BColors.ENDC)
     else:
         cur.execute('execute procedure update_crawling_blog_status(?,?);',
@@ -800,14 +801,14 @@ def insert_posts(database, con, blog, update):
         errors += results[1]
 
     else:
-        logging.info(BColors.BLUE + "COMMITTING" + BColors.ENDC)
+        logging.debug(BColors.BLUE + "COMMITTING" + BColors.ENDC)
         con.commit()
 
     t1 = time.time()
     logging.debug(BColors.BLUE + "Procedures to insert took %.2f ms" \
                     % (1000*(t1-t0)) + BColors.ENDC)
 
-    logging.error(BColors.BLUE + BColors.BOLD
+    logging.info(BColors.BLUE + BColors.BOLD
     + "{0} Successfully attempted to insert {1} posts. Failed adding {2} posts. \
 Failed adding {3} other items."\
     .format(blog.name, added, post_errors, errors) + BColors.ENDC)
@@ -928,7 +929,7 @@ with more recently updated version is_current_item: {3}\n{4}"
             elif post.get('id') == item_remote_id:      # either a self reblog, or just a blog, + blog name is same
                 if item_name == post.get('blog_name'):  # it's just a normal blog, nothing fancy not a reblog but can be part of a reblog (comment added)
                     if item.get('is_current_item'):     # self reblog that was updated! we keep all to update the context explicitly
-                        logging.warning(BColors.YELLOW + "Replacing content_raw of:{0} with more recently updated version is_current_item: {1}"
+                        logging.info(BColors.YELLOW + "Replacing content_raw of:{0} with more recently updated version is_current_item: {1}"
                         .format(len(attr.get('content_raw')), len(item.get('content_raw'))) + BColors.ENDC)
                         attr['content_raw']     = item.get('content_raw')
 
@@ -1030,22 +1031,22 @@ def extract_urls(content, parsehtml=False):
             url_set.add(capped)
 
     # t1 = time.time()
-    # logging.warning(BColors.BLUEOK + BColors.BLUE + "URL regexp took %.2f ms" \
+    # logging.debug(BColors.BLUEOK + BColors.BLUE + "URL regexp took %.2f ms" \
     #               % (1000*(t1-t0)) + BColors.ENDC)
 
-    # logging.error(BColors.BLUE + BColors.BOLD + "url_set length: {0},\n{1}"
+    # logging.debug(BColors.BLUE + BColors.BOLD + "url_set length: {0},\n{1}"
     #               .format(len(url_set), url_set) + BColors.ENDC)
 
     # if len(url_set) < found_http_occur - http_walk:
-    #     logging.error(BColors.FAIL + "Warning: less urls than HTTP occurences. {0}<{1}"
+    #     logging.info(BColors.FAIL + "Warning: less urls than HTTP occurences. {0}<{1}"
     #                 .format(len(url_set), found_http_occur) + BColors.ENDC)
-    #     logging.error(BColors.BLUE + "full context was:\n{0}"
+    #     logging.info(BColors.BLUE + "full context was:\n{0}"
     #                 .format(repr(content)) + BColors.ENDC)
 
     #     singleton = http_url_single_re.search(content)
     #     if singleton:
     #         url_set.add(singleton.group(1))
-    #         logging.error(BColors.BLUE +  "Added singleton back: "
+    #         logging.info(BColors.BLUE +  "Added singleton back: "
     #         + singleton.group(1) + BColors.ENDC)
 
     global FILTERED_URL_GLOBAL_COUNT
@@ -1059,7 +1060,7 @@ def htmlToText(raw_html):
     """https://stackoverflow.com/questions/14694482/converting-html-to-text-with-python
     WARNING: causes infinite loop in some circumstances? """
     ret = raw_html.replace('\n','').replace('\t','')
-    # logging.warning(BColors.BLUE + "RAW html:\n{0}".format(ret) + BColors.ENDC)
+    # logging.debug(BColors.BLUE + "RAW html:\n{0}".format(ret) + BColors.ENDC)
 
     def _getElement(subhtml, name, end=None):
         ename = "<" + name + ">"
@@ -1146,7 +1147,7 @@ def htmlToText(raw_html):
                 ret = ret.replace(element, elementContent)
             else:
                 ret = ret.replace(element, '')
-    logging.warning(BColors.LIGHTPINK + "PARSED html:\n{0}".format(repr(ret)) + BColors.ENDC)
+    logging.debug(BColors.LIGHTPINK + "PARSED html:\n{0}".format(repr(ret)) + BColors.ENDC)
     return ret
 
 
@@ -1169,7 +1170,7 @@ def inserted_post(cur, post):
     except fdb.DatabaseError as e:
         if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
             e = "duplicate"
-        logging.debug(BColors.FAIL + "DB ERROR" + BColors.BLUE + \
+        logging.error(BColors.FAIL + "DB ERROR" + BColors.BLUE + \
         " post\t{0}: {1}".format(post.get('id'), e) + BColors.ENDC)
         errors += 1
         success = True
@@ -1206,7 +1207,7 @@ def inserted_context(cur, post):
     except fdb.DatabaseError as e:
         if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
             e = "duplicate"
-        logging.debug(BColors.FAIL + "DB ERROR" + BColors.BLUE
+        logging.info(BColors.FAIL + "DB ERROR" + BColors.BLUE
         + " context\t{0}: {1}".format(post.get('id'), e) + BColors.ENDC)
         errors += 1
         success = True
@@ -1227,7 +1228,7 @@ def inserted_urls(cur, post):
     if photos is not None:
         # insertstmt = cur.prep('insert into URLS (file_url,post_id,remote_id) values (?,?,?);')
         for photo in photos:
-            # logging.warning("inserting normal url:{0}".format(photo.get('original_size').get('url')))
+            # logging.debug("inserting normal url:{0}".format(photo.get('original_size').get('url')))
             global FILTERED_URL_GLOBAL_COUNT
             FILTERED_URL_GLOBAL_COUNT.add(photo.get('original_size').get('url'))
             try:
@@ -1239,7 +1240,7 @@ def inserted_urls(cur, post):
             except fdb.DatabaseError as e:
                 if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
                     e = "duplicate"
-                logging.debug(BColors.FAIL + "DB ERROR" + BColors.BLUE
+                logging.info(BColors.FAIL + "DB ERROR" + BColors.BLUE
                             + " url\t{0}: {1}".format(
                             photo.get('original_size').get('url'),
                             e) + BColors.ENDC)
@@ -1248,7 +1249,7 @@ def inserted_urls(cur, post):
     # con.commit()
     # cur = con.cursor()
     for url in post.get('filtered_urls'):
-        # logging.warning("inserting filtered url:{0}".format(url))
+        # logging.debug("inserting filtered url:{0}".format(url))
         try:
             cur.callproc('insert_url', (
                         url,
@@ -1258,7 +1259,7 @@ def inserted_urls(cur, post):
         except fdb.DatabaseError as e:
             if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
                 e = "duplicate"
-            logging.debug(BColors.FAIL + "DB ERROR" + BColors.BLUE
+            logging.info(BColors.FAIL + "DB ERROR" + BColors.BLUE
             + " url\t{0}: {1}".format(
             url, e) + BColors.ENDC)
             errors += 1

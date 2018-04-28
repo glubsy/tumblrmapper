@@ -57,7 +57,7 @@ class ProxyScanner():
             # self.proxy_ua_dict[proxy.get('ip_address')] = proxy.get('user_agent')
             self.proxy_ua_dict.get('proxies').append(proxy)
 
-        logging.debug(BColors.GREEN + "Restored proxies from disk: {0}".format(len(self.proxy_ua_dict.get('proxies'))) + BColors.ENDC)
+        logging.info(BColors.GREEN + "Restored proxies from disk: {0}".format(len(self.proxy_ua_dict.get('proxies'))) + BColors.ENDC)
 
 
     def get_new_proxy(self, old_proxy=None, remove=None):
@@ -65,7 +65,7 @@ class ProxyScanner():
         if remove="remove", remove proxy that is unresponsive from the list and regen cycle
         if remove="blacklist", save proxy in json as blacklisted to never use it ever again"""
 
-        logging.debug("Removing proxy {0} and getting new one.".format(old_proxy))
+        logging.info("Removing proxy {0} and getting new one.".format(old_proxy))
 
         if remove == "remove" and old_proxy is not None:
             self.proxy_ua_dict.get('proxies').remove(old_proxy)
@@ -204,7 +204,7 @@ class ProxyScanner():
             return self.proxy_ua_dict
 
         if len(self.http_proxies_set) == 0:
-            logging.debug(BColors.FAIL + "WARNING: NO PROXIES FETCHED!" + BColors.ENDC)
+            logging.warning(BColors.FAIL + "WARNING: NO PROXIES FETCHED!" + BColors.ENDC)
             return None
 
 

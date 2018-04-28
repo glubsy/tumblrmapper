@@ -23,7 +23,7 @@ tumblr_base_noext_re = re.compile(r'(tumblr_(?:inline_)?.*?(?:r\d)?.*)_.{3,4}.*'
 tumblr_base_norev_noext_nongreedy_re = re.compile(r'(tumblr_(?:inline_)?.*?)(?:_r\d)?_.{3,4}.*')
 
 SCRIPTDIR = os.path.dirname(__file__)
-DEBUG = True
+DEBUG = False
 to_delete_archives_set_debug_path = SCRIPTDIR + os.sep + "tools/to_delete_archives_set_debug.txt" #debug
 
 
@@ -115,16 +115,12 @@ def remove_raw_alternatives_from_1280(list_1280, list_raw, keep_rev=False, slow=
         # _list_1280 minus common items with _raw_set
         # return filtered_list_1280.difference(filetered_list_raw)
 
-        # zip filtered back with _list_1280[1] together
-        # same for _raw
-
-        # remove dupes at index, for both _list_1280[0] and _list_1280[1]
         return difference(trimmed_list_1280, _list_1280[1], trimmed_list_raw)
 
             
 
 def difference(trimmed_list_1280, trimmed_paths_1280, trimmed_list_raw):
-
+    """remove dupes at index, for both _list[0] and _list[1]"""
     filtered_files = list()
     filtered_paths = list()
     index = 0
@@ -220,8 +216,13 @@ def readfile(filepath, evaluate=False):
 
 def write_to_file(filepath, mylist, use_pickle=False):
     if use_pickle:
-        with open(filepath, 'wb') as fp:
-            pickle.dump(mylist, fp)
+        if not isinstance(tuple(), type(mylist)):
+            with open(filepath, 'wb') as fp:
+                pickle.dump(mylist, fp)
+        else:
+            with open(filepath, 'wb') as fp:
+                mylist = tuple(map(list, zip(mylist[0], mylist[1])))
+                pickle.dump(mylist, fp)
     else:
         if not isinstance(tuple(), type(mylist)):
             with open(filepath, 'w') as f:
@@ -232,7 +233,7 @@ def write_to_file(filepath, mylist, use_pickle=False):
                 for item in tuple(map(list, zip(mylist[0], mylist[1]))):
                     f.write("{}\n".format(item))
 
-def main(output_pickle=False, keep_revision=False):
+def main(output_pickle=True, keep_revision=True):
 
     # FIXME: lots of hard coded values could be in config
     # _1280 files listing
@@ -323,8 +324,8 @@ def main(output_pickle=False, keep_revision=False):
         archives_minus_raw_minus_todelete_tuple = remove_todelete_from_list(archives1280_minus_raw_tuple, 
         to_delete_archives_txt, debug=DEBUG)
 
-        print("archives_minus_raw_minus_todelete_tuple: {0}, type {1}"
-        .format(len(archives_minus_raw_minus_todelete_tuple[0]), type(archives1280_minus_raw_tuple)))
+        print("archives_minus_raw_minus_todelete_tuple: {0}"
+        .format(len(archives_minus_raw_minus_todelete_tuple[0])))
 
         # final_archives_minus_raw_minus_todelete = tuple(map(list, zip(archives_minus_raw_minus_todelete_tuple[0], archives_minus_raw_minus_todelete_tuple[1])))
         
@@ -336,6 +337,6 @@ def main(output_pickle=False, keep_revision=False):
 
 
 if __name__ == "__main__":
-    main(output_pickle=False)
+    main(output_pickle=True)
 
 
