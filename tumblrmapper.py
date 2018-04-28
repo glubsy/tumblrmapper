@@ -20,7 +20,7 @@ import db_handler
 import instances
 import proxies
 from constants import BColors
-import update_archive_lists
+import archive_lists
 try:
     from tqdm import tqdm
     TQDM_AVAILABLE = True
@@ -45,7 +45,7 @@ def parse_args():
                         help="Set log level: DEBUG, INFO, WARNING, ERROR, CRITICAL (default)")
 
     # actiongrp = parser.add_mutually_exclusive_group()
-    parser.add_argument('-u', '--update_archive_list', action="store_true",
+    parser.add_argument('-u', '--create_archive_list', action="store_true",
                     help="Recreate archive file listing.")
 
     parser.add_argument('-n', '--create_blank_db', action="store_true",
@@ -265,9 +265,9 @@ def process(db, lock, db_update_lock, pill2kill):
 
 
 
-def init_pbar(position)
+def init_pbar(blog, position):
     position = position[-1] - 3
-    pbar = tqdm(unit="post", total=int(blog.total_posts), position=postition)
+    pbar = tqdm(unit="post", total=int(blog.total_posts), position=position)
     pbar.write("thread position {0}".format(position))
 
 def update_pbar(pbar, blog):
@@ -836,10 +836,10 @@ def configure_logging(args):
 def main(args):
     THREADS = instances.config.getint('tumblrmapper', 'threads')
 
-    if args.create_blank_db or args.update_blogs or args.update_archives or args.update_archive_list:
+    if args.create_blank_db or args.update_blogs or args.update_archives or args.create_archive_list:
 
-        if args.update_archive_list:
-            update_archive_lists.main(output_pickle=True)
+        if args.create_archive_list:
+            archive_lists.main(output_pickle=True)
 
         if args.create_blank_db:
             temp_database = db_handler.Database(

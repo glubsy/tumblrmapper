@@ -16,7 +16,7 @@ import fdb
 # import cProfile
 import tumblrmapper
 from constants import BColors
-import update_archive_lists
+import archive_lists
 
 
 
@@ -565,17 +565,20 @@ def update_db_with_archives(database, archivepath, use_pickle=True):
     dupecount = 0
     # tuple of lists:
     if use_pickle:
-        oldfiles = update_archive_lists.readfile_pickle(archivepath)
+        oldfiles = archive_lists.readfile_pickle(archivepath)
     else:
-        oldfiles = update_archive_lists.readfile(archivepath, evaluate=True)
+        oldfiles = archive_lists.readfile(archivepath, evaluate=True)
 
     with fdb.TransactionContext(con):
         for item in oldfiles:
             match = repattern_revisions.search(item[0])
             if match:
                 trimmeditem = match.group(1)
+                # if trimmeditem != item[0]:
+                #     print("{0} -> {1}".format(item[0], trimmeditem))
             else:
                 trimmeditem = item[0]
+                
             params = (item[0], trimmeditem, item[1])
             try:
                 cur.execute("INSERT INTO OLD_1280 (FILENAME, FILEBASENAME, PATH) VALUES (?,?,?)", 
@@ -587,37 +590,37 @@ def update_db_with_archives(database, archivepath, use_pickle=True):
         logging.warning(BColors.BLUE + "Found {0} already present while inserting archives."
         .format(dupecount) + BColors.ENDC)
     t1 = time.time()
-    logging.debug(BColors.BLUE + "Inserting records into OLD_1280 Took %.2f ms"
+    logging.warning(BColors.BLUE + "Inserting records into OLD_1280 Took %.2f ms"
                   % (1000*(t1-t0)) + BColors.ENDC)
     
 
-def populate_db_with_archives(database, archivepath):
-    """Reads archive list with full _1280.jpg and populate the OLD_1280 table 
-    with the base filename with and without revision (_r1, _r2) nor extension 
-    : DEPRECATED"""
-    con = database.connect()
-    cur = con.cursor()
-    oldfiles = readlines(archivepath)
+# def populate_db_with_archives(database, archivepath):
+#     """Reads archive list with full _1280.jpg and populate the OLD_1280 table 
+#     with the base filename with and without revision (_r1, _r2) nor extension 
+#     : DEPRECATED"""
+#     con = database.connect()
+#     cur = con.cursor()
+#     oldfiles = readlines(archivepath)
 
-    t0 = time.time()
+#     t0 = time.time()
 
-    with fdb.TransactionContext(con):
-        argsseq = list()
-        for line in oldfiles.splitlines():
-            reresult = repattern_tumblr.search(line)
-            basefilename = reresult.group(1) #tumblr_azec_azceniaoiz1_r1
-            reresult2 = repattern_revisions.search(basefilename)
-            if reresult2:
-                basefilename = reresult2.group(1) #tumblr_azec_azceniaoiz1
-            argsseq.append((line, basefilename))
+#     with fdb.TransactionContext(con):
+#         argsseq = list()
+#         for line in oldfiles.splitlines():
+#             reresult = repattern_tumblr.search(line)
+#             basefilename = reresult.group(1) #tumblr_azec_azceniaoiz1_r1
+#             reresult2 = repattern_revisions.search(basefilename)
+#             if reresult2:
+#                 basefilename = reresult2.group(1) #tumblr_azec_azceniaoiz1
+#             argsseq.append((line, basefilename))
 
-        sql = cur.prep("INSERT INTO OLD_1280 (FILENAME, FILEBASENAME) VALUES (?,?)")
-        cur.executemany(sql, argsseq)
-        con.commit()
+#         sql = cur.prep("INSERT INTO OLD_1280 (FILENAME, FILEBASENAME) VALUES (?,?)")
+#         cur.executemany(sql, argsseq)
+#         con.commit()
 
-    t1 = time.time()
-    logging.debug(BColors.BLUE + "Inserting records into OLD_1280 Took %.2f ms"
-                  % (1000*(t1-t0)) + BColors.ENDC)
+#     t1 = time.time()
+#     logging.debug(BColors.BLUE + "Inserting records into OLD_1280 Took %.2f ms"
+#                   % (1000*(t1-t0)) + BColors.ENDC)
 
 
 def populate_db_with_blogs(database, blogpath):
