@@ -164,8 +164,6 @@ def process(db, lock, db_update_lock, pill2kill):
             "No blog name fetched! No more to process?" + BColors.ENDC)
             break
 
-        instances.sleep_here(0,1)
-
         update = UpdatePayload()
 
         # blog.database = db
@@ -216,9 +214,9 @@ def process(db, lock, db_update_lock, pill2kill):
                 .format(blog.name, blog.posts_scraped, blog.offset, blog.total_posts))
                 break
 
-            if not update.posts_response:  #FIXME: could be some other field attached to blog
-                logging.warning(BColors.LIGHTYELLOW + BColors.BOLD \
-                + "{0} Getting at offset {1}".format(blog.name, blog.offset) + BColors.ENDC)
+            if not update.posts_response:  # could be some other field attached to blog
+                logging.warning(BColors.LIGHTYELLOW \
+                + "{0} Getting at offset {1} / {2}".format(blog.name, blog.offset, blog.total_posts) + BColors.ENDC)
 
                 try:
                     if not api_get_request_wrapper(db, con, lock, blog, update, blog.crawl_status, offset=blog.offset):
@@ -238,6 +236,7 @@ def process(db, lock, db_update_lock, pill2kill):
                 logging.debug("{0} inserting new posts".format(blog.name))
 
                 insert_posts(db, con, db_update_lock, blog, update)
+                # update_pbar(blog, position=threading.current_thread())
 
                 if blog.posts_scraped >= blog.total_posts or blog.offset >= blog.total_posts :
                     logging.debug("{0} else loop: total_posts >= posts_scraped or >= offset, breaking loop!"
@@ -248,7 +247,8 @@ def process(db, lock, db_update_lock, pill2kill):
         check_blog_end_of_posts(db, con, blog)
         db_handler.update_blog_info(db, con, blog, ignore_response=True)
 
-        logging.warning(BColors.GREENOK + "{0} Done scraping. Total {1}/{2}"\
+        logging.warning(BColors.GREENOK + BColors.BOLD + BColors.GREEN + 
+        "{0} Done scraping. Total {1}/{2}"
         .format(blog.name, blog.posts_scraped, blog.total_posts) + BColors.ENDC)
 
         if pill2kill.is_set():
@@ -263,6 +263,15 @@ def process(db, lock, db_update_lock, pill2kill):
     else:
         thread_good_cleanup(db, con, blog)
 
+
+
+def init_pbar(position)
+    position = position[-1] - 3
+    pbar = tqdm(unit="post", total=int(blog.total_posts), position=postition)
+    pbar.write("thread position {0}".format(position))
+
+def update_pbar(pbar, blog):
+    pbar.update(blog.offset)
 
 
 def insert_posts(db, con, db_update_lock, blog, update):
@@ -311,7 +320,6 @@ def api_get_request_wrapper(db, con, lock, blog, update, crawl_status, offset=No
     attempts = 0
     while not update.valid and attempts < 3:
         attempts += 1
-        instances.sleep_here(0,1)
         try:
            blog.api_get_request(lock, update, api_key=None, reqtype="posts", offset=offset)
         except BaseException as e:
@@ -463,7 +471,7 @@ def blog_generator(db, con):
     blog.posts_scraped, blog.last_checked, blog.last_updated = db_handler.fetch_random_blog(db, con)
 
     if not blog.name:
-        logging.error(BColors.FAIL + "No blog fetched in blog_generator()!" + BColors.ENDC)
+        logging.debug(BColors.RED + "No blog fetched in blog_generator()" + BColors.ENDC)
         return blog
 
     if blog.offset is None:
@@ -592,7 +600,7 @@ class TumblrBlog:
         else:
             offset = '&offset=' + str(offset)
 
-        instances.sleep_here(0, 3)
+        instances.sleep_here(0, 4)
         attempt = 0
         response = requests.Response()
 
@@ -700,7 +708,7 @@ class TumblrBlog:
 
         if response_json.get('errors') is not None:
             if update.meta_status == 404 or update.meta_msg.find('Not Found') != -1:
-                logging.info(BColors.FAIL + "{0} update has 404 error status {1} {2}\nSetting to DEAD!"\
+                logging.warning(BColors.FAIL + "{0} update has 404 error status {1} {2}! Setting to DEAD!"\
                 .format(self.name, update.meta_status, update.meta_msg) + BColors.ENDC)
                 self.health = "DEAD"
                 self.crawl_status = "DEAD"
@@ -727,10 +735,6 @@ class TumblrBlog:
         update.valid = True
         self.health = "UP"
         self.crawling = 1
-
-
-
-
 
         if update.total_posts < 20:   #FIXME: arbitrary value
             logging.info("{0} considered WIPED!".format(self.name))
@@ -925,7 +929,7 @@ def main(args):
     t.start()
     worker_threads.append(t)
 
-    for i in range(0, THREADS):
+    for _ in range(0, THREADS):
         args = (db, lock, db_update_lock, pill2kill)
         t = threading.Thread(target=process, args=args)
         worker_threads.append(t)
@@ -933,6 +937,7 @@ def main(args):
         t.start()
 
     # start incrementing API keys's buckets of tokens
+    logging.warning(BColors.BLUEOK + "Starting scraping" + BColors.ENDC)
 
     with futures.ThreadPoolExecutor(max_workers=THREADS) as executor:
         executor.map(worker_threads)

@@ -22,7 +22,7 @@ use_proxies = True
 
 proxies = proxies.json
 
-log_level = WARNING
+log_level = INFO
 
 api_keys = api_keys.json
 
