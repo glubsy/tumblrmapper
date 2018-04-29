@@ -32,7 +32,7 @@ repattern_tumblr_redirect = re.compile(r't\.umblr\.com\/redirect\?z=(.*)(?:&|&am
 # Deprecated:
 repattern_tumblr = re.compile(r'(tumblr_.*)_.*\..*', re.I) #eliminate '_resol.ext'
 
-repattern_revisions = re.compile(r'(tumblr_.*?)(?:_r\d)?\s*$', re.I) #elimitane '_r1' 
+repattern_revisions = re.compile(r'(tumblr_.*?)(?:_r\d)?\s*$', re.I) #elimitane '_r1'
 
 urls_blacklist_filter = ['://tmblr.co/', 'strawpoll.me']
 
@@ -89,7 +89,7 @@ def create_blank_database(database):
     # ("create database 'host:/temp/db.db' user 'sysdba' password 'pass'")
     c = r"create database " + r"'" + database.db_filepath + \
     r"' user '" + database.username + r"' password '" + database.password + r"'"
-    
+
     try:
         fdb.create_database(c)
     except:
@@ -192,10 +192,10 @@ FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID)
 
         con.execute_immediate(
 """
-CREATE TABLE OLD_1280 ( 
-FILENAME varchar(60) PRIMARY KEY, 
+CREATE TABLE OLD_1280 (
+FILENAME varchar(60) PRIMARY KEY,
 FILEBASENAME varchar(60),
-PATH varchar(100),
+PATH varchar(10000),
 DL d_boolean
 );""")
 
@@ -225,11 +225,11 @@ if (exists (select BLOG_NAME from BLOGS where (BLOG_NAME = :i_blogname))) THEN
 BEGIN
     if ((select CRAWL_STATUS from BLOGS where (BLOG_NAME = :i_blogname)) is NULL) then
     begin
-        update BLOGS set CRAWL_STATUS = :i_crawl_status, PRIORITY = :i_prio 
+        update BLOGS set CRAWL_STATUS = :i_crawl_status, PRIORITY = :i_prio
         where BLOG_NAME = :i_blogname;
         exit;
     END
-    ELSE begin 
+    ELSE begin
         exit; /* just in case, I don't know...*/
     end
 end
@@ -323,7 +323,7 @@ CREATE OR ALTER PROCEDURE INSERT_CONTEXT (
     I_CONTEXT D_SUPER_LONG_TEXT DEFAULT null )
 AS
 BEGIN
-if (:i_remote_id is null) then 
+if (:i_remote_id is null) then
     begin /* we store everything, it's an original post*/
         insert into CONTEXTS (POST_ID, TTIMESTAMP, REMOTE_ID, CONTEXT)
         values (:i_post_id, :i_timestamp, :i_remote_id, :i_context);
@@ -342,7 +342,7 @@ else
                     exit;
                 end
             end
-        else 
+        else
             begin
                 insert into CONTEXTS (POST_ID, TTIMESTAMP, REMOTE_ID, CONTEXT)
                 values (:i_post_id, :i_timestamp, :i_remote_id, :i_context);
@@ -407,7 +407,7 @@ RETURNS (
     O_UPDATED D_EPOCH )
 AS
 BEGIN
-if (exists (select (BLOG_NAME) from BLOGS where ((CRAWL_STATUS = 'resume') and (CRAWLING != 1)))) then 
+if (exists (select (BLOG_NAME) from BLOGS where ((CRAWL_STATUS = 'resume') and (CRAWLING != 1)))) then
     begin
     for select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED, LAST_UPDATE
     from BLOGS where ((CRAWL_STATUS = 'resume') and (CRAWLING != 1)) order by PRIORITY desc nulls last ROWS 1
@@ -418,23 +418,23 @@ if (exists (select (BLOG_NAME) from BLOGS where ((CRAWL_STATUS = 'resume') and (
     exit;
     end
 else
-if (exists (select (BLOG_NAME) from BLOGS where (CRAWL_STATUS = 'new'))) then 
+if (exists (select (BLOG_NAME) from BLOGS where (CRAWL_STATUS = 'new'))) then
     begin
     for select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED, LAST_UPDATE
             from BLOGS where (CRAWL_STATUS = 'new')
         order by PRIORITY desc nulls last ROWS 1 with lock
-        into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated 
+        into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated
         as cursor tcur do
             update BLOGS set CRAWL_STATUS = 'init', CRAWLING = 1 where current of tcur;
     exit;
     end
 ELSE /*fetch the oldest last checked blog*/
-if (exists (select BLOG_NAME from BLOGS where (CRAWL_STATUS = 'DONE'))) then 
+if (exists (select BLOG_NAME from BLOGS where (CRAWL_STATUS = 'DONE'))) then
     BEGIN
     for select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED, LAST_UPDATE
         from BLOGS where ((CRAWL_STATUS = 'DONE') and (POSTS_SCRAPED != TOTAL_POSTS))
         order by (LAST_CHECKED) asc nulls last ROWS 1 with lock
-        into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated 
+        into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated
         as cursor tcur do
             update BLOGS set CRAWL_STATUS = 'resume', CRAWLING = 1 where current of tcur;
         exit;
@@ -520,6 +520,37 @@ END""")
 AS BEGIN
 update BLOGS set CRAWLING = 0 where BLOG_NAME = :i_name;
 END""")
+        con.execute_immediate(\
+"""
+create or alter procedure insert_archive (i_f varchar(60),
+i_fb varchar(60),
+i_p varchar(100))
+returns (f D_BOOLEAN)
+as
+declare variable v_p varchar(10000);
+begin
+if (exists (select * from OLD_1280 where filename = :i_f )) THEN
+begin
+    f = 1;
+    select path from OLD_1280 where filename = :i_f into v_p;
+    if (:v_p not similar to :i_p ) then
+        if (:v_p not like '%'||:i_p||'%') then
+            update OLD_1280 set path = TRIM(:v_p) ||'##'|| :i_p where filename = :i_f;
+        else
+            exit;
+    else
+        exit;
+end
+ELSE
+    begin
+        INSERT INTO OLD_1280 (FILENAME, FILEBASENAME, PATH) VALUES (:i_f,:i_fb,:i_p);
+    end
+end""")
+
+        con.execute_immediate(
+"""COMMENT ON procedure insert_archive
+'inputs are (filename without revision, filename, path origin) if path is already
+in the path col, append it with ## before it. Returns 1 if filename was found.'""")
 
             #reset column CRAWLING on script startup in case we halted without cleaning
 
@@ -578,25 +609,29 @@ def update_db_with_archives(database, archivepath, use_pickle=True):
                 #     print("{0} -> {1}".format(item[0], trimmeditem))
             else:
                 trimmeditem = item[0]
-                
+
             params = (item[0], trimmeditem, item[1])
             try:
-                cur.execute("INSERT INTO OLD_1280 (FILENAME, FILEBASENAME, PATH) VALUES (?,?,?)", 
-                params)
+                # cur.execute("INSERT INTO OLD_1280 (FILENAME, FILEBASENAME, PATH) VALUES (?,?,?)",
+                # params)
+                cur.callproc('insert_archive', params)
+                dupecount += cur.fetchone()[0]
             except fdb.DatabaseError as e:
-                if "violation of PRIMARY or UNIQUE KEY" in e.__str__():
-                    dupecount += 1
+                logging.error(BColors.FAIL + "Error while inserting archive: {}"
+                .format(repr(e)))
         con.commit()
-        logging.warning(BColors.BLUE + "Found {0} already present while inserting archives."
-        .format(dupecount) + BColors.ENDC)
+        logging.warning(BColors.BLUE + "Found {0} items already present \
+while inserting archives.\n\
+inserted {1} new items."
+        .format(dupecount, len(oldfiles) - dupecount) + BColors.ENDC)
     t1 = time.time()
     logging.warning(BColors.BLUE + "Inserting records into OLD_1280 Took %.2f ms"
                   % (1000*(t1-t0)) + BColors.ENDC)
-    
+
 
 # def populate_db_with_archives(database, archivepath):
-#     """Reads archive list with full _1280.jpg and populate the OLD_1280 table 
-#     with the base filename with and without revision (_r1, _r2) nor extension 
+#     """Reads archive list with full _1280.jpg and populate the OLD_1280 table
+#     with the base filename with and without revision (_r1, _r2) nor extension
 #     : DEPRECATED"""
 #     con = database.connect()
 #     cur = con.cursor()
@@ -691,7 +726,7 @@ def fetch_random_blog(database, con):
         return [None * 8]
     finally:
         con.commit()
-       
+
 
 
 def update_blog_info(Database, con, blog, ignore_response=False):
@@ -919,7 +954,7 @@ def get_remote_id_and_context(post):
                     if item.get('is_current_item') and not item.get('is_root_item') :     # update / reblog -> update DB context
                         logging.warning(BColors.YELLOW + "{0} Replacing {1} content_raw of:{2} \
 with more recently updated version is_current_item: {3}\n{4}"
-                        .format(post.get('blog_name'), post.get('id'), len(attr.get('content_raw')), 
+                        .format(post.get('blog_name'), post.get('id'), len(attr.get('content_raw')),
                         len(item.get('content_raw')), item.get('content_raw')[:1000]) + BColors.ENDC)
                         attr['content_raw']     = item.get('content_raw')
                         reblogged_name          = item_name
@@ -932,8 +967,10 @@ with more recently updated version is_current_item: {3}\n{4}"
             elif post.get('id') == item_remote_id:      # either a self reblog, or just a blog, + blog name is same
                 if item_name == post.get('blog_name'):  # it's just a normal blog, nothing fancy not a reblog but can be part of a reblog (comment added)
                     if item.get('is_current_item'):     # self reblog that was updated! we keep all to update the context explicitly
-                        logging.info(BColors.YELLOW + "Replacing content_raw of:{0} with more recently updated version is_current_item: {1}"
-                        .format(len(attr.get('content_raw')), len(item.get('content_raw'))) + BColors.ENDC)
+                        logging.warning(BColors.YELLOW + "{0} Replacing {1} content_raw of:{2} \
+with more recently updated version is_current_item: {3}\n{4}"
+                        .format(post.get('blog_name'), post.get('id'), len(attr.get('content_raw')),
+                        len(item.get('content_raw')), item.get('content_raw')[:1000]) + BColors.ENDC)
                         attr['content_raw']     = item.get('content_raw')
 
                     elif item.get('is_root_item'):      # just self reblog!
@@ -1005,7 +1042,7 @@ def extract_urls(content, parsehtml=False):
     url_set = set()
     cache = set()
     # http_walk = 0
-  
+
     # t0 = time.time()
     for item in http_url_uber_re.findall(content):
         # logging.warning('matched: {0}'.format(item))
