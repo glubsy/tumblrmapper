@@ -658,7 +658,6 @@ class TumblrBlog:
 
         try:
             self.check_response_validate_update(response_json, updateobj)
-            return
         except:
             raise
 
@@ -763,8 +762,6 @@ class TumblrBlog:
         logging.debug(BColors.BLUEOK + \
         "{0} No error in check_response_validate_update()"\
         .format(self.name) + BColors.ENDC)
-
-        return
 
 
 
@@ -879,7 +876,7 @@ def main(args):
     + os.sep + instances.config.get('tumblrmapper', 'db_filename'),
                 username="sysdba", password="masterkey")
             db_handler.populate_db_with_blogs(temp_database, blogs_toscrape)
-            logging.error(BColors.BLUEOK + BColors.GREEN + "Done inserting blogs"
+            logging.warning(BColors.BLUEOK + BColors.GREEN + "Done inserting blogs"
              + BColors.ENDC)
 
         if args.update_archives:
@@ -894,7 +891,7 @@ def main(args):
             else:
                 db_handler.update_db_with_archives(temp_database,
                 archives_toload, use_pickle=False)
-            logging.error(BColors.BLUEOK + BColors.GREEN +
+            logging.warning(BColors.BLUEOK + BColors.GREEN +
             "Done inserting archives" + BColors.ENDC)
 
         sys.exit(0)

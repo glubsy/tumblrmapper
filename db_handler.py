@@ -27,17 +27,20 @@ http_url_single_re = re.compile(r'(https?(?::\/\/|%3A%2F%2F).*?)(?:\s)*?$', re.I
 http_url_super_re = re.compile(r'(?:\"(https?(?::\/\/|%3A%2F%2F).*?)(?:\")(?:<\/)*?)|(?:(https?:\/\/.*?)(?:(?:\s)|(?:<)))', re.I)
 # matches all urls, even without http or www! https://gist.github.com/uogbuji/705383
 http_url_uber_re = re.compile(r'\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:\'\"\\\/.,<>?\xab\xbb\u201c\u201d\u2018\u2019]))', re.I)
-repattern_tumblr_redirect = re.compile(r't\.umblr\.com\/redirect\?z=(.*)(?:&|&amp;)t=.*', re.I)
+#repattern_tumblr_redirect = re.compile(r't\.umblr\.com\/redirect\?z=(.*)(?:&|&amp;)t=.*', re.I) # obsolete
+repattern_tumblr_redirect = re.compile(r'.*t\.umblr\.com(?:\/|%2F)redirect(?:\?|%3F)z(?:=|%3D)(.*)(?:&|&amp;)t=.*', re.I)
 
 # Deprecated:
 repattern_tumblr = re.compile(r'(tumblr_.*)_.*\..*', re.I) #eliminate '_resol.ext'
 
 repattern_revisions = re.compile(r'(tumblr_.*?)(?:_r\d)?\s*$', re.I) #elimitane '_r1'
 
-urls_blacklist_filter = ['://tmblr.co/', 'strawpoll.me']
+urls_blacklist_filter = ['://tmblr.co/', 'strawpoll.me', 'youtube.com']
 
 htmlparser = HTMLParser()
-FILTERED_URL_GLOBAL_COUNT = set()
+
+#DEBUG:
+# FILTERED_URL_GLOBAL_COUNT = set()
 
 class Database():
     """handle the db file itself, creating everything
@@ -111,7 +114,7 @@ def populate_db_with_tables(database):
         # cur = con.cursor()
         # Create domains
         con.execute_immediate("CREATE DOMAIN D_LONG_TEXT AS VARCHAR(500);")
-        con.execute_immediate("CREATE DOMAIN D_URL AS VARCHAR(1250);")
+        con.execute_immediate("CREATE DOMAIN D_URL AS VARCHAR(1000);")
         con.execute_immediate("CREATE DOMAIN D_POSTURL AS VARCHAR(300);")
         con.execute_immediate("CREATE DOMAIN D_AUTO_ID AS BIGINT;")
         con.execute_immediate("CREATE DOMAIN D_BLOG_NAME AS VARCHAR(60);")
@@ -668,7 +671,7 @@ def populate_db_with_blogs(database, blogpath):
     t0 = time.time()
     dupecount = 0
     with fdb.TransactionContext(con):
-        insert_statement = cur.prep(r'execute procedure insert_blogname(?,?,?)')
+        insert_statement = cur.prep("""execute procedure insert_blogname(?,?,?)""")
 
         for blog, priority in read_csv_bloglist(blogpath):
             params = (blog.rstrip() , 'new', priority)
@@ -1030,6 +1033,7 @@ def filter_content_raw(content, parsehtml=False):
 
 
 def found_filtered(capped):
+    """Completely filter our urls which include strings in filter"""
     for filtered in urls_blacklist_filter:
         if capped.find(filtered) != -1: # redirect
             break
@@ -1067,7 +1071,7 @@ def extract_urls(content, parsehtml=False):
                 # http_walk += capped.count('http') # we usually find 3 occurences
                 capped = reresult.group(1)
 
-            # capped = htmlparser.unescape(capped) # remove &amp;
+            # capped = htmlparser.unescape(capped) # remove &amp; -> &
             capped = parse.unquote(capped)         # remove %3A%2F%2F and %20 spaces
 
             # if capped in url_set:
@@ -1094,9 +1098,10 @@ def extract_urls(content, parsehtml=False):
     #         logging.info(BColors.BLUE +  "Added singleton back: "
     #         + singleton.group(1) + BColors.ENDC)
 
-    global FILTERED_URL_GLOBAL_COUNT
-    for item in url_set:
-        FILTERED_URL_GLOBAL_COUNT.add(item)
+    #DEBUG: counting all url found
+    # global FILTERED_URL_GLOBAL_COUNT
+    # for item in url_set:
+    #     FILTERED_URL_GLOBAL_COUNT.add(item)
     return url_set
 
 
@@ -1288,8 +1293,9 @@ def inserted_urls(cur, post):
         # insertstmt = cur.prep('insert into URLS (file_url,post_id,remote_id) values (?,?,?);')
         for photo in photos:
             # logging.debug("inserting normal url:{0}".format(photo.get('original_size').get('url')))
-            global FILTERED_URL_GLOBAL_COUNT
-            FILTERED_URL_GLOBAL_COUNT.add(photo.get('original_size').get('url'))
+            # DEBUG
+            # global FILTERED_URL_GLOBAL_COUNT
+            # FILTERED_URL_GLOBAL_COUNT.add(photo.get('original_size').get('url'))
             try:
                 cur.callproc('insert_url', (
                             photo.get('original_size').get('url'),
@@ -1329,11 +1335,11 @@ def inserted_urls(cur, post):
             errors += 1
             if str(e).find('is too long, expected') != 1:
                 try:
-                    cur.callproc('insert_url', (url[:1249], post.get('id'), post.get('remote_id')))
+                    cur.callproc('insert_url', (url[:999], post.get('id'), post.get('remote_id')))
                 except:
                     continue
                 logging.critical(BColors.BLUEOK + "Instead, inserted trimmed url {0}."
-                .format(url[:1249]))
+                .format(url[:999]))
                 errors -= 1
             continue
 
@@ -1388,5 +1394,5 @@ if __name__ == "__main__":
         print(BColors.BLUEOK + "processed: {0}".format(processed) + BColors.ENDC)
     con.close()
 
-    print('FILTERED_URL_GLOBAL_COUNT: {0}'.format(len(FILTERED_URL_GLOBAL_COUNT)))
+    # print('FILTERED_URL_GLOBAL_COUNT: {0}'.format(len(FILTERED_URL_GLOBAL_COUNT)))
 
