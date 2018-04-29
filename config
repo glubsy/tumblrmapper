@@ -10,7 +10,7 @@ data_path = /home/firebird
 
 db_filepath = /home/firebird
 
-db_filename = tumblrmapper_test.fdb
+db_filename = tumblrmapper.fdb
 
 threads = 5
 
@@ -22,13 +22,13 @@ use_proxies = True
 
 proxies = proxies.json
 
-log_level = INFO
+log_level = DEBUG
 
 api_keys = api_keys.json
 
 # will be looked up from script directory root
-blogs_to_scrape = tools/tumblr_blogs_toscrape_test.txt
-# blogs_to_scrape = tools/tumblr_blogs_toscrape.txt
+# blogs_to_scrape = tools/tumblr_blogs_toscrape_test.txt
+blogs_to_scrape = tools/tumblr_blogs_toscrape.txt
 
 # will be looked up from script directory root
 archives = tools/archives_minus_raw_minus_todelete_pickle.txt

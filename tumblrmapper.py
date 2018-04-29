@@ -21,11 +21,11 @@ import instances
 import proxies
 from constants import BColors
 import archive_lists
-try:
-    from tqdm import tqdm
-    TQDM_AVAILABLE = True
-except ImportError:
-    TQDM_AVAILABLE = False
+# try:
+#     from tqdm import tqdm
+#     TQDM_AVAILABLE = True
+# except ImportError:
+#     TQDM_AVAILABLE = False
 # import curses
 # import ratelimit
 
@@ -41,8 +41,8 @@ def parse_args():
                         help="Path to config directory.")
     parser.add_argument('-d', '--data_path', action="store", default=None,
                         help="Set default path to data directory, where logs and DB are stored")
-    parser.add_argument('-l', '--log_level', action="store", default="CRITICAL",
-                        help="Set log level: DEBUG, INFO, WARNING, ERROR, CRITICAL (default)")
+    parser.add_argument('-l', '--log_level', action="store", default="warning",
+                        help="Set log level: DEBUG, INFO, WARNING (default), ERROR, CRITICAL")
 
     # actiongrp = parser.add_mutually_exclusive_group()
     parser.add_argument('-u', '--create_archive_list', action="store_true",
@@ -204,7 +204,7 @@ def process(db, lock, db_update_lock, pill2kill):
             "{0} CRAWL_STATUS was neither resume nor new nor done: {1}"\
             .format(blog.name, blog.crawl_status) + BColors.ENDC)
 
-
+        # pbar = init_pbar(blog, position=threading.current_thread().name)
         update_offset_if_new_posts(blog)
 
         while not pill2kill.is_set():
@@ -236,7 +236,8 @@ def process(db, lock, db_update_lock, pill2kill):
                 logging.debug("{0} inserting new posts".format(blog.name))
 
                 insert_posts(db, con, db_update_lock, blog, update)
-                # update_pbar(blog, position=threading.current_thread())
+
+                # update_pbar(pbar, blog)
 
                 if blog.posts_scraped >= blog.total_posts or blog.offset >= blog.total_posts :
                     logging.debug("{0} else loop: total_posts >= posts_scraped or >= offset, breaking loop!"
@@ -247,7 +248,7 @@ def process(db, lock, db_update_lock, pill2kill):
         check_blog_end_of_posts(db, con, blog)
         db_handler.update_blog_info(db, con, blog, ignore_response=True)
 
-        logging.warning(BColors.GREENOK + BColors.BOLD + BColors.GREEN + 
+        logging.warning(BColors.GREENOK + BColors.BOLD + BColors.GREEN +
         "{0} Done scraping. Total {1}/{2}"
         .format(blog.name, blog.posts_scraped, blog.total_posts) + BColors.ENDC)
 
@@ -265,13 +266,14 @@ def process(db, lock, db_update_lock, pill2kill):
 
 
 
-def init_pbar(blog, position):
-    position = position[-1] - 3
-    pbar = tqdm(unit="post", total=int(blog.total_posts), position=position)
-    pbar.write("thread position {0}".format(position))
+# def init_pbar(blog, position):
+#     position = int(position[-1]) - 3
+#     pbar = tqdm(unit="post", total=int(blog.total_posts), position=position)
+#     pbar.write("thread position {0}".format(position))
+#     return pbar
 
-def update_pbar(pbar, blog):
-    pbar.update(blog.offset)
+# def update_pbar(pbar, blog):
+#     yield pbar.update(blog.offset)
 
 
 def insert_posts(db, con, db_update_lock, blog, update):
@@ -622,6 +624,11 @@ class TumblrBlog:
 
                 api_keys.inc_key_request(api_key)
 
+                try:
+                    response_json = self.parse_json(response)
+                except:
+                    raise
+
             except (requests.exceptions.ProxyError, requests.exceptions.Timeout) as e:
                 logging.info(BColors.FAIL + "{0} Proxy error (continuing): {1}"\
                 .format(self.name, e.__repr__()) + BColors.ENDC)
@@ -634,23 +641,22 @@ class TumblrBlog:
                 .format(self.name, e.__repr__()) + BColors.ENDC)
                 # raise
                 pass
+            except (json.decoder.JSONDecodeError) as e:
+                logging.info(BColors.FAIL + "Fatal error decoding json, should be removing proxy {1}"
+                .format(self.proxy_object.get('ip_address')) + BColors.ENDC)
+                #self.get_new_proxy(lock)
+                continue
             break
 
         try:
-            self.check_response_validate_update(response, updateobj)
+            self.check_response_validate_update(response_json, updateobj)
             return
         except:
             raise
 
 
-    def check_response_validate_update(self, response, update):
-        """ Reads the response object, updates the blog attributes accordingly.
-        Last checks before updating BLOG table with info
-        if unauthorized in response, change API key here, etc."""
-        # TESTING:
-        # update = parse_json_response(json.load(open\
-        # (SCRIPTDIR + "/tools/test/videogame-fantasy_july_reblogfalse_dupe.json", 'r')))
-
+    def parse_json(self, response):
+        """Parse requests.Response() to get json"""
         try:
             response_json = response.json()
         except (ValueError, json.decoder.JSONDecodeError):
@@ -660,14 +666,14 @@ class TumblrBlog:
 
             try:
                 response_json = response.text.split('''"response":{''')[1]
-                response_json = r'{"meta": {"status": 200,"msg": "OK","x_tumblr_content_rating": "adult"},' + response_json
+                response_json = r'{"meta": {"status": 200,"msg": "OK","x_tumblr_content_rating": "adult"},' + response_json[:-1]
                 logging.debug(BColors.YELLOW + "split: {0}"
                 .format(response_json[:1000]) + BColors.ENDC)
                 try:
                     response_json = response.json()
                 except:
-                    logging.debug(BColors.FAIL + "Fucking damnit can't get a good json!\n{0}"
-                    .format(response_json) + BColors.ENDC)
+                    logging.debug(BColors.FAIL + "Fucking damnit can't get a good json!\nProxy: {0}\n{1}"
+                    .format(self.proxy_object.get('ip_address'), response_json[:2000]) + BColors.ENDC)
                     raise
             except:
                 response_json = {'meta': {'status': 500, 'msg': 'Server Error'},
@@ -677,7 +683,13 @@ class TumblrBlog:
             + "{0} Fatal Error trying to get json from response: {1}"
             .format(self.name, response.text) + BColors.ENDC)
             raise
+        return response_json
 
+
+    def check_response_validate_update(self, response_json, update):
+        """ Reads the response object, updates the blog attributes accordingly.
+        Last checks before updating BLOG table with info
+        if unauthorized in response, change API key here, etc."""
 
         logging.debug(BColors.LIGHTCYAN +
         "{0} Before parsing reponse check_response_validate_update response_json status={1} response_json msg {2}"\
@@ -715,8 +727,8 @@ class TumblrBlog:
                 update.valid = True
                 return
 
-            if update.errors_title.find("error") != -1 and\
-                update.errors_title.find("Unauthorized") != -1:
+            if response_json.get('errors', [{}])[0].get('title', str()).find("error") != -1 and\
+                response_json.get('errors', [{}])[0].get('title', str()).find("Unauthorized") != -1:
 
                 logging.critical(BColors.FAIL +
                 "{0} is unauthorized! Rolling for a new API key.\n{1}"\
@@ -726,7 +738,7 @@ class TumblrBlog:
                 update.valid = False
                 return
 
-            logging.info(BColors.FAIL +
+            logging.error(BColors.FAIL +
             "{0} uncaught error in response: {1}"
             .format(self.name, repr(update.__dict__)[:1000]) + BColors.ENDC)
             update.valid = False
@@ -751,7 +763,7 @@ class TumblrBlog:
 class UpdatePayload(requests.Response):
     """ Container dictionary holding values from json to pass along """
     def __init__(self):
-        self.errors_title = None
+        self.errors_title = str()
         self.valid = False
         self.meta_status = None
         self.meta_msg = None

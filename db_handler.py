@@ -128,9 +128,9 @@ CREATE TABLE BLOGS (
 AUTO_ID         D_AUTO_ID PRIMARY KEY,
 BLOG_NAME       D_BLOG_NAME,
 HEALTH          varchar(5),
-TOTAL_POSTS     INTEGER,
 CRAWL_STATUS    varchar(10) DEFAULT NULL,
 CRAWLING        D_BOOLEAN default 0,
+TOTAL_POSTS     INTEGER,
 POST_OFFSET     INTEGER,
 POSTS_SCRAPED   INTEGER,
 LAST_CHECKED    D_EPOCH,
@@ -520,6 +520,12 @@ END""")
 AS BEGIN
 update BLOGS set CRAWLING = 0 where BLOG_NAME = :i_name;
 END""")
+
+
+
+        # insert_archive
+        # 'inputs are (filename without revision, filename, path origin) if path is already
+        # in the path col, append it with ## before it. Returns 1 if filename was found.
         con.execute_immediate(\
 """
 create or alter procedure insert_archive (i_f varchar(60),
@@ -547,10 +553,7 @@ ELSE
     end
 end""")
 
-        con.execute_immediate(
-"""COMMENT ON procedure insert_archive
-'inputs are (filename without revision, filename, path origin) if path is already
-in the path col, append it with ## before it. Returns 1 if filename was found.'""")
+
 
             #reset column CRAWLING on script startup in case we halted without cleaning
 
@@ -620,10 +623,9 @@ def update_db_with_archives(database, archivepath, use_pickle=True):
                 logging.error(BColors.FAIL + "Error while inserting archive: {}"
                 .format(repr(e)))
         con.commit()
-        logging.warning(BColors.BLUE + "Found {0} items already present \
-while inserting archives.\n\
-inserted {1} new items."
-        .format(dupecount, len(oldfiles) - dupecount) + BColors.ENDC)
+        logging.warning(BColors.BLUE + "Total archives to insert: {0}. Found {1} items already present \
+while inserting archives. Inserted {2} new items."
+        .format(len(oldfiles), dupecount, len(oldfiles) - dupecount) + BColors.ENDC)
     t1 = time.time()
     logging.warning(BColors.BLUE + "Inserting records into OLD_1280 Took %.2f ms"
                   % (1000*(t1-t0)) + BColors.ENDC)
@@ -666,7 +668,7 @@ def populate_db_with_blogs(database, blogpath):
     t0 = time.time()
     dupecount = 0
     with fdb.TransactionContext(con):
-        insert_statement = cur.prep("execute procedure insert_blogname(?,?,?)")
+        insert_statement = cur.prep(r'execute procedure insert_blogname(?,?,?)')
 
         for blog, priority in read_csv_bloglist(blogpath):
             params = (blog.rstrip() , 'new', priority)
@@ -953,9 +955,9 @@ def get_remote_id_and_context(post):
 
                     if item.get('is_current_item') and not item.get('is_root_item') :     # update / reblog -> update DB context
                         logging.warning(BColors.YELLOW + "{0} Replacing {1} content_raw of:{2} \
-with more recently updated version is_current_item: {3}\n{4}"
+with more recently updated version is_current_item: {3}\n{4}\n{5}"
                         .format(post.get('blog_name'), post.get('id'), len(attr.get('content_raw')),
-                        len(item.get('content_raw')), item.get('content_raw')[:1000]) + BColors.ENDC)
+                        len(item.get('content_raw')), attr.get('content_raw')[:1000], item.get('content_raw')[:1000]) + BColors.ENDC)
                         attr['content_raw']     = item.get('content_raw')
                         reblogged_name          = item_name
 
@@ -968,9 +970,9 @@ with more recently updated version is_current_item: {3}\n{4}"
                 if item_name == post.get('blog_name'):  # it's just a normal blog, nothing fancy not a reblog but can be part of a reblog (comment added)
                     if item.get('is_current_item'):     # self reblog that was updated! we keep all to update the context explicitly
                         logging.warning(BColors.YELLOW + "{0} Replacing {1} content_raw of:{2} \
-with more recently updated version is_current_item: {3}\n{4}"
+with more recently updated version is_current_item: {3}\n{4}\n{5}"
                         .format(post.get('blog_name'), post.get('id'), len(attr.get('content_raw')),
-                        len(item.get('content_raw')), item.get('content_raw')[:1000]) + BColors.ENDC)
+                        len(item.get('content_raw')), attr.get('content_raw')[:1000], item.get('content_raw')[:1000]) + BColors.ENDC)
                         attr['content_raw']     = item.get('content_raw')
 
                     elif item.get('is_root_item'):      # just self reblog!
