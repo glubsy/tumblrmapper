@@ -138,6 +138,7 @@ def input_thread(event, worker_threads):
             event.set()
             return
         if input():
+            logging.critical("Received keyboard input, stopping threads")
             event.set()
 
     # while True:
@@ -235,7 +236,10 @@ def process(db, lock, db_update_lock, pill2kill):
             else:
                 logging.debug("{0} inserting new posts".format(blog.name))
 
-                insert_posts(db, con, db_update_lock, blog, update)
+                try:
+                    insert_posts(db, con, db_update_lock, blog, update)
+                except:
+                    raise
 
                 # update_pbar(pbar, blog)
 
@@ -256,7 +260,7 @@ def process(db, lock, db_update_lock, pill2kill):
             break
 
 
-    logging.debug(BColors.LIGHTGRAY + "Terminating thread {0}"\
+    logging.warning(BColors.LIGHTGRAY + "Terminating thread {0}"\
     .format(threading.current_thread()) + BColors.ENDC)
 
     if blog is None or blog.name is None:
@@ -605,6 +609,8 @@ class TumblrBlog:
         instances.sleep_here(0, 4)
         attempt = 0
         response = requests.Response()
+        response_json = {'meta': {'status': 500, 'msg': 'Server Error'},
+        'response': [], 'errors': [{"title": "Malformed JSON or HTML was returned."}]}
 
         if not self.requests_session:
             self.init_session()
@@ -646,6 +652,8 @@ class TumblrBlog:
                 .format(self.proxy_object.get('ip_address')) + BColors.ENDC)
                 #self.get_new_proxy(lock)
                 continue
+            except:
+                continue
             break
 
         try:
@@ -665,7 +673,7 @@ class TumblrBlog:
             .format(self.name, response.text[:1000]) + BColors.ENDC)
 
             try:
-                response_json = response.text.split('''"response":{''')[1]
+                response_json = response.text.split('''"response":{''')[1] # for some reason, sometimes it fails there?
                 response_json = r'{"meta": {"status": 200,"msg": "OK","x_tumblr_content_rating": "adult"},' + response_json[:-1]
                 logging.debug(BColors.YELLOW + "split: {0}"
                 .format(response_json[:1000]) + BColors.ENDC)

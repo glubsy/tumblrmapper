@@ -111,7 +111,7 @@ def populate_db_with_tables(database):
         # cur = con.cursor()
         # Create domains
         con.execute_immediate("CREATE DOMAIN D_LONG_TEXT AS VARCHAR(500);")
-        con.execute_immediate("CREATE DOMAIN D_URL AS VARCHAR(250);")
+        con.execute_immediate("CREATE DOMAIN D_URL AS VARCHAR(1250);")
         con.execute_immediate("CREATE DOMAIN D_POSTURL AS VARCHAR(300);")
         con.execute_immediate("CREATE DOMAIN D_AUTO_ID AS BIGINT;")
         con.execute_immediate("CREATE DOMAIN D_BLOG_NAME AS VARCHAR(60);")
@@ -823,7 +823,10 @@ def insert_posts(database, con, blog, update):
     # with fdb.TransactionContext(con):
     for post in update.posts_response: # list of dicts
 
-        get_remote_id_and_context(post)
+        try:
+            get_remote_id_and_context(post)
+        except:
+            raise
 
         results = inserted_post(cur, post)
         if not results[0]: # skip the rest because we need post entry in POSTS table
@@ -874,8 +877,8 @@ def get_remote_id_and_context(post):
     post['full_context'] = ''
     attr = { # potentially good fields holding context data
         'reblog':                post.get('reblog'),
-        'comment':               None,
-        'tree_html':             None,
+        'comment':               "",
+        'tree_html':             "",
         'body':                  post.get('body'), #FIXME: maybe can default to '' here, not None
         'caption':               post.get('caption'),
         'source_url':            post.get('source_url'),  # type: video, audio
@@ -954,8 +957,8 @@ def get_remote_id_and_context(post):
                         continue
 
                     if item.get('is_current_item') and not item.get('is_root_item') :     # update / reblog -> update DB context
-                        logging.warning(BColors.YELLOW + "{0} Replacing {1} content_raw of:{2} \
-with more recently updated version is_current_item: {3}\n{4}\n{5}"
+                        logging.info(BColors.YELLOW + "{0} Replacing {1} content_raw of:{2} \
+with more recently updated version is_current_item: {3}\n{4}\n----------\n{5}"
                         .format(post.get('blog_name'), post.get('id'), len(attr.get('content_raw')),
                         len(item.get('content_raw')), attr.get('content_raw')[:1000], item.get('content_raw')[:1000]) + BColors.ENDC)
                         attr['content_raw']     = item.get('content_raw')
@@ -969,8 +972,8 @@ with more recently updated version is_current_item: {3}\n{4}\n{5}"
             elif post.get('id') == item_remote_id:      # either a self reblog, or just a blog, + blog name is same
                 if item_name == post.get('blog_name'):  # it's just a normal blog, nothing fancy not a reblog but can be part of a reblog (comment added)
                     if item.get('is_current_item'):     # self reblog that was updated! we keep all to update the context explicitly
-                        logging.warning(BColors.YELLOW + "{0} Replacing {1} content_raw of:{2} \
-with more recently updated version is_current_item: {3}\n{4}\n{5}"
+                        logging.info(BColors.YELLOW + "{0} Replacing {1} content_raw of:{2} \
+with more recently updated version is_current_item: {3}\n{4}\n----------\n{5}"
                         .format(post.get('blog_name'), post.get('id'), len(attr.get('content_raw')),
                         len(item.get('content_raw')), attr.get('content_raw')[:1000], item.get('content_raw')[:1000]) + BColors.ENDC)
                         attr['content_raw']     = item.get('content_raw')
@@ -1210,7 +1213,7 @@ def inserted_post(cur, post):
             post.get('reblogged_name')      # reblogged_blog_name
             ))
     except fdb.DatabaseError as e:
-        if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
+        if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != 1:
             e = "duplicate"
         logging.error(BColors.FAIL + "DB ERROR" + BColors.BLUE + \
         " post\t{0}: {1}".format(post.get('id'), e) + BColors.ENDC)
@@ -1247,17 +1250,31 @@ def inserted_context(cur, post):
                     ))
         # logging.warning("context returns: {0} ".format(repr(cur.fetchall())))
     except fdb.DatabaseError as e:
-        if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
+        if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != 1:
             e = "duplicate"
         logging.info(BColors.FAIL + "DB ERROR" + BColors.BLUE
         + " context\t{0}: {1}".format(post.get('id'), e) + BColors.ENDC)
         errors += 1
         success = True
-    except Exception as e:
-        logging.debug(BColors.FAIL + "ERROR"
-        + " context\t{0}: {1}".format(post.get('id'), e) + BColors.ENDC)
+    except BaseException as e:
+        logging.critical(BColors.FAIL + "ERROR" + " context\t{0}: {1}"
+        .format(post.get('id'), e) + BColors.ENDC)
         errors += 1
         success = False
+        if str(e).find('is too long, expected') != 1:
+            try:
+                cur.callproc('insert_context',
+                (post.get('id'), post.get('timestamp'),
+                post.get('remote_id'), post.get('content_raw')[:32720]))
+
+                logging.critical(BColors.BLUEOK +
+                "Instead, inserted trimmed context {0}[...]"
+                .format(post.get('content_raw')[:1000]))
+
+                errors -= 1
+                success = True
+            except:
+                pass
 
     # con.commit()
     return success, errors
@@ -1280,7 +1297,7 @@ def inserted_urls(cur, post):
                             post.get('remote_id')
                             ))
             except fdb.DatabaseError as e:
-                if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
+                if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != 1:
                     e = "duplicate"
                 logging.info(BColors.FAIL + "DB ERROR" + BColors.BLUE
                             + " url\t{0}: {1}".format(
@@ -1299,13 +1316,27 @@ def inserted_urls(cur, post):
                         post.get('remote_id')
                         ))
         except fdb.DatabaseError as e:
-            if str(e).find("violation of PRIMARY or UNIQUE KEY constraint"):
+            if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != 1:
                 e = "duplicate"
             logging.info(BColors.FAIL + "DB ERROR" + BColors.BLUE
             + " url\t{0}: {1}".format(
             url, e) + BColors.ENDC)
             errors += 1
             continue
+        except BaseException as e:
+            logging.critical(BColors.FAIL + "Error inserting url {0}. {1}"
+            .format(url, repr(e)) + BColors.ENDC)
+            errors += 1
+            if str(e).find('is too long, expected') != 1:
+                try:
+                    cur.callproc('insert_url', (url[:1249], post.get('id'), post.get('remote_id')))
+                except:
+                    continue
+                logging.critical(BColors.BLUEOK + "Instead, inserted trimmed url {0}."
+                .format(url[:1249]))
+                errors -= 1
+            continue
+
     # con.commit()
 
     return True, errors

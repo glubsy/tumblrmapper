@@ -184,7 +184,7 @@ class ProxyScanner():
                     q.task_done()
 
             q = Queue()
-            for x in range(10): #FIXME: harrcoded 10 threads
+            for _ in range(10): #FIXME: harrcoded 10 threads
                 t = threading.Thread(target=threader)
 
                 # classifying as a daemon, so they will die when the main dies
@@ -211,7 +211,7 @@ class ProxyScanner():
     def get_ua_set(self, maxlength):
         """Returns a set of random UAs, of size maxlength"""
         ua_set = set()
-        for i in range(0, maxlength): #FIXME: hardcoded
+        for _ in range(0, maxlength): #FIXME: hardcoded
             ua_string = ua.random
             ua_set.add(ua_string)
         logging.debug("ua_set length: {0}".format(len(ua_set)))
