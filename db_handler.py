@@ -10,7 +10,7 @@ import logging
 from collections import defaultdict
 # import html.parser
 from urllib import parse
-from html.parser import HTMLParser
+import html.parser
 from operator import itemgetter
 import fdb
 # import cProfile
@@ -37,7 +37,7 @@ repattern_revisions = re.compile(r'(tumblr_.*?)(?:_r\d)?\s*$', re.I) #elimitane 
 
 urls_blacklist_filter = ['://tmblr.co/', 'strawpoll.me', 'youtube.com']
 
-htmlparser = HTMLParser()
+htmlparser = html.parser.HTMLParser()
 
 #DEBUG:
 # FILTERED_URL_GLOBAL_COUNT = set()
@@ -1071,7 +1071,7 @@ def extract_urls(content, parsehtml=False):
                 # http_walk += capped.count('http') # we usually find 3 occurences
                 capped = reresult.group(1)
 
-            # capped = htmlparser.unescape(capped) # remove &amp; -> &
+            # capped = html.unescape(capped) # remove &amp; -> &
             capped = parse.unquote(capped)         # remove %3A%2F%2F and %20 spaces
 
             # if capped in url_set:
@@ -1331,7 +1331,7 @@ def inserted_urls(cur, post):
             continue
         except BaseException as e:
             logging.critical(BColors.FAIL + "Error inserting url {0}. {1}"
-            .format(url, repr(e)) + BColors.ENDC)
+            .format(url, repr(e)) + BColors.ENDC, exc_info=True)
             errors += 1
             if str(e).find('is too long, expected') != 1:
                 try:
@@ -1370,7 +1370,7 @@ def unittest_update_table(db, con, payload):
 if __name__ == "__main__":
     SCRIPTDIR = os.path.dirname(__file__) + os.sep
     args = tumblrmapper.parse_args()
-    tumblrmapper.configure_logging(args)
+    tumblrmapper.setup_config(args)
 
     blogs_toscrape = SCRIPTDIR + "tools/blogs_toscrape_test.txt"
     archives_toload = SCRIPTDIR +  "tools/1280_files_list.txt"

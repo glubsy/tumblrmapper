@@ -20,6 +20,7 @@ import db_handler
 import instances
 import proxies
 from constants import BColors
+from logging.handlers import RotatingFileHandler
 import archive_lists
 # try:
 #     from tqdm import tqdm
@@ -108,7 +109,7 @@ def parse_config(config_path=SCRIPTDIR, data_path=None):
     config.set('tumblrmapper', 'db_filepath', \
     os.path.expanduser(config.get('tumblrmapper', 'db_filepath')))
 
-    logging.debug("Merged config: %s",
+    logging.info("Merged config: %s",
                 sorted(dict(config.items('tumblrmapper')).items()))
 
     return config
@@ -286,8 +287,9 @@ def insert_posts(db, con, db_update_lock, blog, update):
         blog.posts_scraped += processed_posts - errors # added - errors
         blog.offset += processed_posts
 
-        logging.debug("{0} Posts just scraped {1} Offset is now: {2}"\
-        .format(blog.name, blog.posts_scraped, blog.offset))
+        logging.warning(BColors.LIGHTYELLOW + 
+        "{0} Posts just scraped {1} Offset is now: {2}"
+        .format(blog.name, blog.posts_scraped, blog.offset) + BColors.ENDC)
 
     # we may have 0 due to dupes causing errors to negate our processed_posts count
     if blog.posts_scraped == 0:
@@ -410,7 +412,7 @@ def check_db_init_response(db_response, blog, isnew=False):
 
             logging.warning(BColors.BOLD + \
             "{0} has been updated. Old total_posts {1}, new total_posts {2}. \
-            Offset will be pushed by {3}"\
+Offset will be pushed by {3}"\
             .format(blog.name, db_response.get('last_total_posts'), \
             blog.total_posts, blog.new_posts) + BColors.ENDC)
 
@@ -824,30 +826,31 @@ def thread_premature_cleanup(db, con, blog, reset_type):
     db_handler.reset_to_brand_new(db, con, blog, reset_type='new')
 
 
-def configure_logging(args):
+def setup_config(args):
 
-    logging.basicConfig(format='{levelname}:    \t{message}', style='{',
-                        level=getattr(logging, args.log_level.upper()))
-    logger = logging.getLogger()
+    # logging.basicConfig(format='{levelname}:    \t{message}', style='{',
+    #                     level=getattr(logging, args.log_level.upper()))
+    rootLogger = logging.getLogger()
+    rootLogger.setLevel(logging.DEBUG)
+    # rootLogger.propagate = False
+
+    sh = logging.StreamHandler(sys.stdout)
+    sh.setLevel(getattr(logging, args.log_level.upper()))
+    sh.setFormatter(logging.Formatter('{levelname}  :\t{message}', None, '{'))
+    rootLogger.addHandler(sh)
 
     instances.config = parse_config(args.config_path, args.data_path)
 
-    fh = logging.FileHandler(filename=instances.config.get('tumblrmapper', 'log_path'),
-                            mode='w')
-
+    fh = logging.handlers.RotatingFileHandler(filename=instances.config.get('tumblrmapper', 'log_path'),
+                            mode='a', maxBytes=10000, backupCount=1)
     fh.setLevel(getattr(logging, instances.config.get('tumblrmapper', 'log_level')))
     fh.setFormatter(logging.Formatter(
                     '{asctime} {levelname}:{threadName}\t{message}',
                     '%y/%m/%d %H:%M:%S', '{'))
-    logger.addHandler(fh)
-
-    # sh = logging.StreamHandler(sys.stdout)
-    # sh.setLevel(getattr(logging, args.log_level.upper()))
-    # sh.setFormatter(logging.Formatter('{levelname}:\t{message}', None, '{'))
-    # logger.addHandler(sh)
+    rootLogger.addHandler(fh)
 
     logging.debug("Debugging Enabled.")
-    return logger
+    return rootLogger
 
 
 def main(args):
@@ -1006,6 +1009,6 @@ if __name__ == "__main__":
 
     # parse command-line arguments
     args = parse_args()
-    configure_logging(args)
+    setup_config(args)
 
     main(args)

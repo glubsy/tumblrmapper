@@ -23,10 +23,10 @@ def get_api_key_object_list(api_keys_filepath):
                             secret_key=item.get('secret_key'),
                             hour_check_time=item.get('hour_check_time'),
                             day_check_time=item.get('day_check_time'),
-                            last_written_time=item.get('last_written_time', 0.0),
+                            last_written_time=item.get('last_written_time'),
                             bucket_hour=item.get('bucket_hour'),
                             bucket_day=item.get('bucket_day'),
-                            disabled=item.get('disabled'),\
+                            disabled=item.get('disabled'),
                             disabled_until=item.get('disabled_until'),
                             blacklisted=item.get('blacklisted')
                             ))
@@ -50,10 +50,9 @@ def write_api_keys_to_json(keylist=None, myfilepath=None):
     if not myfilepath:
         myfilepath = instances.config.get('tumblrmapper', 'api_keys')
 
-    now = time.time()
     api_dict = { "api_keys": [] }
     for obj in keylist:
-        obj.last_written_time = now
+        obj.last_written_time = int(time.time())
         api_dict['api_keys'].append(obj.__dict__)
 
     # DEBUG
@@ -123,8 +122,10 @@ def remove_key(api_key_object):
 
 def inc_key_request(api_key):
     api_key.use_once()
-    logging.debug(BColors.LIGHTPINK + "API key used: {0}. Number of request left: {1}/{2}"\
-    .format(api_key.api_key, api_key.bucket_hour, api_key.bucket_day) + BColors.ENDC)
+    api_key.print_count += 1
+    if (api_key.print_count % 10) == 0: # every 10 times, display it
+        logging.warning(BColors.MAGENTA + "API key used: {0}. Number of request left: {1}/{2}"\
+        .format(api_key.api_key, api_key.bucket_hour, api_key.bucket_day) + BColors.ENDC)
 
 
 class APIKey:
@@ -135,23 +136,23 @@ class APIKey:
     epoch_hour = 3600
 
     def __init__(self, *args, **kwargs):
-        self.api_key = kwargs.get('api_key', None)
-        self.secret_key = kwargs.get('secret_key', None)
-        self.request_num = 0
+        self.api_key = kwargs.get('api_key')
+        self.secret_key = kwargs.get('secret_key')
         self.hour_check_time = kwargs.get('hour_check_time', float())
         self.day_check_time = kwargs.get('day_check_time', float())
         self.last_used_hour = kwargs.get('last_used_hour', float())
         self.last_used_day = kwargs.get('last_used_day', float())
-        self.last_written_time = kwargs.get('last_written_time', float(0))
-        self.disabled = kwargs.get('disabled', None)
-        self.disabled_until = kwargs.get('disabled_until', None)
+        self.last_written_time = kwargs.get('last_written_time', int())
+        self.disabled = kwargs.get('disabled')
+        self.disabled_until = kwargs.get('disabled_until')
         self.blacklisted = kwargs.get('blacklisted', False)
         self.bucket_hour = kwargs.get('bucket_hour', float(1000))
         self.bucket_day = kwargs.get('bucket_day', float(5000))
+        self.print_count = 0
 
     def disable_until(self, duration=3600):
-        """returns date until it's disabled"""
-        now = time.time()
+        """duration in second, computes date from now until it's disabled"""
+        now = int(time.time())
         self.disabled = True
         self.disabled_until = now + duration
 
@@ -161,7 +162,9 @@ class APIKey:
         return False
 
     def enable(self):
-        now = time.time()
+        """If not disabled or blacklisted, returns True,
+        if disabled_until is overdue, enable and returns True, else returns False"""
+        now = int(time.time())
         if not self.disabled and not self.blacklisted:
             return True
         if (now >= self.disabled_until):
@@ -170,6 +173,7 @@ class APIKey:
         return False
 
     def use_once(self):
+        """Decrements bucket of tocken by one, disable if reaches 0"""
         self.bucket_hour -= 1
         self.bucket_day -= 1
 
@@ -180,15 +184,27 @@ class APIKey:
 
 
 def threaded_buckets():
-    """ Infinite loop, that adds a token per second to each API object's buckets"""
+    """ Infinite loop, adds a token every 5 second to each API object's buckets"""
 
     # Computes counters back to what they've incremented to while were were offline
-    now = time.time()
+    now = int(time.time())
     for api_obj in instances.api_keys:
         diff = now - api_obj.last_written_time
         api_obj.bucket_hour = min(api_obj.bucket_hour + ((diff/5) * 1.390), 1000) # clamped
+
+#         logging.debug(BColors.MAGENTA + "Compute API status. Key {0}: \nbucket hour {1}, \
+# now {2} last_written_time {3}, difference {4}, diff/5 {5}, *1.390={6}"
+#         .format(api_obj.api_key, api_obj.bucket_hour,
+#         now, api_obj.last_written_time, diff, (diff/5), ((diff/5) * 1.390)) + BColors.ENDC)
+
         # 86400 / 5000 = 0.05787037
         api_obj.bucket_day = min(api_obj.bucket_day +  ((diff/5) * 0.2892), 5000)
+
+#         logging.debug(BColors.MAGENTA + "Compute API status. Key {0}: \nbucket day {1}, \
+# now {2} last_written_time {3}, difference {4}, diff/5 {5}, *0.2892={6}"
+#         .format(api_obj.api_key, api_obj.bucket_day, 
+#         now, api_obj.last_written_time, diff, (diff/5), ((diff/5) * 0.2892)) + BColors.ENDC)
+
         logging.warning(BColors.MAGENTA + "Request left for API key {0}: hour {1} day {2}"
         .format(api_obj.api_key, api_obj.bucket_hour, api_obj.bucket_day) + BColors.ENDC)
 
