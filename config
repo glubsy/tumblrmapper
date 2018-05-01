@@ -8,6 +8,8 @@ password = masterkey
 
 data_path = /home/firebird
 
+log_path = /tmp/scraper.log
+
 db_filepath = /home/firebird
 
 db_filename = tumblrmapper.fdb

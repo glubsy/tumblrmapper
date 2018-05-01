@@ -2,7 +2,16 @@
 import csv
 import json
 import os
-import re
+# import re
+HAS_RE2 = False
+try:
+    import re2 as re #pip install git+https://github.com/andreasvc/pyre2.git to fix potential catastrophic backtracking failures
+    HAS_RE2 = True
+except ImportError:
+    HAS_RE2 = False
+    import re
+else:
+    re.set_fallback_notification(re.FALLBACK_WARNING)
 import sys
 import time
 import traceback
@@ -18,15 +27,16 @@ import tumblrmapper
 from constants import BColors
 import archive_lists
 
-
-
 http_url_simple_re = re.compile(r'"(https?(?::\/\/|%3A%2F%2F).*?)"', re.I)
 # for single line with http
 http_url_single_re = re.compile(r'(https?(?::\/\/|%3A%2F%2F).*?)(?:\s)*?$', re.I)
 # matches quoted, between quotes, before html tags
 http_url_super_re = re.compile(r'(?:\"(https?(?::\/\/|%3A%2F%2F).*?)(?:\")(?:<\/)*?)|(?:(https?:\/\/.*?)(?:(?:\s)|(?:<)))', re.I)
 # matches all urls, even without http or www! https://gist.github.com/uogbuji/705383
-http_url_uber_re = re.compile(r'\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:\'\"\\\/.,<>?\xab\xbb\u201c\u201d\u2018\u2019]))', re.I)
+if HAS_RE2:
+    http_url_uber_re = re.compile(r'\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:\'\"\\\/.,<>?\xab\xbb]))', re.I)
+else:
+    http_url_uber_re = re.compile(r'\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:\'\"\\\/.,<>?\xab\xbb\u201c\u201d\u2018\u2019]))', re.I)
 #repattern_tumblr_redirect = re.compile(r't\.umblr\.com\/redirect\?z=(.*)(?:&|&amp;)t=.*', re.I) # obsolete
 repattern_tumblr_redirect = re.compile(r'.*t\.umblr\.com(?:\/|%2F)redirect(?:\?|%3F)z(?:=|%3D)(.*)(?:&|&amp;)t=.*', re.I)
 
@@ -35,7 +45,7 @@ repattern_tumblr = re.compile(r'(tumblr_.*)_.*\..*', re.I) #eliminate '_resol.ex
 
 repattern_revisions = re.compile(r'(tumblr_.*?)(?:_r\d)?\s*$', re.I) #elimitane '_r1'
 
-urls_blacklist_filter = ['://tmblr.co/', 'strawpoll.me', 'youtube.com']
+urls_blacklist_filter = ['://tmblr.co/', 'strawpoll.me', 'youtube.com', 'wikipedia.org', 'wikia.com']
 
 htmlparser = html.parser.HTMLParser()
 

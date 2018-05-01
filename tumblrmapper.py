@@ -216,7 +216,7 @@ def process(db, lock, db_update_lock, pill2kill):
             if blog.posts_scraped >= blog.total_posts or blog.offset >= blog.total_posts:
                 logging.debug(
                 "{0.name} before loop: posts_scraped {0.posts_scraped} or offset\
- {0.blog.offset} >= total_posts {0.total_posts}, breaking loop!".format(blog))
+ {0.offset} >= total_posts {0.total_posts}, breaking loop!".format(blog))
                 break
 
             if not update.posts_response:  # could be some other field attached to blog
@@ -237,7 +237,12 @@ def process(db, lock, db_update_lock, pill2kill):
                     .format(e) + BColors.ENDC)
                     break
 
-                check_header_change(db, con, blog, update)
+                try:
+                    check_header_change(db, con, blog, update)
+                except:
+                    logging.debug("{0}{1}Error checking header change! Breaking.{2}"
+                    .format(BColors.FAIL, blog.name, BColors.ENDC))
+                    break
 
                 if not update.posts_response: # nothing more
                     logging.debug("update.posts_response is {0.posts_response!r}! break".format(update))
@@ -292,13 +297,14 @@ def process(db, lock, db_update_lock, pill2kill):
 def insert_posts(db, con, db_update_lock, blog, update):
     with db_update_lock:
         processed_posts, errors = db_handler.insert_posts(db, con, blog, update)
-        blog.posts_scraped += processed_posts - errors # added - errors
-        blog.offset += processed_posts
+    blog.posts_scraped += processed_posts - errors # added - errors
+    blog.offset += processed_posts
 
-        logging.warning(BColors.LIGHTYELLOW +
-        "{0} Posts just scraped {1} Offset is now: {2}"
-        .format(blog.name, blog.posts_scraped, blog.offset) + BColors.ENDC)
+    logging.warning(BColors.LIGHTYELLOW +
+    "{0} Posts just scraped {1} Offset is now: {2}"
+    .format(blog.name, blog.posts_scraped, blog.offset) + BColors.ENDC)
 
+    db_handler.update_blog_info(db, con, blog, ignore_response=True)
     # we may have 0 due to dupes causing errors to negate our processed_posts count
     if blog.posts_scraped == 0:
         blog.posts_scraped = db_handler.get_total_post(db, con, blog)
@@ -465,6 +471,8 @@ def check_header_change(database, con, blog, update):
 
     if update.total_posts > blog.total_posts:
         # FIXME we have new posts
+        logging.warning("{0}{1.name} just got new posts in header! Updating DB.{2}"
+        .format(BColors.BOLD, blog, BColors.ENDC))
         blog.db_response = db_handler.update_blog_info(database, con, blog)
 
     blog.total_posts = update.total_posts
@@ -600,8 +608,12 @@ class TumblrBlog:
         with lock: # get_new_proxy() requires a lock!
             self.proxy_object = instances.proxy_scanner.get_new_proxy(old_proxy_object)
 
-        self.attach_random_api_key()
-        self.init_session() # refresh session
+        try:
+            self.attach_random_api_key()
+        except:
+            raise
+
+        self.init_session() # refresh request session (proxy ip, user agent)
 
         logging.info(BColors.BLUEOK + "{0} Changed proxy to {1}"\
         .format(self.name, self.proxy_object.get('ip_address')) + BColors.ENDC)
@@ -613,7 +625,10 @@ class TumblrBlog:
         if not api_key:
             api_key = self.api_key_object_ref
         if api_key.is_disabled():
-            self.attach_random_api_key()
+            try:
+                self.attach_random_api_key()
+            except:
+                raise
 
         if not offset or offset == 0:
             offset = ''
@@ -635,6 +650,7 @@ class TumblrBlog:
         .format(self.name, reqtype, api_key.api_key, offset)
 
         while attempt < 10:
+            attempt += 1
             try:
                 logging.info(BColors.GREEN + BColors.BOLD +
                 "{0} GET ip: {1} url: {2}".format(self.name,
@@ -652,9 +668,11 @@ class TumblrBlog:
             except (requests.exceptions.ProxyError, requests.exceptions.Timeout) as e:
                 logging.info(BColors.FAIL + "{0} Proxy {1} error (continuing): {2}"\
                 .format(self.name, self.proxy_object.get('ip_address'), e.__repr__()) + BColors.ENDC)
+                try:
+                    self.get_new_proxy(lock)
+                except:
+                    continue
 
-                self.get_new_proxy(lock)
-                attempt += 1
                 continue
             except (ConnectionError, requests.exceptions.RequestException) as e:
                 logging.info(BColors.FAIL + "{0} Connection error Proxy {1} (passing): {2}"\

@@ -119,6 +119,9 @@ def disable_api_key(api_key_object, duration=3600):
 def get_random_api_key(apikey_list=None):
     """ get a random not disabled api key from instances.api_keys list"""
 
+    # write current state in case we crash and lose status info
+    write_api_keys_to_json()
+
     if not apikey_list:
         apikey_list = instances.api_keys
 
@@ -133,9 +136,10 @@ def get_random_api_key(apikey_list=None):
                 return keycheck
         else:
             return keycheck
-    logging.critical(BColors.FAIL + BColors.BLINKING + 'Attempts exhausted api_key list length! All keys are disabled! Renew them!' + BColors.ENDC)
+    logging.critical(BColors.FAIL + BColors.BLINKING + 
+    'Attempts exhausted api_key list length! All keys are disabled! Renew them!' 
+    + BColors.ENDC)
     raise BaseException("No more enabled API Key available")
-    #TODO: handle this critical error later (exit gracefully)
 
 
 def remove_key(api_key_object):
