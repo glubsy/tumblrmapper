@@ -959,12 +959,14 @@ def get_remote_id_and_context(post):
                     if item.get('is_current_item') and item.get('is_root_item'): #normal post
                         continue
 
-                    if item.get('is_current_item') and not item.get('is_root_item') :     # update / reblog -> update DB context
-                        logging.info(BColors.YELLOW + "{0} Replacing {1} content_raw of:{2} \
-with more recently updated version is_current_item: {3}\n{4}\n----------\n{5}"
-                        .format(post.get('blog_name'), post.get('id'), len(attr.get('content_raw')),
+                    if item.get('is_current_item') and not item.get('is_root_item'):     # update / reblog -> update DB context
+
+                        logging.info(BColors.YELLOW + "{0} Would have replaced id {1} != rid {2} content_raw of:{3} \
+with more recently updated version is_current_item: {4}\n{5}\n----------\n{6}"
+                        .format(post.get('blog_name'), post.get('id'), item_remote_id, len(attr.get('content_raw')),
                         len(item.get('content_raw')), attr.get('content_raw')[:1000], item.get('content_raw')[:1000]) + BColors.ENDC)
-                        attr['content_raw']     = item.get('content_raw')
+
+                        # attr['content_raw']     = item.get('content_raw')
                         reblogged_name          = item_name
 
                     if item.get('is_root_item') and not item.get('is_current_item'):            # just self reblog! normal update name and remote_id, don't update context
@@ -975,10 +977,12 @@ with more recently updated version is_current_item: {3}\n{4}\n----------\n{5}"
             elif post.get('id') == item_remote_id:      # either a self reblog, or just a blog, + blog name is same
                 if item_name == post.get('blog_name'):  # it's just a normal blog, nothing fancy not a reblog but can be part of a reblog (comment added)
                     if item.get('is_current_item'):     # self reblog that was updated! we keep all to update the context explicitly
-                        logging.info(BColors.YELLOW + "{0} Replacing {1} content_raw of:{2} \
+
+                        logging.info(BColors.YELLOW + "{0} Replacing {1} (id = rid) content_raw of:{2} \
 with more recently updated version is_current_item: {3}\n{4}\n----------\n{5}"
                         .format(post.get('blog_name'), post.get('id'), len(attr.get('content_raw')),
                         len(item.get('content_raw')), attr.get('content_raw')[:1000], item.get('content_raw')[:1000]) + BColors.ENDC)
+
                         attr['content_raw']     = item.get('content_raw')
 
                     elif item.get('is_root_item'):      # just self reblog!
@@ -1221,12 +1225,12 @@ def inserted_post(cur, post):
         if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != 1:
             e = "duplicate"
         logging.error(BColors.FAIL + "DB ERROR" + BColors.BLUE + \
-        " post\t{0}: {1}".format(post.get('id'), e) + BColors.ENDC)
+        " post\t{0} : {1}".format(post.get('id'), e) + BColors.ENDC)
         errors += 1
         success = True
     except Exception as e:
         logging.debug(BColors.FAIL + "ERROR" + \
-        " post\t{0}: {1}".format(post.get('id'), e) + BColors.ENDC)
+        " post\t{0} : {1}".format(post.get('id'), e) + BColors.ENDC)
         errors += 1
         success = False
 
@@ -1257,8 +1261,8 @@ def inserted_context(cur, post):
     except fdb.DatabaseError as e:
         if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != 1:
             e = "duplicate"
-        logging.info(BColors.FAIL + "DB ERROR" + BColors.BLUE
-        + " context\t{0}: {1}".format(post.get('id'), e) + BColors.ENDC)
+        logging.debug(BColors.FAIL + "DB ERROR" + BColors.BLUE
+        + " context\t{0} : {1}".format(post.get('id'), e) + BColors.ENDC)
         errors += 1
         success = True
     except BaseException as e:
@@ -1266,7 +1270,7 @@ def inserted_context(cur, post):
         .format(post.get('id'), e) + BColors.ENDC)
         errors += 1
         success = False
-        if str(e).find('is too long, expected') != 1:
+        if str(e).find('is too long, expected') != -1:
             try:
                 cur.callproc('insert_context',
                 (post.get('id'), post.get('timestamp'),
@@ -1305,8 +1309,8 @@ def inserted_urls(cur, post):
             except fdb.DatabaseError as e:
                 if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != 1:
                     e = "duplicate"
-                logging.info(BColors.FAIL + "DB ERROR" + BColors.BLUE
-                            + " url\t{0}: {1}".format(
+                logging.debug(BColors.FAIL + "DB ERROR" + BColors.BLUE
+                            + " url\t{0} : {1}".format(
                             photo.get('original_size').get('url'),
                             e) + BColors.ENDC)
                 errors += 1
@@ -1324,8 +1328,8 @@ def inserted_urls(cur, post):
         except fdb.DatabaseError as e:
             if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != 1:
                 e = "duplicate"
-            logging.info(BColors.FAIL + "DB ERROR" + BColors.BLUE
-            + " url\t{0}: {1}".format(
+            logging.debug(BColors.FAIL + "DB ERROR" + BColors.BLUE
+            + " url\t{0} : {1}".format(
             url, e) + BColors.ENDC)
             errors += 1
             continue
@@ -1333,7 +1337,7 @@ def inserted_urls(cur, post):
             logging.critical(BColors.FAIL + "Error inserting url {0}. {1}"
             .format(url, repr(e)) + BColors.ENDC, exc_info=True)
             errors += 1
-            if str(e).find('is too long, expected') != 1:
+            if str(e).find('is too long, expected') != -1:
                 try:
                     cur.callproc('insert_url', (url[:999], post.get('id'), post.get('remote_id')))
                 except:

@@ -5,15 +5,42 @@ import os
 import random
 import threading
 import logging
+from itertools import cycle
 # import tumblrmapper
 from constants import BColors
 import instances
 
 # logging = logging.getLogger()
 
+class ListCycle(list):
+    """Keeps an up to date cycle of its items"""
+    # caveat: cycle is reset on append/remove
+    # potential fix, reimplement Cycle() ourselves
+
+    def __init__(self):
+        super().__init__()
+        self._cycle = None
+
+    def __next__(self):
+        if self._cycle is None:
+            self.gen_cycle()
+        return next(self._cycle)
+
+    def gen_cycle(self):
+        self._cycle = cycle(i for i in self)
+
+    def append(self, item):
+        self.gen_cycle()
+        super().append(item)
+
+    def remove(self, item):
+        self.gen_cycle()
+        super().remove(item)
+
+
 def get_api_key_object_list(api_keys_filepath):
     """Returns a list of APIKey objects"""
-    api_key_list = list()
+    api_key_list = ListCycle()
 
     # for key, secret in read_api_keys_from_csv(api_keys_filepath + '.txt').items():
     #     api_key_list.append(APIKey(key, secret))
@@ -24,6 +51,8 @@ def get_api_key_object_list(api_keys_filepath):
                             hour_check_time=item.get('hour_check_time'),
                             day_check_time=item.get('day_check_time'),
                             last_written_time=item.get('last_written_time'),
+                            last_used_hour=item.get('last_used_hour'),
+                            last_used_day=item.get('last_used_day'),
                             bucket_hour=item.get('bucket_hour'),
                             bucket_day=item.get('bucket_day'),
                             disabled=item.get('disabled'),
@@ -94,12 +123,11 @@ def get_random_api_key(apikey_list=None):
         apikey_list = instances.api_keys
 
     attempt = 0
-    while True:
-        keycheck = random.choice(apikey_list)
-        # print(keycheck.disabled, keycheck.api_key)
+    while attempt < len(apikey_list):
+        keycheck = next(apikey_list, apikey_list[attempt])
         attempt += 1
-        if attempt >= len(apikey_list):
-            break
+        # if attempt >= len(apikey_list):
+        #     break
         if keycheck.is_disabled():
             if keycheck.enable():
                 return keycheck
@@ -130,18 +158,18 @@ def inc_key_request(api_key):
 
 class APIKey:
     """Api key object to keep track of requests per hour, day"""
-    request_max_hour = 1000
-    request_max_day = 5000
-    epoch_day = 86400
-    epoch_hour = 3600
+    # request_max_hour = 1000
+    # request_max_day = 5000
+    # epoch_day = 86400
+    # epoch_hour = 3600
 
     def __init__(self, *args, **kwargs):
         self.api_key = kwargs.get('api_key')
         self.secret_key = kwargs.get('secret_key')
-        self.hour_check_time = kwargs.get('hour_check_time', float())
-        self.day_check_time = kwargs.get('day_check_time', float())
-        self.last_used_hour = kwargs.get('last_used_hour', float())
-        self.last_used_day = kwargs.get('last_used_day', float())
+        self.hour_check_time = kwargs.get('hour_check_time', int())
+        self.day_check_time = kwargs.get('day_check_time', int())
+        self.last_used_hour = kwargs.get('last_used_hour', int(time.time()))
+        self.last_used_day = kwargs.get('last_used_day', int(time.time()))
         self.last_written_time = kwargs.get('last_written_time', int())
         self.disabled = kwargs.get('disabled')
         self.disabled_until = kwargs.get('disabled_until')
@@ -174,13 +202,21 @@ class APIKey:
 
     def use_once(self):
         """Decrements bucket of tocken by one, disable if reaches 0"""
-        self.bucket_hour -= 1
-        self.bucket_day -= 1
+        now = int(time.time())
 
-        if self.bucket_hour <= 0:
-            self.disable_until(3600) # an hour
-        if self.bucket_day <= 0:
-            self.disable_until(86400) # 24 hours
+        if (now - self.last_used_hour) < 3600: # not too early
+            self.bucket_hour -= 1
+            if self.bucket_hour <= 0:
+                self.disable_until(3600) # an hour s #FIXME can be rolled in sooner
+        else:
+            self.last_used_hour = now
+
+        if (now - self.last_used_day) < 86400: # not too early
+            self.bucket_day -= 1
+            if self.bucket_day <= 0:
+                self.disable_until(86400) # 24 hours #FIXME can be rolled in sooner
+        else:
+            self.last_used_day = now
 
 
 def threaded_buckets():
@@ -190,20 +226,22 @@ def threaded_buckets():
     now = int(time.time())
     for api_obj in instances.api_keys:
         diff = now - api_obj.last_written_time
-        api_obj.bucket_hour = min(api_obj.bucket_hour + ((diff/5) * 1.390), 1000) # clamped
+        if not (now - api_obj.last_used_hour) < 3600: # less than an hour
+            api_obj.bucket_hour = min(api_obj.bucket_hour + ((diff/5) * 1.390), 1000) # clamped
 
-#         logging.debug(BColors.MAGENTA + "Compute API status. Key {0}: \nbucket hour {1}, \
-# now {2} last_written_time {3}, difference {4}, diff/5 {5}, *1.390={6}"
-#         .format(api_obj.api_key, api_obj.bucket_hour,
-#         now, api_obj.last_written_time, diff, (diff/5), ((diff/5) * 1.390)) + BColors.ENDC)
+    #         logging.debug(BColors.MAGENTA + "Compute API status. Key {0}: \nbucket hour {1}, \
+    # now {2} last_written_time {3}, difference {4}, diff/5 {5}, *1.390={6}"
+    #         .format(api_obj.api_key, api_obj.bucket_hour,
+    #         now, api_obj.last_written_time, diff, (diff/5), ((diff/5) * 1.390)) + BColors.ENDC)
 
-        # 86400 / 5000 = 0.05787037
-        api_obj.bucket_day = min(api_obj.bucket_day +  ((diff/5) * 0.2892), 5000)
+        if not (now - api_obj.last_used_day) < 86400: # less than a day
+            # 86400 / 5000 = 0.05787037
+            api_obj.bucket_day = min(api_obj.bucket_day +  ((diff/5) * 0.2892), 5000)
 
-#         logging.debug(BColors.MAGENTA + "Compute API status. Key {0}: \nbucket day {1}, \
-# now {2} last_written_time {3}, difference {4}, diff/5 {5}, *0.2892={6}"
-#         .format(api_obj.api_key, api_obj.bucket_day, 
-#         now, api_obj.last_written_time, diff, (diff/5), ((diff/5) * 0.2892)) + BColors.ENDC)
+    #         logging.debug(BColors.MAGENTA + "Compute API status. Key {0}: \nbucket day {1}, \
+    # now {2} last_written_time {3}, difference {4}, diff/5 {5}, *0.2892={6}"
+    #         .format(api_obj.api_key, api_obj.bucket_day,
+    #         now, api_obj.last_written_time, diff, (diff/5), ((diff/5) * 0.2892)) + BColors.ENDC)
 
         logging.warning(BColors.MAGENTA + "Request left for API key {0}: hour {1} day {2}"
         .format(api_obj.api_key, api_obj.bucket_hour, api_obj.bucket_day) + BColors.ENDC)
@@ -216,18 +254,23 @@ def threaded_buckets():
 def bucket_inc():
     while True:
         time.sleep(5)
+        now = int(time.time())
         for api_obj in instances.api_keys:
             if api_obj.bucket_hour > 1000:
                 api_obj.bucket_hour = 1000
                 continue
-            if api_obj.bucket_hour < 1000:
+            else:
+                if (now - api_obj.last_used_hour) <= 3600: # too early
+                    continue
                 api_obj.bucket_hour += 1.390
 
         for api_obj in instances.api_keys:
             if api_obj.bucket_day > 5000:
                 api_obj.bucket_day = 5000
                 continue
-            if api_obj.bucket_day < 5000:
+            else:
+                if (now - api_obj.last_used_day) <= 86400: # too early
+                    continue
                 api_obj.bucket_day += 0.2892
 
 

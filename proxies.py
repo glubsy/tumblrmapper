@@ -45,7 +45,7 @@ class ProxyScanner():
 
 
     def restore_proxies_from_disk(self, proxies_path=None):
-        """populate with our previously recorded proxies"""
+        """populate with our previously recorded proxies, returns proxy_ua_dict['proxies']"""
         if not proxies_path:
             proxies_path = self.proxies_path
 
@@ -58,6 +58,8 @@ class ProxyScanner():
             self.proxy_ua_dict.get('proxies').append(proxy)
 
         logging.info(BColors.GREEN + "Restored proxies from disk: {0}".format(len(self.proxy_ua_dict.get('proxies'))) + BColors.ENDC)
+
+        return self.proxy_ua_dict.get('proxies')
 
 
     def get_new_proxy(self, old_proxy=None, remove=None):
@@ -131,19 +133,20 @@ class ProxyScanner():
 
 
 
-    def get_proxies_from_internet(self):
+    def get_proxies_from_internet(self, minimum=1):
         """Returns a dict of validated IP:UA
         returns None if fetching free list failed"""
-        big_dict = self.with_threads()
+        logging.warning(BColors.CYAN + "Getting new proxies from the internet!" + BColors.ENDC)
+        big_dict = self.with_threads(minimum)
         self.write_proxies_to_json_on_disk(big_dict)
         return big_dict
 
 
-    def with_threads(self):
+    def with_threads(self, minimum=1):
 
         # socks_proxies_list = get_free_socks_proxies("https://socks-proxy.net/", type=socks)
         attempt = 0
-        while not self.proxy_ua_dict.get('proxies'):
+        while len(self.proxy_ua_dict.get('proxies', [])) < minimum:
             if attempt > 5:
                 break
 

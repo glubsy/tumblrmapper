@@ -158,7 +158,10 @@ def process(db, lock, db_update_lock, pill2kill):
         with lock:
             try:
                 blog = blog_generator(db, con)
-            except:
+            except BaseException as e:
+                logging.debug("{0}Exception occured in blog_generator: {1!r}{2}"
+                .format(BColors.FAIL, e, BColors.ENDC))
+                blog = TumblrBlog()
                 pill2kill.set()
 
         if blog.name is None:
@@ -212,30 +215,35 @@ def process(db, lock, db_update_lock, pill2kill):
         while not pill2kill.is_set():
             if blog.posts_scraped >= blog.total_posts or blog.offset >= blog.total_posts:
                 logging.debug(
-                "{0} before loop: posts_scraped {1} or offset {2} >= total_posts {3}, breaking loop!"
-                .format(blog.name, blog.posts_scraped, blog.offset, blog.total_posts))
+                "{0.name} before loop: posts_scraped {0.posts_scraped} or offset\
+ {0.blog.offset} >= total_posts {0.total_posts}, breaking loop!".format(blog))
                 break
 
             if not update.posts_response:  # could be some other field attached to blog
                 logging.warning(BColors.LIGHTYELLOW \
-                + "{0} Getting at offset {1} / {2}".format(blog.name, blog.offset, blog.total_posts) + BColors.ENDC)
+                + "{0} Getting at offset {1} / {2}"
+                .format(blog.name, blog.offset, blog.total_posts) + BColors.ENDC)
 
                 try:
-                    if not api_get_request_wrapper(db, con, lock, blog, update, blog.crawl_status, offset=blog.offset):
-                        logging.debug(BColors.FAIL + "{0} request_wrapper returns fase, break!".format(blog.name) + BColors.ENDC)
+                    if not api_get_request_wrapper(db, con, lock, blog,
+                        update, blog.crawl_status, offset=blog.offset):
+                        logging.debug(BColors.FAIL +
+                        "{} request_wrapper returns fase, break!".format(blog.name)
+                         + BColors.ENDC)
                         break
                 except Exception as e:
-                    logging.info(BColors.FAIL + "Exception in api_get_request_wrapper from loop! {0}"
+                    logging.info(BColors.FAIL
+                     + "Exception in api_get_request_wrapper from loop! {0!r}"
                     .format(e) + BColors.ENDC)
                     break
 
                 check_header_change(db, con, blog, update)
 
                 if not update.posts_response: # nothing more
-                    logging.debug("update.posts_response is {0}! break".format(repr(update.posts_response)))
+                    logging.debug("update.posts_response is {0.posts_response!r}! break".format(update))
                     break
             else:
-                logging.debug("{0} inserting new posts".format(blog.name))
+                logging.debug("{} inserting new posts".format(blog.name))
 
                 try:
                     insert_posts(db, con, db_update_lock, blog, update)
@@ -287,7 +295,7 @@ def insert_posts(db, con, db_update_lock, blog, update):
         blog.posts_scraped += processed_posts - errors # added - errors
         blog.offset += processed_posts
 
-        logging.warning(BColors.LIGHTYELLOW + 
+        logging.warning(BColors.LIGHTYELLOW +
         "{0} Posts just scraped {1} Offset is now: {2}"
         .format(blog.name, blog.posts_scraped, blog.offset) + BColors.ENDC)
 
@@ -333,7 +341,7 @@ def api_get_request_wrapper(db, con, lock, blog, update, crawl_status, offset=No
         except BaseException as e:
             traceback.print_exc()
             logging.error(BColors.RED + \
-            "{0} Too many proxy attempts! Skipping for now. Error:{1}"\
+            "{0} Too many proxy attempts! Skipping for now. Error: {1}"
             .format(blog.name, e) + BColors.ENDC)
             if crawl_status != 'resume':
                 thread_premature_cleanup(db, con, blog, crawl_status)
@@ -352,9 +360,13 @@ def blog_status_check(db, con, lock, blog, update, offset=None):
 
     if blog.offset != blog.posts_scraped:
         logging.debug(BColors.DARKGRAY + "{0} Error: blog.offset={1} blog.posts_scraped={2}.\
-Getting actual posts_scraped from DB".format(blog.name, blog.offset, blog.posts_scraped) + BColors.ENDC)
+Getting actual posts_scraped from DB"
+        .format(blog.name, blog.offset, blog.posts_scraped) + BColors.ENDC)
+
         blog.posts_scraped = db_handler.get_total_post(db, con, blog)
-        logging.debug(BColors.DARKGRAY + "{0} Got {1} posts_scraped from DB".format(blog.name, blog.posts_scraped) + BColors.ENDC)
+
+        logging.debug(BColors.DARKGRAY + "{0} Got {1} posts_scraped from DB"
+        .format(blog.name, blog.posts_scraped) + BColors.ENDC)
 
     api_get_request_wrapper(db, con, lock, blog, update, blog.crawl_status, offset=offset)
 
@@ -373,11 +385,11 @@ Getting actual posts_scraped from DB".format(blog.name, blog.offset, blog.posts_
         .format(blog.name, db_response) + BColors.ENDC)
 
         if not check_db_init_response(db_response, blog, isnew=isnew):
-            logging.debug("{0} check_db_init_response: False".format(blog.name))
+            logging.debug("{} check_db_init_response: False".format(blog.name))
             return False
 
     if not update.valid:
-        logging.error(BColors.RED + "{0} Too many invalid request attempts! Aborting for now."\
+        logging.error(BColors.RED + "{} Too many invalid request attempts! Aborting for now."\
         .format(blog.name) + BColors.ENDC)
         if isnew:
             thread_premature_cleanup(db, con, blog, 'new')
@@ -465,9 +477,9 @@ def update_offset_if_new_posts(blog):
     # to avoid re-inserting previously inserted posts
     if blog.new_posts > 0:
         blog.offset += blog.new_posts
-        blog.new_posts = 0
         logging.info(BColors.RED + \
         "{0} Offset incremented because of new posts by +{1}: {2}".format(blog.name, blog.new_posts, blog.offset) + BColors.ENDC)
+        blog.new_posts = 0
 
 
 def blog_generator(db, con):
@@ -638,19 +650,19 @@ class TumblrBlog:
                     raise
 
             except (requests.exceptions.ProxyError, requests.exceptions.Timeout) as e:
-                logging.info(BColors.FAIL + "{0} Proxy error (continuing): {1}"\
-                .format(self.name, e.__repr__()) + BColors.ENDC)
+                logging.info(BColors.FAIL + "{0} Proxy {1} error (continuing): {2}"\
+                .format(self.name, self.proxy_object.get('ip_address'), e.__repr__()) + BColors.ENDC)
 
                 self.get_new_proxy(lock)
                 attempt += 1
                 continue
             except (ConnectionError, requests.exceptions.RequestException) as e:
-                logging.info(BColors.FAIL + "{0} Connection error (passing): {1}"\
-                .format(self.name, e.__repr__()) + BColors.ENDC)
+                logging.info(BColors.FAIL + "{0} Connection error Proxy {1} (passing): {2}"\
+                .format(self.name, self.proxy_object.get('ip_address'), e.__repr__()) + BColors.ENDC)
                 # raise
                 pass
             except (json.decoder.JSONDecodeError) as e:
-                logging.info(BColors.FAIL + "Fatal error decoding json, should be removing proxy {1}"
+                logging.info(BColors.FAIL + "Fatal error decoding json, should be removing proxy {1} (continue)"
                 .format(self.proxy_object.get('ip_address')) + BColors.ENDC)
                 #self.get_new_proxy(lock)
                 continue
@@ -836,16 +848,16 @@ def setup_config(args):
 
     sh = logging.StreamHandler(sys.stdout)
     sh.setLevel(getattr(logging, args.log_level.upper()))
-    sh.setFormatter(logging.Formatter('{levelname}  :\t{message}', None, '{'))
+    sh.setFormatter(logging.Formatter('{levelname:<9}:\t{message}', None, '{'))
     rootLogger.addHandler(sh)
 
     instances.config = parse_config(args.config_path, args.data_path)
 
     fh = logging.handlers.RotatingFileHandler(filename=instances.config.get('tumblrmapper', 'log_path'),
-                            mode='a', maxBytes=10000, backupCount=1)
+                            mode='a', maxBytes=10000000, backupCount=10)
     fh.setLevel(getattr(logging, instances.config.get('tumblrmapper', 'log_level')))
     fh.setFormatter(logging.Formatter(
-                    '{asctime} {levelname}:{threadName}\t{message}',
+                    '{asctime} {levelname:<9}:{threadName:>5}\t{message}',
                     '%y/%m/%d %H:%M:%S', '{'))
     rootLogger.addHandler(fh)
 
@@ -902,16 +914,21 @@ def main(args):
 
     # === API KEY ===
     # list of APIKey objects
-    instances.api_keys = api_keys.get_api_key_object_list(\
+    instances.api_keys = api_keys.get_api_key_object_list(
     SCRIPTDIR + os.sep + instances.config.get('tumblrmapper', 'api_keys'))
 
     # === PROXIES ===
     # Get proxies from free proxies site
     instances.proxy_scanner = proxies.ProxyScanner(instances.config.get('tumblrmapper', 'proxies'))
-    fresh_proxy_dict = instances.proxy_scanner.get_proxies_from_internet()
-    # print(fresh_proxy_dict)
 
-    fresh_proxy_dict = {'proxies': [{'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36(KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '47.206.51.67:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.4; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2225.0 Safari/537.36', 'disabled': False}, {'ip_address': '92.53.73.138:8118', 'user_agent': 'Mozilla/5.0 (Windows NT6.1; WOW64; rv:21.0) Gecko/20130331 Firefox/21.0', 'disabled': False}, {'ip_address': '45.77.247.164:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '80.211.4.187:8080', 'user_agent': 'Mozilla/5.0 (Microsoft Windows NT 6.2.9200.0); rv:22.0) Gecko/20130405 Firefox/22.0', 'disabled': False}, {'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '66.82.123.234:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1985.67 Safari/537.36', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64;x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh;Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '52.164.249.198:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.2309.372 Safari/537.36', 'disabled': False}, {'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '47.206.51.67:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.4; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2225.0 Safari/537.36', 'disabled':False}, {'ip_address': '92.53.73.138:8118', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:21.0) Gecko/20130331 Firefox/21.0', 'disabled': False}, {'ip_address': '45.77.247.164:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '80.211.4.187:8080', 'user_agent': 'Mozilla/5.0 (Microsoft Windows NT 6.2.9200.0); rv:22.0) Gecko/20130405 Firefox/22.0', 'disabled': False}, {'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '191.34.157.243:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.124 Safari/537.36', 'disabled': False}, {'ip_address': '61.91.251.235:8080', 'user_agent': 'Opera/9.80 (Windows NT 5.1; U; zh-tw) Presto/2.8.131 Version/11.10', 'disabled': False}, {'ip_address': '41.190.33.162:8080', 'user_agent': 'Mozilla/5.0 (X11; CrOS i686 4319.74.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/29.0.1547.57 Safari/537.36', 'disabled': False}, {'ip_address': '80.48.119.28:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '213.99.103.187:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/28.0.1464.0 Safari/537.36', 'disabled': False}, {'ip_address': '141.105.121.181:80', 'user_agent': 'Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 7.0; InfoPath.3; .NET CLR 3.1.40767; Trident/6.0; en-IN)', 'disabled': False}]}
+    if len(list(instances.proxy_scanner.proxy_ua_dict.get('proxies'))) <= THREADS:
+        fresh_proxy_dict = instances.proxy_scanner.get_proxies_from_internet(minimum=THREADS)
+    else:
+        fresh_proxy_dict = instances.proxy_scanner.proxy_ua_dict
+
+    logging.debug("fresh_proxy_dict: {}".format(fresh_proxy_dict))
+
+    # fresh_proxy_dict = {'proxies': [{'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36(KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '47.206.51.67:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.4; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2225.0 Safari/537.36', 'disabled': False}, {'ip_address': '92.53.73.138:8118', 'user_agent': 'Mozilla/5.0 (Windows NT6.1; WOW64; rv:21.0) Gecko/20130331 Firefox/21.0', 'disabled': False}, {'ip_address': '45.77.247.164:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '80.211.4.187:8080', 'user_agent': 'Mozilla/5.0 (Microsoft Windows NT 6.2.9200.0); rv:22.0) Gecko/20130405 Firefox/22.0', 'disabled': False}, {'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '66.82.123.234:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1985.67 Safari/537.36', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64;x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh;Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '52.164.249.198:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.2309.372 Safari/537.36', 'disabled': False}, {'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '47.206.51.67:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.4; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2225.0 Safari/537.36', 'disabled':False}, {'ip_address': '92.53.73.138:8118', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:21.0) Gecko/20130331 Firefox/21.0', 'disabled': False}, {'ip_address': '45.77.247.164:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '80.211.4.187:8080', 'user_agent': 'Mozilla/5.0 (Microsoft Windows NT 6.2.9200.0); rv:22.0) Gecko/20130405 Firefox/22.0', 'disabled': False}, {'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '191.34.157.243:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.124 Safari/537.36', 'disabled': False}, {'ip_address': '61.91.251.235:8080', 'user_agent': 'Opera/9.80 (Windows NT 5.1; U; zh-tw) Presto/2.8.131 Version/11.10', 'disabled': False}, {'ip_address': '41.190.33.162:8080', 'user_agent': 'Mozilla/5.0 (X11; CrOS i686 4319.74.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/29.0.1547.57 Safari/537.36', 'disabled': False}, {'ip_address': '80.48.119.28:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '213.99.103.187:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/28.0.1464.0 Safari/537.36', 'disabled': False}, {'ip_address': '141.105.121.181:80', 'user_agent': 'Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 7.0; InfoPath.3; .NET CLR 3.1.40767; Trident/6.0; en-IN)', 'disabled': False}]}
 
     # Associate api_key to each proxy in fresh list
     #FIXME remove the two next lines; deprecated
