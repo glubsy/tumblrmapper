@@ -50,7 +50,9 @@ class ProxyScanner():
             proxies_path = self.proxies_path
 
         self.http_proxies_recovered = filter_dictionary_for_unique(self.get_proxies_from_json_on_disk(proxies_path))
+
         for proxy in self.http_proxies_recovered:
+            
             if proxy.get('disabled', False) or proxy.get('blacklisted', False):
                 logging.debug(BColors.YELLOW + "From disk, skipping {0} because blacklisted.".format(proxy.get('ip_address')) + BColors.ENDC)
                 continue
@@ -317,7 +319,7 @@ class ProxyScanner():
                     .format(BColors.BLUEOK, BColors.GREEN, json_data.get('origin'), 
                     json_data.get('headers').get('User-Agent'), BColors.ENDC))
             else:
-                logging.debug("{0} Proxy {1} test response: {2}{3}"
+                logging.debug("{0}Proxy {1} test response: {2}{3}"
                 .format(BColors.GREEN, proxy_ip, response, BColors.ENDC))
         else:
             logging.debug("{0}Proxy {1} did not send back any response code!{2}"

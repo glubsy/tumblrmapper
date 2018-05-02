@@ -176,7 +176,9 @@ def process(db, lock, db_update_lock, pill2kill):
 
         if blog.crawl_status == 'new': # not yet updated
 
-            if not blog_status_check(db, con, lock, blog, update):
+            try:
+                blog_status_check(db, con, lock, blog, update)
+            except:
                 continue
 
             if blog.health == 'DEAD':
@@ -193,21 +195,25 @@ def process(db, lock, db_update_lock, pill2kill):
 
 
         elif blog.crawl_status == 'resume':
-            if not blog_status_check(db, con, lock, blog, update):
+            try:
+                blog_status_check(db, con, lock, blog, update)
+            except:
                 continue
+
             if blog.offset > 0: # skip this first response, go straight to our previous offset
                 update.posts_response = []
 
 
         elif blog.crawl_status == 'DONE':
-            if not blog_status_check(db, con, lock, blog, update):
+            try:
+                blog_status_check(db, con, lock, blog, update)
+            except:
                 continue
             insert_posts(db, con, db_update_lock, blog, update)
-
         else:
-            raise Exception(BColors.FAIL + \
-            "{0} CRAWL_STATUS was neither resume nor new nor done: {1}"\
-            .format(blog.name, blog.crawl_status) + BColors.ENDC)
+            logging.debug("{0}{1} CRAWL_STATUS was neither resume nor new nor done: {2}{3}"\
+            .format(BColors.FAIL, blog.name, blog.crawl_status, BColors.ENDC))
+            raise BaseException("CRAWL_STATUS was neither resume nor new nor done") #FIXME 
 
         # pbar = init_pbar(blog, position=threading.current_thread().name)
         update_offset_if_new_posts(blog)
@@ -225,16 +231,12 @@ def process(db, lock, db_update_lock, pill2kill):
                 .format(blog.name, blog.offset, blog.total_posts) + BColors.ENDC)
 
                 try:
-                    if not api_get_request_wrapper(db, con, lock, blog,
-                        update, blog.crawl_status, offset=blog.offset):
-                        logging.debug(BColors.FAIL +
-                        "{} request_wrapper returns fase, break!".format(blog.name)
-                         + BColors.ENDC)
-                        break
-                except Exception as e:
-                    logging.info(BColors.FAIL
-                     + "Exception in api_get_request_wrapper from loop! {0!r}"
-                    .format(e) + BColors.ENDC)
+                    api_get_request_wrapper(db, con, lock, blog,
+                    update, blog.crawl_status, offset=blog.offset)
+                except BaseException as e:
+                    logging.debug(BColors.FAIL
+                     + "{0} Exception in api_get_request_wrapper from loop! {1!r}"
+                    .format(blog.name, e) + BColors.ENDC)
                     break
 
                 try:
@@ -326,7 +328,10 @@ def check_blog_end_of_posts(db, con, blog):
         logging.info("Marking {0} as resume".format(blog.name))
         blog.crawl_status = 'resume'
 
-    blog.crawling = 0
+    if blog.temp_disabled:
+        blog.crawling = 2
+    else:
+        blog.crawling = 0
 
     if blog.posts_scraped == 0:
         blog.posts_scraped = db_handler.get_total_post(db, con, blog)
@@ -343,17 +348,22 @@ def api_get_request_wrapper(db, con, lock, blog, update, crawl_status, offset=No
     while not update.valid and attempts < 3:
         attempts += 1
         try:
-           blog.api_get_request(lock, update, api_key=None, reqtype="posts", offset=offset)
+            blog.api_get_request(lock, update, api_key=None, reqtype="posts", offset=offset)
+            if update.valid:
+                return
+            else:
+                continue
         except BaseException as e:
             traceback.print_exc()
-            logging.error(BColors.RED + \
-            "{0} Too many proxy attempts! Skipping for now. Error: {1}"
-            .format(blog.name, e) + BColors.ENDC)
+            logging.error("{0}{1} Exception during request: {2}{3}"
+            .format(BColors.RED, blog.name, e, BColors.ENDC))
+
             if crawl_status != 'resume':
                 thread_premature_cleanup(db, con, blog, crawl_status)
-                return False
             break
-    return True
+    logging.error("{0}{1} Too many request attempts or server issue during request. Skipping for now. {2}"
+    .format(BColors.RED, blog.name, BColors.ENDC))
+    raise BaseException("Too many request attempts or server issue during request")
 
 
 def blog_status_check(db, con, lock, blog, update, offset=None):
@@ -374,7 +384,10 @@ Getting actual posts_scraped from DB"
         logging.debug(BColors.DARKGRAY + "{0} Got {1} posts_scraped from DB"
         .format(blog.name, blog.posts_scraped) + BColors.ENDC)
 
-    api_get_request_wrapper(db, con, lock, blog, update, blog.crawl_status, offset=offset)
+    try:
+        api_get_request_wrapper(db, con, lock, blog, update, blog.crawl_status, offset=offset)
+    except:
+        raise
 
     if update.valid:
         # update and retrieve remaining blog info
@@ -544,6 +557,7 @@ class TumblrBlog:
         self.current_json = None
         self.update = None
         self.new_posts = 0
+        self.temp_disabled = False
 
     def init_session(self):
         if not self.requests_session: # first time
@@ -590,12 +604,28 @@ class TumblrBlog:
 
 
     def renew_api_key(self, disable=True, old_api_key=None):
-        # mark as disabled from global list pool
+        """Mark key as disabled from global list pool."""
         if not old_api_key:
             old_api_key = self.api_key_object_ref
 
         if disable:
             api_keys.disable_api_key(old_api_key)
+
+        self.attach_random_api_key()
+
+
+    def blacklist_api_key(self, old_api_key=None):
+        """Mark key as to be blacklisted after 3 hits"""
+        if not old_api_key:
+            old_api_key = self.api_key_object_ref
+
+        if old_api_key.blacklist_hit >= 3:
+            logging.critical("{0}Blacklisting api key {1}!{2}"
+            .format(BColors.MAGENTA, old_api_key.api_key, BColors.ENDC))
+
+            api_keys.disable_api_key(old_api_key, blacklist=True)
+        else:
+            old_api_key.blacklist_hit += 1
 
         self.attach_random_api_key()
 
@@ -675,14 +705,18 @@ class TumblrBlog:
 
                 continue
             except (ConnectionError, requests.exceptions.RequestException) as e:
-                logging.info(BColors.FAIL + "{0} Connection error Proxy {1} (passing): {2}"\
+                logging.info(BColors.FAIL + "{0} Connection error Proxy {1} (passing): {2}"
                 .format(self.name, self.proxy_object.get('ip_address'), e.__repr__()) + BColors.ENDC)
                 # raise
                 pass
             except (json.decoder.JSONDecodeError) as e:
-                logging.info(BColors.FAIL + "Fatal error decoding json, should be removing proxy {1} (continue)"
-                .format(self.proxy_object.get('ip_address')) + BColors.ENDC)
-                #self.get_new_proxy(lock)
+                logging.info("{0} Fatal error decoding json, should be removing proxy {1} (continue){2}"
+                .format(BColors.FAIL, self.proxy_object.get('ip_address'), BColors.ENDC))
+
+                if response.text.find('Service is temporarily unavailable') != -1:
+                    self.temp_disabled = True # HACK: will only be reset next script start
+                    raise BaseException("Server on hold!")
+                #else: self.get_new_proxy(lock)
                 continue
             except:
                 continue
@@ -701,25 +735,29 @@ class TumblrBlog:
         except (ValueError, json.decoder.JSONDecodeError):
             logging.exception(BColors.YELLOW
             + "{0} Error trying to parse response into json. Exerpt: {1}"
-            .format(self.name, response.text[:1000]) + BColors.ENDC)
+            .format(self.name, response.text[:5000]) + BColors.ENDC)
 
-            try:
-                response_json = response.text.split('''"response":{''')[1] # for some reason, sometimes it fails there?
-                response_json = r'{"meta": {"status": 200,"msg": "OK","x_tumblr_content_rating": "adult"},' + response_json[:-1]
-                logging.debug(BColors.YELLOW + "split: {0}"
-                .format(response_json[:1000]) + BColors.ENDC)
+            if response.text.find('Service is temporarily unavailable. Our engineers are working quickly to resolve the issue') != -1:
+                raise
+
+            if response.text.find('"response":{') != -1:
                 try:
-                    response_json = response.json()
+                    response_json = response.text.split('''"response":{''')[1] # for some reason, sometimes it fails there?
+                    response_json = r'{"meta": {"status": 200,"msg": "OK","x_tumblr_content_rating": "adult"},' + response_json[:-1]
+                    logging.debug(BColors.YELLOW + "split: {0}"
+                    .format(response_json[:5000]) + BColors.ENDC)
+                    try:
+                        response_json = response.json()
+                    except:
+                        logging.debug(BColors.FAIL + "Fucking damnit can't get a good json!\nProxy: {0}\n{1}"
+                        .format(self.proxy_object.get('ip_address'), response_json[:5000]) + BColors.ENDC)
+                        raise
                 except:
-                    logging.debug(BColors.FAIL + "Fucking damnit can't get a good json!\nProxy: {0}\n{1}"
-                    .format(self.proxy_object.get('ip_address'), response_json[:2000]) + BColors.ENDC)
-                    raise
-            except:
-                response_json = {'meta': {'status': 500, 'msg': 'Server Error'},
-            'response': [], 'errors': [{"title": "Malformed JSON or HTML was returned."}]}
+                    response_json = {'meta': {'status': 500, 'msg': 'Server Error'},
+                    'response': [], 'errors': [{"title": "Malformed JSON or HTML was returned."}]}
         except:
-            logging.exception(BColors.YELLOW
-            + "{0} Fatal Error trying to get json from response: {1}"
+            logging.exception(BColors.YELLOW +
+            "{0}Uncaught fatal error trying to parse json from response: {1}"
             .format(self.name, response.text) + BColors.ENDC)
             raise
         return response_json
@@ -773,7 +811,7 @@ class TumblrBlog:
                 "{0} is unauthorized! Rolling for a new API key.\n{1}"\
                 .format(self.name, response_json) + BColors.ENDC)
                 # FIXME: that's assuming only the API key is responsible for unauthorized, might be the IP!
-                self.renew_api_key(disable=True)
+                self.blacklist_api_key()
                 update.valid = False
                 return
 
@@ -848,12 +886,12 @@ def thread_good_cleanup(db, con, blog):
 def thread_premature_cleanup(db, con, blog, reset_type):
     """Blog has not been updated in any way, just reset STATUS to NEW if was INIT"""
 
-    logging.debug(BColors.LIGHTGRAY + \
-    "{0} thread_premature_cleanup, reset_to_brand_new '{1}'"\
+    logging.debug(BColors.LIGHTGRAY +
+    "{0} thread_premature_cleanup, reset_to_brand_new '{1}'"
     .format(blog.name, reset_type) + BColors.ENDC )
 
     # only resets CRAWL_STATUS to 'new', not CRAWLING which stays 1 to avoid repicking it straight away
-    db_handler.reset_to_brand_new(db, con, blog, reset_type='new')
+    db_handler.reset_to_brand_new(db, con, blog, reset_type=reset_type)
 
 
 def setup_config(args):

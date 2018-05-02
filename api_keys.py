@@ -57,7 +57,11 @@ def get_api_key_object_list(api_keys_filepath):
                             bucket_day=item.get('bucket_day'),
                             disabled=item.get('disabled'),
                             disabled_until=item.get('disabled_until'),
-                            blacklisted=item.get('blacklisted')
+                            disabled_until_h=item.get('disabled_until_h'),
+                            blacklisted=item.get('blacklisted'),
+                            blacklist_hit=0,
+                            blacklisted_until=item.get('blacklisted_until'),
+                            blacklisted_until_h=item.get('blacklisted_until_h')
                             ))
 
     return api_key_list
@@ -92,7 +96,7 @@ def write_api_keys_to_json(keylist=None, myfilepath=None):
         json.dump(api_dict, f, indent=True)
 
 
-def disable_api_key(api_key_object, duration=3600):
+def disable_api_key(api_key_object, blacklist=False, duration=3600):
     """This API key caused problem, might have been flagged, add to temporary blacklist
     for a default of one hour"""
 
@@ -105,13 +109,17 @@ def disable_api_key(api_key_object, duration=3600):
         logging.error(BColors.RED + "Did not find this key in instances.api_keys list!?" + BColors.ENDC)
         return
 
+    if blacklist:
+        key.blacklist_until(duration=duration)
+
     if key.disabled:
         logging.debug(BColors.BOLD + "Key {0} is already disabled!".format(key.api_key) + BColors.ENDC)
     else:
         key.disable_until(duration=duration)
 
     for key in instances.api_keys:
-        logging.debug(BColors.RED + "API key {0} is disabled: {1}".format(key.api_key, key.disabled) + BColors.ENDC)
+        logging.debug(BColors.RED + "API key {0} is disabled: {1} blacklisted: {2}"
+        .format(key.api_key, key.disabled, key.blacklisted) + BColors.ENDC)
 
     write_api_keys_to_json()
 
@@ -136,14 +144,14 @@ def get_random_api_key(apikey_list=None):
                 return keycheck
         else:
             return keycheck
-    logging.critical(BColors.FAIL + BColors.BLINKING + 
-    'Attempts exhausted api_key list length! All keys are disabled! Renew them!' 
+    logging.critical(BColors.FAIL + BColors.BLINKING +
+    'Attempts exhausted api_key list length! All keys are disabled! Renew them!'
     + BColors.ENDC)
     raise BaseException("No more enabled API Key available")
 
 
 def remove_key(api_key_object):
-    """ Completely remove API key object instance from the pool [not used for now]"""
+    """Deprecated. Completely remove API key object instance from the pool [not used for now]"""
     # FIXME: when length reaches 0, error will occur!
     try:
         instances.api_keys.remove(api_key_object)
@@ -177,21 +185,37 @@ class APIKey:
         self.last_written_time = kwargs.get('last_written_time', int())
         self.disabled = kwargs.get('disabled')
         self.disabled_until = kwargs.get('disabled_until')
+        self.disabled_until_h = kwargs.get('disabled_until_h')
         self.blacklisted = kwargs.get('blacklisted', False)
+        self.blacklist_hit = kwargs.get('blacklist_hit', 0)
+        self.blacklisted_until = kwargs.get('blacklisted_until')
+        self.blacklisted_until_h = kwargs.get('blacklisted_until_h')
         self.bucket_hour = kwargs.get('bucket_hour', float(1000))
         self.bucket_day = kwargs.get('bucket_day', float(5000))
         self.print_count = 0
+
 
     def disable_until(self, duration=3600):
         """duration in second, computes date from now until it's disabled"""
         now = int(time.time())
         self.disabled = True
         self.disabled_until = now + duration
+        self.disabled_until_h = time.ctime(self.disabled_until)
+
+
+    def blacklist_until(self, duration=3600):
+        """duration in second, computes date from now until it's disabled"""
+        now = int(time.time())
+        self.blacklisted = True
+        self.blacklisted_until = now + duration
+        self.blacklisted_until_h = time.ctime(self.blacklisted_until)
+
 
     def is_disabled(self):
         if self.disabled or self.blacklisted:
             return True
         return False
+
 
     def enable(self):
         """If not disabled or blacklisted, returns True,
@@ -199,10 +223,12 @@ class APIKey:
         now = int(time.time())
         if not self.disabled and not self.blacklisted:
             return True
-        if (now >= self.disabled_until):
+        if (now >= self.disabled_until) and (now >= self.blacklisted_until):
             self.disabled = False
+            self.blacklisted = False
             return True
         return False
+
 
     def use_once(self):
         """Decrements bucket of tocken by one, disable if reaches 0"""

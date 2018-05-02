@@ -131,11 +131,13 @@ def populate_db_with_tables(database):
         con.execute_immediate("CREATE DOMAIN D_EPOCH AS BIGINT;")
         con.execute_immediate("CREATE DOMAIN D_POST_NO AS BIGINT;")
         con.execute_immediate("CREATE DOMAIN D_SUPER_LONG_TEXT AS VARCHAR(32765)")
-        con.execute_immediate("CREATE DOMAIN D_BOOLEAN AS smallint default 0 \
-                               CHECK (VALUE IS NULL OR VALUE IN (0, 1));")
+        con.execute_immediate(
+"""CREATE DOMAIN D_BOOLEAN AS smallint default 0 
+CHECK (VALUE IS NULL OR VALUE IN (0, 1, 2));""")
 
         # Create tables with columns
-        con.execute_immediate(\
+        # CRAWLING = 1 currently crawling, 2 temporarily stopped due to server-side error
+        con.execute_immediate(
 """
 CREATE TABLE BLOGS (
 AUTO_ID         D_AUTO_ID PRIMARY KEY,
@@ -420,10 +422,10 @@ RETURNS (
     O_UPDATED D_EPOCH )
 AS
 BEGIN
-if (exists (select (BLOG_NAME) from BLOGS where ((CRAWL_STATUS = 'resume') and (CRAWLING != 1)))) then
+if (exists (select (BLOG_NAME) from BLOGS where ((CRAWL_STATUS = 'resume') and (CRAWLING = 0)))) then
     begin
     for select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED, LAST_UPDATE
-    from BLOGS where ((CRAWL_STATUS = 'resume') and (CRAWLING != 1)) order by PRIORITY desc nulls last ROWS 1
+    from BLOGS where ((CRAWL_STATUS = 'resume') and (CRAWLING = 0)) order by PRIORITY desc nulls last ROWS 1
     with lock
     into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated
     as cursor cur do
@@ -802,6 +804,7 @@ def update_blog_info(Database, con, blog, ignore_response=False):
 
 
 def reset_to_brand_new(database, con, blog, reset_type):
+    """Resets CRAWL_STATUS varchar field for blog to input reset_type"""
     cur = con.cursor()
     cur.execute(r'execute procedure reset_crawl_status(?,?);',
                 (blog.name, reset_type))
@@ -1265,7 +1268,7 @@ def inserted_context(cur, post):
                     post.get('id'),
                     post.get('timestamp'),         #timestamp
                     post.get('remote_id'),         #remote_id
-                    post.get('content_raw', None)  #remote_content
+                    post.get('content_raw')        #remote_content
                     ))
         # logging.warning("context returns: {0} ".format(repr(cur.fetchall())))
     except fdb.DatabaseError as e:
@@ -1281,19 +1284,33 @@ def inserted_context(cur, post):
         errors += 1
         success = False
         if str(e).find('is too long, expected') != -1:
-            try:
-                cur.callproc('insert_context',
-                (post.get('id'), post.get('timestamp'),
-                post.get('remote_id'), post.get('content_raw')[:32760]))
-
+            toolong = True
+            maxsize = 32800
+            attempt = 0
+            maxattempt = 320
+            while toolong: #unicode(?) is big, need to trim until it fits
+                maxattempt += 1
+                if attempt >= maxattempt:
+                    break
+                maxsize -= 100
+                try:
+                    cur.callproc('insert_context',
+                    (post.get('id'), post.get('timestamp'),
+                    post.get('remote_id'), post.get('content_raw')[maxsize]))
+                    toolong = False
+                except:
+                    continue
+            else:
                 logging.critical(BColors.BLUEOK +
-                "Instead, inserted trimmed context {0}[...]"
-                .format(post.get('content_raw')[:1000]))
-
+                "Instead, inserted trimmed context after {0} attempts: {1}[...]"
+                .format(attempt, post.get('content_raw')[:1000]))
                 errors -= 1
                 success = True
-            except:
-                pass
+            if toolong:
+                logging.debug("{9}Failed inserting trimmed context for {1}: {2}{3}"
+                .format(BColors.FAIL, post.get('id'), post.get('content_raw')[:1000], 
+                BColors.ENDC))
+
 
     # con.commit()
     return success, errors
@@ -1344,8 +1361,8 @@ def inserted_urls(cur, post):
             errors += 1
             continue
         except BaseException as e:
-            logging.critical(BColors.FAIL + "Error inserting url {0}. {1}"
-            .format(url, repr(e)) + BColors.ENDC, exc_info=True)
+            logging.critical("{0}Error inserting url {1}. {2}{3}"
+            .format(BColors.FAIL, url, repr(e), BColors.ENDC)) #exc_info=True)
             errors += 1
             if str(e).find('is too long, expected') != -1:
                 try:
