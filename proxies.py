@@ -270,6 +270,7 @@ class ProxyScanner():
 
 
     def job_test_proxy(self, proxy_dict, debug=False):
+        """Remove the proxies that don't pass the test from the proxy_ua_dict"""
         if debug:
             url = 'https://httpbin.org/get'
         else:
@@ -278,37 +279,49 @@ class ProxyScanner():
         proxy_ua = proxy_dict.get('user_agent')
         headers = {'User-Agent': proxy_dict.get('user_agent')}
         instances.sleep_here()
-        pass
+        response = requests.Response()
+        response.status_code = 0
+        with self.print_lock:
+            logging.debug("Testing proxy {0} / UA {1}:"
+            .format(proxy_ip, proxy_ua))
         try:
+            response = requests.get(url, proxies={"http": proxy_ip, 
+            "https": proxy_ip}, headers=headers, timeout=11)
+        # except (requests.exceptions.ProxyError, requests.exceptions.Timeout,\
+        #     requests.exceptions.ReadTimeout, requests.exceptions.ConnectTimeout,
+        #     requests.exceptions.SSLError, socket.timeout) as e:
+        except BaseException as e:
             with self.print_lock:
-                logging.debug("Testing proxy {0} / UA {1}:".format(proxy_ip, proxy_ua))
-            response = requests.get(url, proxies={"http": proxy_ip, "https": proxy_ip}, headers=headers, timeout=11)
-
-            if response.status_code == 200 or response.status_code == 404:
-                if debug:
-                    json_data = response.json()
-                    with self.print_lock:
-                        logging.debug(BColors.BLUEOK + BColors.GREEN + "Origin: {0} -- UA: {1}"\
-                        .format(json_data.get('origin'), json_data.get('headers').get('User-Agent')) + BColors.ENDC )
-                else:
-                    logging.debug(BColors.GREEN + "Response: {0}".format(response) + BColors.ENDC)
-        except (requests.exceptions.ProxyError, requests.exceptions.Timeout,\
-            requests.exceptions.ReadTimeout, requests.exceptions.ConnectTimeout, requests.exceptions.SSLError) as e:
-            with self.print_lock:
-                logging.debug(BColors.FAIL + "Connnection error for {0}: {1}".format(proxy_ip, e) + BColors.ENDC)
-                logging.debug(BColors.MAGENTA + "Exception! Removing {0}{2} from {1}".format(proxy_ip, 'proxy pool and recovered', BColors.ENDC))
+                logging.debug("{0}Exception while test connnecting to {1}: {2}. Removing.{3}"
+                .format(BColors.FAIL, proxy_ip, e, BColors.ENDC))
             with self.proxy_ua_dict_lock:
                 try:
                     self.proxy_ua_dict.get('proxies').remove(proxy_dict)
                     for proxy in self.http_proxies_recovered:
                         if proxy.get('ip_address') == proxy_dict.get('ip_address'):
-                            logging.debug(BColors.MAGENTA + "Also removing {0} from recovered list".format(proxy_dict.get('ip_address')) + BColors.ENDC)
+                            logging.debug("{0}Also removing {1} from recovered list{2}"
+                            .format(BColors.MAGENTA, proxy_dict.get('ip_address'), BColors.ENDC))
+
                             self.http_proxies_recovered.remove(proxy_dict)
-                except Exception as e:
-                    logging.debug(BColors.MAGENTA + BColors.BOLD + "Error removing proxy {0} from pool: {1}"\
-                    .format(proxy_dict.get('ip_address'), e) + BColors.ENDC)
+                except BaseException as e:
+                    logging.debug("{0}Error removing proxy {1} from pool: {2}{3}"\
+                    .format(BColors.MAGENTA + BColors.BOLD, proxy_dict.get('ip_address'), e, BColors.ENDC))
         # with self.print_lock:
         #     logging.debug(threading.current_thread().name,worker)
+
+        if 200 <= response.status_code <= 399:
+            if debug:
+                json_data = response.json()
+                with self.print_lock:
+                    logging.debug("{0}{1}Origin: {2} -- UA: {3}{4}"
+                    .format(BColors.BLUEOK, BColors.GREEN, json_data.get('origin'), 
+                    json_data.get('headers').get('User-Agent'), BColors.ENDC))
+            else:
+                logging.debug("{0} Proxy {1} test response: {2}{3}"
+                .format(BColors.GREEN, proxy_ip, response, BColors.ENDC))
+        else:
+            logging.debug("{0}Proxy {1} did not send back any response code!{2}"
+            .format(BColors.FAIL, proxy_ip, BColors.ENDC))
 
 def filter_dictionary_for_unique(mylist):
     cache = set()

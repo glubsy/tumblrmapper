@@ -1284,7 +1284,7 @@ def inserted_context(cur, post):
             try:
                 cur.callproc('insert_context',
                 (post.get('id'), post.get('timestamp'),
-                post.get('remote_id'), post.get('content_raw')[:32720]))
+                post.get('remote_id'), post.get('content_raw')[:32760]))
 
                 logging.critical(BColors.BLUEOK +
                 "Instead, inserted trimmed context {0}[...]"
