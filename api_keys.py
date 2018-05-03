@@ -118,7 +118,7 @@ def disable_api_key(api_key_object, blacklist=False, duration=3600):
         key.disable_until(duration=duration)
 
     for key in instances.api_keys:
-        logging.debug(BColors.RED + "API key {0} is disabled: {1} blacklisted: {2}"
+        logging.debug(BColors.RED + "API key {0} is disabled: {1}. blacklisted: {2}."
         .format(key.api_key, key.disabled, key.blacklisted) + BColors.ENDC)
 
     write_api_keys_to_json()
@@ -201,6 +201,8 @@ class APIKey:
         self.disabled = True
         self.disabled_until = now + duration
         self.disabled_until_h = time.ctime(self.disabled_until)
+        logging.warning("{0}API key {1} disabled until {2}{3}".format(
+            BColors.MAGENTA, self.api_key, self.disabled_until_h, BColors.ENDC))
 
 
     def blacklist_until(self, duration=3600):
@@ -209,7 +211,8 @@ class APIKey:
         self.blacklisted = True
         self.blacklisted_until = now + duration
         self.blacklisted_until_h = time.ctime(self.blacklisted_until)
-
+        logging.warning("{0}API key {1} blacklisted until {2}{3}".format(
+            BColors.RED, self.api_key, self.blacklisted_until_h, BColors.ENDC))
 
     def is_disabled(self):
         if self.disabled or self.blacklisted:

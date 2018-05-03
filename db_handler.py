@@ -682,10 +682,12 @@ def populate_db_with_blogs(database, blogpath):
     cur = con.cursor()
     t0 = time.time()
     dupecount = 0
+    itemcount = 0
     with fdb.TransactionContext(con):
         insert_statement = cur.prep("""execute procedure insert_blogname(?,?,?)""")
 
         for blog, priority in read_csv_bloglist(blogpath):
+            itemcount += 1
             params = (blog.rstrip() , 'new', priority)
             try:
                 cur.execute(insert_statement, params)
@@ -700,8 +702,8 @@ def populate_db_with_blogs(database, blogpath):
         con.commit()
 
     t1 = time.time()
-    logging.debug(BColors.BLUE + 'Inserting records into BLOGS Took %.2f ms'
-                  % (1000*(t1-t0)) + BColors.ENDC)
+    logging.debug('{0} Inserting {1} records into BLOGS Took {2:.2f} ms{3}'.format(
+        BColors.BLUE, itemcount, 1000*(t1-t0), BColors.ENDC))
 
 
 def read_csv_bloglist(blogpath):
@@ -1287,10 +1289,9 @@ def inserted_context(cur, post):
             toolong = True
             maxsize = 32800
             attempt = 0
-            maxattempt = 320
             while toolong: #unicode(?) is big, need to trim until it fits
-                maxattempt += 1
-                if attempt >= maxattempt:
+                attempt += 1
+                if attempt >= 320:
                     break
                 maxsize -= 100
                 try:

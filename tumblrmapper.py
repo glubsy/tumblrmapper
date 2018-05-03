@@ -247,6 +247,7 @@ def process(db, lock, db_update_lock, pill2kill):
                     break
 
                 if not update.posts_response: # nothing more
+                    blog.eof = True
                     logging.debug("update.posts_response is {0.posts_response!r}! break".format(update))
                     break
             else:
@@ -327,6 +328,11 @@ def check_blog_end_of_posts(db, con, blog):
     else:
         logging.info("Marking {0} as resume".format(blog.name))
         blog.crawl_status = 'resume'
+
+    if blog.eof:
+        if blog.offset < blog.total_posts:
+            # rare case where despite what the api tells us, total_posts is wrong (deleted posts?)
+            blog.crawl_status = 'DONE' 
 
     if blog.temp_disabled:
         blog.crawling = 2
@@ -558,6 +564,7 @@ class TumblrBlog:
         self.update = None
         self.new_posts = 0
         self.temp_disabled = False
+        self.eof = False
 
     def init_session(self):
         if not self.requests_session: # first time
@@ -733,7 +740,7 @@ class TumblrBlog:
         try:
             response_json = response.json()
         except (ValueError, json.decoder.JSONDecodeError):
-            logging.exception(BColors.YELLOW
+            logging.warning(BColors.YELLOW
             + "{0} Error trying to parse response into json. Exerpt: {1}"
             .format(self.name, response.text[:5000]) + BColors.ENDC)
 
@@ -1071,7 +1078,7 @@ def main(args):
     # exit
     # db.close_connection()
     final_cleanup(instances.proxy_scanner)
-    sys.exit(0)
+    return
 
 
 if __name__ == "__main__":
