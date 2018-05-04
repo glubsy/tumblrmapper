@@ -55,6 +55,8 @@ def parse_args():
                     help="Populate DB with archives")
     parser.add_argument('-b', '--update_blogs', action="store_true",
                     help="Populate DB with blogs")
+    parser.add_argument('-i', '--ignore_duplicates', action="store_true", default=False,
+                help="Ignore duplicate posts, keep scraping away")
 
     parser.add_argument('-p', '--proxies', action="store_true", default=False,
                         help="Use randomly selected proxies")
@@ -213,12 +215,12 @@ def process(db, lock, db_update_lock, pill2kill):
         else:
             logging.debug("{0}{1} CRAWL_STATUS was neither resume nor new nor done: {2}{3}"\
             .format(BColors.FAIL, blog.name, blog.crawl_status, BColors.ENDC))
-            raise BaseException("CRAWL_STATUS was neither resume nor new nor done") #FIXME 
+            raise BaseException("CRAWL_STATUS was neither resume nor new nor done") #FIXME
 
         # pbar = init_pbar(blog, position=threading.current_thread().name)
         update_offset_if_new_posts(blog)
 
-        while not pill2kill.is_set():
+        while not pill2kill.is_set() and not blog.eof:
             if blog.posts_scraped >= blog.total_posts or blog.offset >= blog.total_posts:
                 logging.debug(
                 "{0.name} before loop: posts_scraped {0.posts_scraped} or offset\
@@ -266,7 +268,7 @@ def process(db, lock, db_update_lock, pill2kill):
                     break
 
         # We're done, no more found
-        check_blog_end_of_posts(db, con, blog)
+        check_blog_end_of_posts(db, con, lock, blog)
         db_handler.update_blog_info(db, con, blog, ignore_response=True)
 
         logging.warning(BColors.GREENOK + BColors.BOLD + BColors.GREEN +
@@ -300,8 +302,17 @@ def process(db, lock, db_update_lock, pill2kill):
 def insert_posts(db, con, db_update_lock, blog, update):
     with db_update_lock:
         processed_posts, errors = db_handler.insert_posts(db, con, blog, update)
-    blog.posts_scraped += processed_posts - errors # added - errors
+    posts_added = processed_posts - errors # added - errors
+    blog.posts_scraped += posts_added
     blog.offset += processed_posts
+
+    if posts_added == 0: # all posts were duplicates, we assume we are redoing previously done posts
+        logging.debug("{0}{1} posts_added were == {2}.{3}"
+        .format(BColors.RED + BColors.BOLD, blog.name, posts_added, BColors.ENDC))
+        if not instances.my_args.ignore_duplicates:
+            logging.debug("{0}{1} marking EOF for blog.{2}"
+            .format(BColors.RED + BColors.BOLD, blog.name, BColors.ENDC))
+            blog.eof = True
 
     logging.warning(BColors.LIGHTYELLOW +
     "{0} Posts just scraped {1} Offset is now: {2}"
@@ -316,10 +327,12 @@ def insert_posts(db, con, db_update_lock, blog, update):
 
 
 
-def check_blog_end_of_posts(db, con, blog):
+def check_blog_end_of_posts(db, con, lock, blog):
     """Check if we have indeed done everything right"""
 
     logging.debug("{0} check_blog_end_of_posts".format(blog.name))
+
+    discrepancy_check(db, con, lock, blog)
 
     if blog.posts_scraped >= blog.total_posts or blog.offset >= blog.total_posts:
         logging.info("Marking {0} as DONE".format(blog.name))
@@ -332,7 +345,9 @@ def check_blog_end_of_posts(db, con, blog):
     if blog.eof:
         if blog.offset < blog.total_posts:
             # rare case where despite what the api tells us, total_posts is wrong (deleted posts?)
-            blog.crawl_status = 'DONE' 
+            blog.crawl_status = 'DONE'
+            blog.offset = 0
+            blog.crawling = 0
 
     if blog.temp_disabled:
         blog.crawling = 2
@@ -372,6 +387,21 @@ def api_get_request_wrapper(db, con, lock, blog, update, crawl_status, offset=No
     raise BaseException("Too many request attempts or server issue during request")
 
 
+def discrepancy_check(db, con, lock, blog):
+    """Gets actual posts_scraped from DB in case it differs from total/offset"""
+
+    if blog.offset != blog.posts_scraped or blog.total_posts < blog.posts_scraped:
+        logging.debug(BColors.DARKGRAY + "{0} Error: blog.offset={1} blog.posts_scraped={2}.\
+Getting actual posts_scraped from DB"
+        .format(blog.name, blog.offset, blog.posts_scraped) + BColors.ENDC)
+
+        blog.posts_scraped = db_handler.get_total_post(db, con, blog) # gettint actual posts_scraped
+
+        logging.debug(BColors.DARKGRAY + "{0} Got {1} posts_scraped from DB"
+        .format(blog.name, blog.posts_scraped) + BColors.ENDC)
+
+
+
 def blog_status_check(db, con, lock, blog, update, offset=None):
     """Returns True on update validated, otherwise false"""
 
@@ -380,15 +410,7 @@ def blog_status_check(db, con, lock, blog, update, offset=None):
     else:
         isnew = False
 
-    if blog.offset != blog.posts_scraped:
-        logging.debug(BColors.DARKGRAY + "{0} Error: blog.offset={1} blog.posts_scraped={2}.\
-Getting actual posts_scraped from DB"
-        .format(blog.name, blog.offset, blog.posts_scraped) + BColors.ENDC)
-
-        blog.posts_scraped = db_handler.get_total_post(db, con, blog)
-
-        logging.debug(BColors.DARKGRAY + "{0} Got {1} posts_scraped from DB"
-        .format(blog.name, blog.posts_scraped) + BColors.ENDC)
+    discrepancy_check(db, con, lock, blog)
 
     try:
         api_get_request_wrapper(db, con, lock, blog, update, blog.crawl_status, offset=offset)
@@ -672,7 +694,7 @@ class TumblrBlog:
         else:
             offset = '&offset=' + str(offset)
 
-        instances.sleep_here(0, 4)
+        instances.sleep_here(0, 1)
         attempt = 0
         response = requests.Response()
         response_json = {'meta': {'status': 500, 'msg': 'Server Error'},
@@ -975,6 +997,8 @@ def main(args):
         sys.exit(0)
 
 
+    instances.my_args = args
+
     # === API KEY ===
     # list of APIKey objects
     instances.api_keys = api_keys.get_api_key_object_list(
@@ -984,7 +1008,7 @@ def main(args):
     # Get proxies from free proxies site
     instances.proxy_scanner = proxies.ProxyScanner(instances.config.get('tumblrmapper', 'proxies'))
 
-    if len(list(instances.proxy_scanner.proxy_ua_dict.get('proxies'))) <= THREADS:
+    if len(list(instances.proxy_scanner.proxy_ua_dict.get('proxies'))) < THREADS:
         fresh_proxy_dict = instances.proxy_scanner.get_proxies_from_internet(minimum=THREADS)
     else:
         fresh_proxy_dict = instances.proxy_scanner.proxy_ua_dict

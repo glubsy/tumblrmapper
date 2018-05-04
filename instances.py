@@ -10,6 +10,8 @@ def __init__():
     api_keys = None
     global config
     config = None
+    global my_args
+    my_args = None
 
 def sleep_here(minwait=None, maxwait=None):
     if not minwait and not maxwait:  

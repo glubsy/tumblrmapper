@@ -818,7 +818,7 @@ def update_crawling(database, con, blog=None):
 
     cur = con.cursor()
     if not blog:
-        cur.execute('''update BLOGS set CRAWLING = 0;''')
+        cur.execute('''update BLOGS set CRAWLING = 0 where CRAWLING is not null;''')
         cur.execute('''update BLOGS set CRAWL_STATUS = 'new' where CRAWL_STATUS = 'init';''')
         logging.info(BColors.BLUEOK + BColors.BLUE
         + "Reset crawl_status & crawling for all" + BColors.ENDC)
@@ -1242,7 +1242,7 @@ def inserted_post(cur, post):
         logging.error(BColors.FAIL + "DB ERROR" + BColors.BLUE + \
         " post\t{0} : {1}".format(post.get('id'), e) + BColors.ENDC)
         errors += 1
-        success = True
+        success = False
     except Exception as e:
         logging.debug(BColors.FAIL + "ERROR" + \
         " post\t{0} : {1}".format(post.get('id'), e) + BColors.ENDC)
