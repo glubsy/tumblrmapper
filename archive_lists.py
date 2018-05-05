@@ -23,7 +23,7 @@ tumblr_base_noext_re = re.compile(r'(tumblr_(?:inline_|messaging_)?.*?(?:_r\d)?)
 tumblr_base_norev_noext_re = re.compile(r'(tumblr_(?:inline_|messaging_)?.*?)(?:_r\d)?_.{3,4}.*')
 
 SCRIPTDIR = os.path.dirname(__file__)
-DEBUG = False
+DEBUG = True
 to_delete_archives_set_debug_path = SCRIPTDIR + os.sep + "tools/to_delete_archives_set_debug.txt" #debug
 
 
@@ -131,6 +131,7 @@ def remove_raw_alternatives_from_1280(list_1280, list_raw, keep_rev=False, slow=
         # _list_1280 minus common items with _raw_set
         # return filtered_list_1280.difference(filetered_list_raw)
 
+        # list of files, list of their dirs, list of _raw files
         return difference(trimmed_list_1280, _list_1280[1], trimmed_list_raw)
 
 
@@ -247,7 +248,8 @@ def write_to_file(filepath, mylist, use_pickle=False):
                     f.write("{}\n".format(item))
         else: # isinstance(set(), type(mylist))
             with open(filepath, 'w') as f:
-                for item in tuple(map(list, zip(mylist[0], mylist[1]))):
+                # for item in tuple(map(list, zip(mylist[0], mylist[1]))):
+                for item in mylist:
                     f.write("{}\n".format(item))
 
 def main(output_pickle=True, keep_revision=True):
@@ -287,6 +289,7 @@ def main(output_pickle=True, keep_revision=True):
 
     archives_1280_tuple = None
     raw_downloads_tuple = None
+    raw_downloads_tuple_sep = None
 
     if not os.path.exists(archives_1280_txt_path):
         if not os.path.exists(archives_1280_txt_cache):
@@ -319,14 +322,14 @@ def main(output_pickle=True, keep_revision=True):
                 write_to_file(raw_downloads_tuple_debug, raw_downloads_tuple_sep, use_pickle=False)
 
 
-    if raw_downloads_tuple is not None:
+    if raw_downloads_tuple_sep is not None:
         if archives_1280_tuple is not None:
-            archives1280_minus_raw_tuple = remove_raw_alternatives_from_1280(archives_1280_tuple, raw_downloads_tuple, keep_revision)
+            archives1280_minus_raw_tuple = remove_raw_alternatives_from_1280(archives_1280_tuple, raw_downloads_tuple_sep, keep_revision)
         else: # use path
             if os.path.exists(archives_1280_txt_path):
-                archives1280_minus_raw_tuple = remove_raw_alternatives_from_1280(archives_1280_txt_path, raw_downloads_tuple, keep_revision)
+                archives1280_minus_raw_tuple = remove_raw_alternatives_from_1280(archives_1280_txt_path, raw_downloads_tuple_sep, keep_revision)
             elif os.path.exists(archives_1280_txt_cache):
-                archives1280_minus_raw_tuple = remove_raw_alternatives_from_1280(archives_1280_txt_cache, raw_downloads_tuple, keep_revision)
+                archives1280_minus_raw_tuple = remove_raw_alternatives_from_1280(archives_1280_txt_cache, raw_downloads_tuple_sep, keep_revision)
             else:
                 print("ERROR: no 1280 listing found!")
                 sys.exit(0)
@@ -371,6 +374,8 @@ def main(output_pickle=True, keep_revision=True):
             write_to_file(archives_minus_raw_minus_todelete_path_pickle, archives_minus_raw_minus_todelete_tuple, use_pickle=True)
         else:
             write_to_file(archives_minus_raw_minus_todelete_path, archives_minus_raw_minus_todelete_tuple)
+        if DEBUG:
+            write_to_file(archives_minus_raw_minus_todelete_path, archives_minus_raw_minus_todelete_tuple, use_pickle=False)
 
 
 

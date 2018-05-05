@@ -79,7 +79,7 @@ class ProxyScanner():
             self.proxy_ua_dict.get('proxies')[dict_index].update({"blacklisted": True}) # add the property
             self.write_proxies_to_json_on_disk(self.proxy_ua_dict)
 
-        if not len(self.proxy_ua_dict.get('proxies')): # if list of proxy dict is depleted
+        if len(self.proxy_ua_dict.get('proxies')) == 0: # if list of proxy dict is depleted
             logging.info(BColors.LIGHTGREEN + BColors.BOLD + "List of proxies is empty, getting from internet!" + BColors.ENDC)
             self.get_proxies_from_internet()
             self.gen_proxy_cycle() #FIXME: move into get_proxies()?

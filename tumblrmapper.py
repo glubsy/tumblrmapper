@@ -665,7 +665,8 @@ class TumblrBlog:
             old_proxy_object = self.proxy_object
 
         with lock: # get_new_proxy() requires a lock!
-            self.proxy_object = instances.proxy_scanner.get_new_proxy(old_proxy_object)
+            self.proxy_object = instances.proxy_scanner.get_new_proxy(
+                old_proxy_object, remove='remove')
 
         try:
             self.attach_random_api_key()
@@ -1008,7 +1009,7 @@ def main(args):
     # Get proxies from free proxies site
     instances.proxy_scanner = proxies.ProxyScanner(instances.config.get('tumblrmapper', 'proxies'))
 
-    if len(list(instances.proxy_scanner.proxy_ua_dict.get('proxies'))) < THREADS:
+    if len(list(instances.proxy_scanner.proxy_ua_dict.get('proxies'))) <= THREADS:
         fresh_proxy_dict = instances.proxy_scanner.get_proxies_from_internet(minimum=THREADS)
     else:
         fresh_proxy_dict = instances.proxy_scanner.proxy_ua_dict
