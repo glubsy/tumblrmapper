@@ -57,6 +57,8 @@ def parse_args():
                     help="Populate DB with blogs")
     parser.add_argument('-i', '--ignore_duplicates', action="store_true", default=False,
                 help="Ignore duplicate posts, keep scraping away")
+    parser.add_argument('-f', '--dead_blogs', action="store_true", default=False,
+                help="Scrape rebogs from dead blog to populate blogs with notes")
 
     parser.add_argument('-p', '--proxies', action="store_true", default=False,
                         help="Use randomly selected proxies")
@@ -150,6 +152,115 @@ def input_thread(event, worker_threads):
     #         qlist.append(None)
 
 
+def process_dead(db, lock, db_update_lock, pill2kill):
+    """Fetch dead or wiped blog from BLOGS table in DB
+    for each reblog of that blog, request the post through the REST API
+    and add all blogs found in the notes to our BLOGS table for later scraping"""
+
+    con = db.connect()
+    while not pill2kill.is_set():
+
+        requester = Requester()
+        update = UpdatePayload()
+
+        while True and not pill2kill.is_set():
+            with db_update_lock:
+                posts_rows = db_handler.fetch_dead_blogs_posts(db, con)
+            if len(posts_rows) == 0:
+                break
+            if posts_rows[0][0] == 0: # o_post_id
+                continue
+            break
+
+        if not posts_rows:
+            logging.warning(f'{BColors.GREENOK}{BColors.GREEN}Done \
+fetching reblogs and populating blogs from notes.{BColors.ENDC}')
+            break
+
+        logging.warning(f'{BColors.GREEN}Got reblogs for {row[-1]}{BColors.ENDC}')
+
+        if pill2kill.is_set():
+            break
+
+        rid_cache = set()
+        for row in posts_rows:
+            if pill2kill.is_set():
+                break
+            if row[1] in rid_cache:
+                continue
+            rid_cache.add(row[1])
+            requester.name = row[-3]
+
+            logging.warning(f'{BColors.YELLOW}Fetching for dead blog {row[-1]}:\
+ {posts_rows.index(row)}/{len(posts_rows)}{BColors.ENDC}')
+
+            try:
+                post_get_wrapper(requester, db_update_lock, update, post_id=row[0])
+            except:
+                rid_cache.remove(row[1])
+                continue
+
+            try:
+                blogslist, notes_count = parse_post_json(update)
+            except BaseException as e:
+                traceback.print_exc()
+                logging.debug(f'{BColors.FAIL}Error getting notes: {e}{BColors.ENDC}')
+                break
+
+            if pill2kill.is_set():
+                break
+
+            with db_update_lock:
+                for blogname in blogslist:
+                    try:
+                        db_handler.insert_blogname_gathered(db, con, blogname, 'new')
+                    except:
+                        pass
+                try:
+                    db_handler.update_remote_ids_with_notes_count(db, con,
+                    row[1], row[-1], notes_count)
+                except:
+                    raise
+
+
+
+def post_get_wrapper(requester, db_update_lock, update, post_id):
+
+    update.__init__()
+    attempts = 0
+    while not update.valid and attempts < 3:
+        attempts += 1
+        try:
+            requester.api_get_request(db_update_lock, update, post_id=post_id)
+            if update.valid:
+                return
+            else:
+                continue
+        except BaseException as e:
+            traceback.print_exc()
+            logging.error(f"{BColors.RED}{requester.name} \
+Exception during request: {e}{BColors.ENDC}")
+
+    logging.error(f"{BColors.RED}{requester.name} Too many request \
+attempts or server issue during request. Skipping for now. {BColors.ENDC}")
+    raise BaseException("Too many request attempts or server issue during request")
+
+
+
+def parse_post_json(update):
+    """count the number of notes, returns blog_names listed"""
+    noteslist = update.posts_response[0].get('notes')
+    blogslist = set()
+    notes_count = 0
+    for note in noteslist:
+        name = note.get('blog_name')
+        if name is not None:
+            blogslist.add(name)
+        notes_count += 1
+
+    return blogslist, notes_count
+
+
 def process(db, lock, db_update_lock, pill2kill):
 
     con = db.connect()
@@ -234,7 +345,7 @@ def process(db, lock, db_update_lock, pill2kill):
 
                 try:
                     api_get_request_wrapper(db, con, lock, blog,
-                    update, blog.crawl_status, offset=blog.offset)
+                    update, blog.crawl_status)
                 except BaseException as e:
                     logging.debug(BColors.FAIL
                      + "{0} Exception in api_get_request_wrapper from loop! {1!r}"
@@ -360,7 +471,7 @@ def check_blog_end_of_posts(db, con, lock, blog):
 
 
 
-def api_get_request_wrapper(db, con, lock, blog, update, crawl_status, offset=None):
+def api_get_request_wrapper(db, con, lock, blog, update, crawl_status, post_id=None):
     """Updates the update, valid or invalid"""
 
     # Retry getting /posts until either 404 or success
@@ -369,7 +480,7 @@ def api_get_request_wrapper(db, con, lock, blog, update, crawl_status, offset=No
     while not update.valid and attempts < 3:
         attempts += 1
         try:
-            blog.api_get_request(lock, update, api_key=None, reqtype="posts", offset=offset)
+            blog.api_get_request(lock, update, api_key=None, reqtype="posts", post_id=post_id)
             if update.valid:
                 return
             else:
@@ -402,7 +513,7 @@ Getting actual posts_scraped from DB"
 
 
 
-def blog_status_check(db, con, lock, blog, update, offset=None):
+def blog_status_check(db, con, lock, blog, update):
     """Returns True on update validated, otherwise false"""
 
     if blog.crawl_status == 'new':
@@ -413,7 +524,7 @@ def blog_status_check(db, con, lock, blog, update, offset=None):
     discrepancy_check(db, con, lock, blog)
 
     try:
-        api_get_request_wrapper(db, con, lock, blog, update, blog.crawl_status, offset=offset)
+        api_get_request_wrapper(db, con, lock, blog, update, blog.crawl_status)
     except:
         raise
 
@@ -680,7 +791,7 @@ class TumblrBlog:
 
 
 
-    def api_get_request(self, lock, updateobj, api_key=None, reqtype="posts", offset=None):
+    def api_get_request(self, lock, updateobj, api_key=None, reqtype="posts", post_id=None):
         """Returns requests.response object, reqype=[posts|info]"""
         if not api_key:
             api_key = self.api_key_object_ref
@@ -690,10 +801,13 @@ class TumblrBlog:
             except:
                 raise
 
-        if not offset or offset == 0:
-            offset = ''
-        else:
-            offset = '&offset=' + str(offset)
+        params = {}
+        if self.offset is not None and self.offset != 0:
+            params['offset'] = self.offset
+        if post_id is not None:
+            params['id'] = post_id
+            params['notes_info'] = True
+            #params['reblog_info'] = True
 
         instances.sleep_here(0, 1)
         attempt = 0
@@ -704,19 +818,24 @@ class TumblrBlog:
         if not self.requests_session:
             self.init_session()
             logging.debug("---\n{0}Initializing new requests session: {1} {2}\n----"\
-            .format(self.name, self.requests_session.proxies, self.requests_session.headers))
+            .format(self.name, self.requests_session.proxies,
+            self.requests_session.headers))
 
-        apiv2_url = 'https://api.tumblr.com/v2/blog/{0}/{1}?api_key={2}{3}'\
-        .format(self.name, reqtype, api_key.api_key, offset)
+        url = 'https://api.tumblr.com/v2/blog/{}/{}?api_key={}'.format(self.name,
+        reqtype, api_key.api_key)
+
+        if params:
+            for param in params.keys():
+                url = f'{url}&{param}={params[param]}'
 
         while attempt < 10:
             attempt += 1
             try:
                 logging.info(BColors.GREEN + BColors.BOLD +
                 "{0} GET ip: {1} url: {2}".format(self.name,
-                self.proxy_object.get('ip_address'), apiv2_url) + BColors.ENDC)
+                self.proxy_object.get('ip_address'), url) + BColors.ENDC)
 
-                response = self.requests_session.get(url=apiv2_url, timeout=10)
+                response = self.requests_session.get(url=url, timeout=10)
 
                 api_keys.inc_key_request(api_key)
 
@@ -863,6 +982,17 @@ class TumblrBlog:
         "{0} No error in check_response_validate_update()"\
         .format(self.name) + BColors.ENDC)
 
+
+
+
+class Requester(TumblrBlog):
+
+    def __init__(self):
+        super().__init__()
+        self.attach_proxy()
+        # init requests.session with headers
+        self.init_session()
+        self.attach_random_api_key()
 
 
 class UpdatePayload(requests.Response):
@@ -1054,9 +1184,14 @@ def main(args):
     t.start()
     worker_threads.append(t)
 
+    if args.dead_blogs:
+        tgt = process_dead
+    else:
+        tgt = process
+
     for _ in range(0, THREADS):
         args = (db, lock, db_update_lock, pill2kill)
-        t = threading.Thread(target=process, args=args)
+        t = threading.Thread(target=tgt, args=args)
         worker_threads.append(t)
         # t.daemon = True
         t.start()

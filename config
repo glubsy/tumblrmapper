@@ -14,7 +14,7 @@ db_filepath = /home/firebird
 
 db_filename = tumblrmapper.fdb
 
-threads = 1
+threads = 5
 
 # only version 2 is implemented for now
 api_version = 2

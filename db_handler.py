@@ -132,7 +132,7 @@ def populate_db_with_tables(database):
         con.execute_immediate("CREATE DOMAIN D_POST_NO AS BIGINT;")
         con.execute_immediate("CREATE DOMAIN D_SUPER_LONG_TEXT AS VARCHAR(32765)")
         con.execute_immediate(
-"""CREATE DOMAIN D_BOOLEAN AS smallint default 0 
+"""CREATE DOMAIN D_BOOLEAN AS smallint default 0
 CHECK (VALUE IS NULL OR VALUE IN (0, 1, 2));""")
 
         # Create tables with columns
@@ -169,6 +169,7 @@ ORIGIN_BLOGNAME     D_AUTO_ID NOT NULL,
 REBLOGGED_BLOGNAME  D_AUTO_ID,
 POST_URL            D_POSTURL NOT NULL,
 POST_DATE           D_EPOCH,
+NOTES               integer,
 FOREIGN KEY(ORIGIN_BLOGNAME) REFERENCES BLOGS(AUTO_ID),
 FOREIGN KEY(REBLOGGED_BLOGNAME) REFERENCES BLOGS(AUTO_ID)
 );""")
@@ -266,19 +267,28 @@ END
         con.execute_immediate(
 """
 CREATE OR ALTER PROCEDURE INSERT_BLOGNAME_GATHERED (
-    i_blogname D_BLOG_NAME)
-returns (o_generated_auto_id d_auto_id)
+    i_blogname D_BLOG_NAME,
+    i_new varchar(10) default NULL
+    )
+returns (o_generated_auto_id d_auto_id,
+o_crawl_status varchar(10))
 AS
 BEGIN
 if (not exists (select AUTO_ID from BLOGS where (BLOGS.BLOG_NAME = :i_blogname)))
 THEN begin
     o_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence2, 1);
-    INSERT into BLOGS (AUTO_ID, BLOG_NAME) values (:o_generated_auto_id, :i_blogname);
+    INSERT into BLOGS (AUTO_ID, BLOG_NAME, CRAWL_STATUS) values (:o_generated_auto_id, :i_blogname, :i_new);
     end
 ELSE
 BEGIN
-    select AUTO_ID from BLOGS where BLOGS.BLOG_NAME = :i_blogname into :o_generated_auto_id;
-    exit;
+    select AUTO_ID, CRAWL_STATUS from BLOGS where BLOGS.BLOG_NAME = :i_blogname into :o_generated_auto_id, o_crawl_status;
+    if ((:i_new is not NULL ) and (:o_crawl_status is NULL)) then
+        begin
+            update BLOGS set CRAWL_STATUS = :i_new where BLOG_NAME = :i_blogname;
+            exit;
+        end
+    else
+        exit;
 END
 WHEN GDSCODE unique_key_violation
 DO
@@ -456,6 +466,72 @@ if (exists (select BLOG_NAME from BLOGS where (CRAWL_STATUS = 'DONE'))) then
     END
 END
 """)
+
+
+        con.execute_immediate(\
+"""
+CREATE OR ALTER PROCEDURE FETCH_DEAD_BLOGS_POSTS
+RETURNS (
+    O_POST_ID D_POST_NO,
+    O_REMOTE_ID D_POST_NO,
+    O_ORIGIN_ID D_AUTO_ID,
+    O_REBLOGGED_ID D_AUTO_ID,
+    O_NOTES INTEGER,
+    O_ORIGIN_ID2 D_AUTO_ID,
+    O_ORIGIN_NAME D_BLOG_NAME,
+    O_REBLOGGED_ID2 D_AUTO_ID,
+    O_REBLOGGED_NAME2 D_BLOG_NAME )
+AS
+declare variable v_dead D_BLOG_NAME;
+BEGIN
+    for select first 1 (BLOG_NAME) from BLOGS where (((HEALTH = 'DEAD') and (CRAWLING != 1)) or ((HEALTH = 'WIPED' and TOTAL_POSTS <= 2) and (CRAWLING != 1))) into :v_dead do
+    begin
+        update blogs set CRAWLING = 1 where blogs.blog_name = :v_dead; --avoid rerolling it
+        if (exists (select first 1 * from FETCH_DEAD_POSTS(:v_dead) where o_notes is null)) THEN
+        begin
+            for select * from FETCH_DEAD_POSTS(:v_dead) where o_notes is null
+            into :o_post_id, :o_remote_id, :o_origin_id, :o_reblogged_id, :o_notes,
+            :o_origin_id2, :o_origin_name, :o_reblogged_id2, :o_reblogged_name2
+            do
+            suspend;
+            exit;
+        end
+        else
+        O_REBLOGGED_NAME2 = :v_dead;
+        O_post_id = 0; -- no reblogs found found
+        suspend;
+    end
+end
+""")
+
+
+        con.execute_immediate(\
+"""
+CREATE OR ALTER PROCEDURE FETCH_DEAD_POSTS (
+    I_NAME D_BLOG_NAME )
+RETURNS (
+    O_POST_ID D_POST_NO,
+    O_REMOTE_ID D_POST_NO,
+    O_ORIGIN_ID D_AUTO_ID,
+    O_REBLOGGED_ID D_AUTO_ID,
+    O_NOTES INTEGER,
+    O_ORIGIN_ID2 D_AUTO_ID,
+    O_ORIGIN_NAME D_BLOG_NAME,
+    O_REBLOGGED_ID2 D_AUTO_ID,
+    O_REBLOGGED_NAME2 D_BLOG_NAME )
+AS
+begin
+    for select p.post_id, p.remote_id, p.ORIGIN_BLOGNAME, p.REBLOGGED_BLOGNAME, p.notes, c1.auto_id, c1.BLOG_NAME, c2.auto_id, c2.BLOG_NAME
+    from posts as p
+    inner join blogs as c1 on c1.auto_id = p.ORIGIN_BLOGNAME
+    inner join blogs as c2 on c2.auto_id = p.REBLOGGED_BLOGNAME
+    where (p.reblogged_blogname = (select auto_id from blogs where blogs.blog_name = :i_name))
+    or (p.ORIGIN_BLOGNAME = (select auto_id from blogs where blogs.blog_name = :i_name))
+    into :o_post_id, :o_remote_id, :o_origin_id, :o_reblogged_id, :o_notes,
+    :o_origin_id2, :o_origin_name, :o_reblogged_id2, :o_reblogged_name2
+    do
+    suspend;
+end""")
 
         # Update info fetched from API
         # args:  (blogname, health(UP,DEAD,WIPED), totalposts, updated_timestamp, status(resume, dead) )
@@ -746,6 +822,47 @@ def fetch_random_blog(database, con):
     finally:
         con.commit()
 
+
+def fetch_dead_blogs_posts(database, con):
+    """ Queries DB for a dead blog and returns all rows of posts and reblogs
+    returns
+    (O_POST_ID , O_REMOTE_ID, O_ORIGIN_ID, O_REBLOGGED_ID,O_NOTES,O_ORIGIN_ID2,
+    O_ORIGIN_NAME,O_REBLOGGED_ID2,O_REBLOGGED_NAME2)"""
+    cur = con.cursor()
+    try:
+        cur.execute("select * from FETCH_DEAD_BLOGS_POSTS;")
+        return cur.fetchall()
+    except:
+        raise
+    finally:
+        con.commit()
+
+
+def update_remote_ids_with_notes_count(db, con, rid, name, count):
+    """Update all remote_ids with the same notes count"""
+    cur = con.cursor()
+    try:
+        cur.execute(r'update POSTS set notes = ' + str(count) + r' where remote_id ='
+        + str(rid) + r';')
+    except BaseException as e:
+        traceback.print_exc()
+        logging.debug(f'{BColors.FAIL}{name} error while updating rid {rid}: {e}{BColors.ENDC}')
+    finally:
+        con.commit()
+
+
+def insert_blogname_gathered(db, con, name, crawling_status=None):
+    """Inserting a gathered blog with crawling status (default null), or
+    updating an existing blog with crawling status"""
+    cur = con.cursor()
+    try:
+        cur.callproc('insert_blogname_gathered', (name, crawling_status))
+    except:
+        logging.debug(f'{BColors.FAIL}error while inserting {name}\
+ crawling_status: {crawling_status}{BColors.ENDC}')
+        raise
+    finally:
+        con.commit()
 
 
 def update_blog_info(Database, con, blog, ignore_response=False):
@@ -1309,7 +1426,7 @@ def inserted_context(cur, post):
                 success = True
             if toolong:
                 logging.debug("{9}Failed inserting trimmed context for {1}: {2}{3}"
-                .format(BColors.FAIL, post.get('id'), post.get('content_raw')[:1000], 
+                .format(BColors.FAIL, post.get('id'), post.get('content_raw')[:1000],
                 BColors.ENDC))
 
 
