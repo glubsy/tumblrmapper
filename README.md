@@ -1,11 +1,5 @@
 # TumblrMapper - maps blogs and posts from tumblr #
 
-dependencies: 
-
-fake\_useragent
-fdb (firebird python driver)
-
-
 ## PROBLEM ##
 
 Tumblr serves compressed and downsized files by default (with suffix \_1280 for example).
@@ -39,6 +33,14 @@ corresponding \_raw files with provided tools.
 * -f (--dead\_blogs) will fetch all reblogs from blogs marked as DEAD and populate the DB with all blogs found in notes for each post
 * -l DEBUG to force debug output in stdout
 * Only tested in GNU/Linux
+
+## Dependencies ##: 
+
+[fake\_useragent](https://pypi.org/project/fake-useragent/)
+
+[fdb (firebird python driver)](https://www.firebirdsql.org/en/devel-python-driver/)
+
+[re2](https://github.com/andreasvc/pyre2)
 
 
 ## TODO ##:
