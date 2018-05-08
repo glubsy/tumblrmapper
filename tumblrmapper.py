@@ -191,7 +191,7 @@ fetching reblogs and populating blogs from notes.{BColors.ENDC}')
             rid_cache.add(row[1])
             requester.name = row[-3]
 
-            logging.warning(f'{BColors.YELLOW}Fetching for dead blog {row[-1]}:\
+            logging.warning(f'{BColors.YELLOW}Fetched reblogged post for dead blog {row[-1]}:\
  {posts_rows.index(row) + 1}/{len(posts_rows)}{BColors.ENDC}')
 
             try:
