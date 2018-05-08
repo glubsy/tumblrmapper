@@ -1,0 +1,42 @@
+{
+ "api_keys": [
+  {
+   "api_key": "your_key_here",
+   "secret_key": "your_secret_key_here (not used)",
+   "hour_check_time": "",
+   "day_check_time": "",
+   "last_used_hour": 0,
+   "last_used_day": 0,
+   "last_written_time": 0,
+   "disabled": false,
+   "disabled_until": 0,
+   "disabled_until_h": "",
+   "blacklisted": false,
+   "blacklist_hit": 0,
+   "blacklisted_until": 0,
+   "blacklisted_until_h": "",
+   "bucket_hour": 0,
+   "bucket_day": 0,
+   "print_count": 0
+  },
+  {
+   "api_key": "your_second_key_here",
+   "secret_key": "your_secret_key_here (not used)",
+   "hour_check_time": "",
+   "day_check_time": "",
+   "last_used_hour": 0,
+   "last_used_day": 0,
+   "last_written_time": 0,
+   "disabled": false,
+   "disabled_until": 0,
+   "disabled_until_h": "",
+   "blacklisted": false,
+   "blacklist_hit": 0,
+   "blacklisted_until": 0,
+   "blacklisted_until_h": null,
+   "bucket_hour": 0,
+   "bucket_day": 0,
+   "print_count": 0
+  }
+ ]
+}
