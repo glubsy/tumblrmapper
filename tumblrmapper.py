@@ -177,7 +177,7 @@ def process_dead(db, lock, db_update_lock, pill2kill):
 fetching reblogs and populating blogs from notes.{BColors.ENDC}')
             break
 
-        logging.warning(f'{BColors.GREEN}Got reblogs for {row[-1]}{BColors.ENDC}')
+        logging.warning(f'{BColors.GREEN}Got reblogs for {posts_rows[0][-1]}{BColors.ENDC}')
 
         if pill2kill.is_set():
             break
@@ -192,7 +192,7 @@ fetching reblogs and populating blogs from notes.{BColors.ENDC}')
             requester.name = row[-3]
 
             logging.warning(f'{BColors.YELLOW}Fetching for dead blog {row[-1]}:\
- {posts_rows.index(row)}/{len(posts_rows)}{BColors.ENDC}')
+ {posts_rows.index(row) + 1}/{len(posts_rows)}{BColors.ENDC}')
 
             try:
                 post_get_wrapper(requester, db_update_lock, update, post_id=row[0])
@@ -221,6 +221,8 @@ fetching reblogs and populating blogs from notes.{BColors.ENDC}')
                     row[1], row[-1], notes_count)
                 except:
                     raise
+        logging.warning(f"{BColors.GREENOK}{BColors.GREEN}Done scraping reblogs\
+ for {posts_rows[0][-1]}{BColors.ENDC}")
 
 
 
