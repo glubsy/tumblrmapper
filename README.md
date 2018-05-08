@@ -25,6 +25,22 @@ This tool scrapes all URLs on a supplied list of tumblr blogs and stores the fol
 Optionally, if you have a list of \_1280 files, you can store them in the DB and look for the
 corresponding \_raw files with provided tools.
 
+#HOWTO USE#
+
+* Get some API keys (at least one) and copy them into api\_keys.json
+* ./tumblrmapper -n to create a new database
+* ./tumblrmapper -b to insert blogs recorded by the user 'blogs\_to\_scrape' text file (path in config), and update new ones
+* ./tumblrmapper -s to populate the '1280' table with the list of files which the user is looking to recover their \_raw versions (their URLs)
+* ./tumblrmapper -u to create the above file from VVV (Virtual Volume View) catalogs, eliminating \_raws already downloaded and recorded in a downloads.VVV catalog
+
+#NOTES#
+
+* -i (--ignore\_duplicates) will keep rescraping posts which have already been added to DB
+* -f (--dead\_blogs) will fetch all reblogs from blogs marked as DEAD and populate the DB with all blogs found in notes for each post
+* -l DEBUG to force debug output in stdout
+* Only tested in GNU/Linux
+
+
 #TODO#:
 
 * Command line argument to force recheck DONE blogs with post\_scraped == total\_posts
