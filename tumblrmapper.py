@@ -177,7 +177,7 @@ def process_dead(db, lock, db_update_lock, pill2kill):
 fetching reblogs and populating blogs from notes.{BColors.ENDC}')
             break
 
-        logging.warning(f'{BColors.GREEN}Got reblogs for {posts_rows[0][-1]}{BColors.ENDC}')
+        logging.warning(f'{BColors.GREENOK}Got {len(posts_rows)} reblogs for {posts_rows[0][-1]}{BColors.ENDC}')
 
         if pill2kill.is_set():
             break
@@ -191,7 +191,7 @@ fetching reblogs and populating blogs from notes.{BColors.ENDC}')
             rid_cache.add(row[1])
             requester.name = row[-3]
 
-            logging.warning(f'{BColors.YELLOW}Fetched reblogged post for dead blog {row[-1]}:\
+            logging.warning(f'{BColors.YELLOW}Fetching reblogged post for dead blog {row[-1]}:\
  {posts_rows.index(row) + 1}/{len(posts_rows)}{BColors.ENDC}')
 
             try:
@@ -204,8 +204,9 @@ fetching reblogs and populating blogs from notes.{BColors.ENDC}')
                 blogslist, notes_count = parse_post_json(update)
             except BaseException as e:
                 traceback.print_exc()
+                rid_cache.remove(row[1])
                 logging.debug(f'{BColors.FAIL}Error getting notes: {e}{BColors.ENDC}')
-                break
+                continue
 
             if pill2kill.is_set():
                 break
@@ -251,6 +252,8 @@ attempts or server issue during request. Skipping for now. {BColors.ENDC}")
 
 def parse_post_json(update):
     """count the number of notes, returns blog_names listed"""
+    if not update.posts_response:
+        raise BaseException("Response list was empty!")
     noteslist = update.posts_response[0].get('notes')
     blogslist = set()
     notes_count = 0

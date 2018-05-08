@@ -1525,8 +1525,6 @@ if __name__ == "__main__":
     archives_toload = SCRIPTDIR +  "tools/1280_files_list.txt"
     database = Database(db_filepath="/home/firebird/tumblrmapper_test.fdb", \
                         username="sysdba", password="masterkey")
-    test_jsons = ["komorebi-latest.json", "jerian-cg-selfreblog.json", "vgf_latest.json", "3dandy.json", "thelewd3dblog_offset0.json",
-     "leet_01.json", "cosm_01.json"]
 
     os.nice(20)
     con = database.connect()
@@ -1534,14 +1532,6 @@ if __name__ == "__main__":
     # populate_db_with_blogs(database, blogs_toscrape)
     # Optional archives too
     # populate_db_with_archives(database, archives_toload)
-
-    for jsonfile in test_jsons:
-        print("Opening: {0}".format(jsonfile))
-        myjson = json.load(open(SCRIPTDIR + "tools/test/" + jsonfile, 'r'))
-
-        processed = unittest_update_table(database, con, myjson)
-        print(BColors.BLUEOK + "processed: {0}".format(processed) + BColors.ENDC)
-    con.close()
 
     # print('FILTERED_URL_GLOBAL_COUNT: {0}'.format(len(FILTERED_URL_GLOBAL_COUNT)))
 
