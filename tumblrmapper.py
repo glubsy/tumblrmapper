@@ -10,18 +10,18 @@ import signal
 import sys
 import threading
 import time
-import signal
 import traceback
 from concurrent import futures
 from itertools import cycle
+from logging.handlers import RotatingFileHandler
 import requests
 import api_keys
+import archive_lists
 import db_handler
 import instances
 import proxies
 from constants import BColors
-from logging.handlers import RotatingFileHandler
-import archive_lists
+
 # try:
 #     from tqdm import tqdm
 #     TQDM_AVAILABLE = True
@@ -31,7 +31,7 @@ import archive_lists
 # import ratelimit
 
 SCRIPTDIR = os.path.dirname(__file__)
-THREADS = 10
+THREADS = 5
 asked_termination = False
 
 def parse_args():
@@ -55,9 +55,9 @@ def parse_args():
                     help="Populate DB with archives")
     parser.add_argument('-b', '--update_blogs', action="store_true",
                     help="Populate DB with blogs")
-    parser.add_argument('-i', '--ignore_duplicates', action="store_true", default=False,
+    parser.add_argument('-f', '--ignore_duplicates', action="store_true", default=False,
                 help="Ignore duplicate posts, keep scraping away")
-    parser.add_argument('-f', '--dead_blogs', action="store_true", default=False,
+    parser.add_argument('-i', '--dead_blogs', action="store_true", default=False,
                 help="Scrape rebogs from dead blog to populate blogs with notes")
 
     parser.add_argument('-p', '--proxies', action="store_true", default=False,
@@ -99,10 +99,10 @@ def parse_config(config_path=SCRIPTDIR, data_path=None):
 
     # Try to read config file (either passed in, or default value)
     # conf_file = os.path.join(config.get('tumblrmapper', 'config_path'), 'config')
-    logging.debug("Trying to read config file: %s", config_path)
+    logging.debug(f"Trying to read config file: {config_path}")
     result = config.read(config_path)
     if not result:
-        logging.warning("Unable to read config file: %s", config_path)
+        logging.warning(f"Unable to read config file: {config_path}")
 
     config.set('tumblrmapper', 'blogs_to_scrape', \
     SCRIPTDIR + os.sep + config.get('tumblrmapper', 'blogs_to_scrape'))
@@ -113,8 +113,7 @@ def parse_config(config_path=SCRIPTDIR, data_path=None):
     config.set('tumblrmapper', 'db_filepath', \
     os.path.expanduser(config.get('tumblrmapper', 'db_filepath')))
 
-    logging.info("Merged config: %s",
-                sorted(dict(config.items('tumblrmapper')).items()))
+    logging.info(f"Merged config: {sorted(dict(config.items('tumblrmapper')).items())}")
 
     return config
 
@@ -163,7 +162,7 @@ def process_dead(db, lock, db_update_lock, pill2kill):
         requester = Requester()
         update = UpdatePayload()
 
-        while True and not pill2kill.is_set():
+        while not pill2kill.is_set():
             with db_update_lock:
                 posts_rows = db_handler.fetch_dead_blogs_posts(db, con)
             if len(posts_rows) == 0:
@@ -173,11 +172,12 @@ def process_dead(db, lock, db_update_lock, pill2kill):
             break
 
         if not posts_rows:
-            logging.warning(f'{BColors.GREENOK}{BColors.GREEN}Done \
-fetching reblogs and populating blogs from notes.{BColors.ENDC}')
+            logging.warning(f'{BColors.GREEN}{BColors.BLINKING}\
+Done fetching reblogs and populating blogs from notes.{BColors.ENDC}')
             break
 
-        logging.warning(f'{BColors.GREENOK}Got {len(posts_rows)} reblogs for {posts_rows[0][-1]}{BColors.ENDC}')
+        logging.warning(f'{BColors.GREENOK}Got {len(posts_rows)} \
+reblogs for {posts_rows[0][-1]}{BColors.ENDC}')
 
         if pill2kill.is_set():
             break
@@ -222,12 +222,13 @@ fetching reblogs and populating blogs from notes.{BColors.ENDC}')
                     row[1], row[-1], notes_count)
                 except:
                     raise
-        logging.warning(f"{BColors.GREENOK}{BColors.GREEN}Done scraping reblogs\
- for {posts_rows[0][-1]}{BColors.ENDC}")
+        logging.warning(f"{BColors.GREENOK}{BColors.GREEN}Done scraping reblogs \
+for {posts_rows[0][-1]}{BColors.ENDC}")
 
 
 
 def post_get_wrapper(requester, db_update_lock, update, post_id):
+    """Handle exceptions"""
 
     update.__init__()
     attempts = 0
@@ -249,7 +250,6 @@ attempts or server issue during request. Skipping for now. {BColors.ENDC}")
     raise BaseException("Too many request attempts or server issue during request")
 
 
-
 def parse_post_json(update):
     """count the number of notes, returns blog_names listed"""
     if not update.posts_response:
@@ -267,36 +267,35 @@ def parse_post_json(update):
 
 
 def process(db, lock, db_update_lock, pill2kill):
+    """Thread process"""
 
     con = db.connect()
-    blog = None
+    blog = TumblrBlog()
 
     while not pill2kill.is_set():
-
-        with lock:
-            try:
-                blog = blog_generator(db, con)
-            except BaseException as e:
-                logging.debug("{0}Exception occured in blog_generator: {1!r}{2}"
-                .format(BColors.FAIL, e, BColors.ENDC))
-                blog = TumblrBlog()
-                pill2kill.set()
+        try:
+            blog = blog_generator(db, con, lock)
+        except BaseException as e:
+            logging.debug(f"{BColors.FAIL}Exception occured in blog_generator:\
+ {e}{BColors.ENDC}")
+            pill2kill.set()
 
         if blog.name is None:
-            logging.warning(BColors.DARKGRAY + \
-            "No blog name fetched! No more to process?" + BColors.ENDC)
+            logging.warning(f"{BColors.DARKGRAY}No blog name fetched! No \
+more to process?{BColors.ENDC}")
             break
 
+        # instances.sleep_here(0,1)
         update = UpdatePayload()
 
         # blog.database = db
         # blog.con = con
 
         if blog.crawl_status == 'new': # not yet updated
-
             try:
                 blog_status_check(db, con, lock, blog, update)
-            except:
+            except BaseException as e:
+                logging.debug(f'{BColors.FAIL}Exception while status_check {e}{BColors.ENDC}')
                 continue
 
             if blog.health == 'DEAD':
@@ -315,7 +314,8 @@ def process(db, lock, db_update_lock, pill2kill):
         elif blog.crawl_status == 'resume':
             try:
                 blog_status_check(db, con, lock, blog, update)
-            except:
+            except BaseException as e:
+                logging.debug(f'{BColors.FAIL}Exception while status_check {e}{BColors.ENDC}')
                 continue
 
             if blog.offset > 0: # skip this first response, go straight to our previous offset
@@ -325,7 +325,8 @@ def process(db, lock, db_update_lock, pill2kill):
         elif blog.crawl_status == 'DONE':
             try:
                 blog_status_check(db, con, lock, blog, update)
-            except:
+            except BaseException as e:
+                logging.debug(f'{BColors.FAIL}Exception while status_check {e}{BColors.ENDC}')
                 continue
             insert_posts(db, con, db_update_lock, blog, update)
         else:
@@ -339,8 +340,8 @@ def process(db, lock, db_update_lock, pill2kill):
         while not pill2kill.is_set() and not blog.eof:
             if blog.posts_scraped >= blog.total_posts or blog.offset >= blog.total_posts:
                 logging.debug(
-                "{0.name} before loop: posts_scraped {0.posts_scraped} or offset\
- {0.offset} >= total_posts {0.total_posts}, breaking loop!".format(blog))
+                "{0.name} before loop: posts_scraped {0.posts_scraped} or offset \
+{0.offset} >= total_posts {0.total_posts}, breaking loop!".format(blog))
                 break
 
             if not update.posts_response:  # could be some other field attached to blog
@@ -387,9 +388,8 @@ def process(db, lock, db_update_lock, pill2kill):
         check_blog_end_of_posts(db, con, lock, blog)
         db_handler.update_blog_info(db, con, blog, ignore_response=True)
 
-        logging.warning(BColors.GREENOK + BColors.BOLD + BColors.GREEN +
-        "{0} Done scraping. Total {1}/{2}"
-        .format(blog.name, blog.posts_scraped, blog.total_posts) + BColors.ENDC)
+        logging.warning(f"{BColors.GREENOK}{BColors.BOLD}{BColors.GREEN}\
+{blog.name} Done scraping. Total {blog.posts_scraped}/{blog.total_posts}{BColors.ENDC}")
 
         if pill2kill.is_set():
             break
@@ -448,7 +448,7 @@ def check_blog_end_of_posts(db, con, lock, blog):
 
     logging.debug("{0} check_blog_end_of_posts".format(blog.name))
 
-    discrepancy_check(db, con, lock, blog)
+    discrepancy_check(db, con, blog)
 
     if blog.posts_scraped >= blog.total_posts or blog.offset >= blog.total_posts:
         logging.info("Marking {0} as DONE".format(blog.name))
@@ -503,7 +503,7 @@ def api_get_request_wrapper(db, con, lock, blog, update, crawl_status, post_id=N
     raise BaseException("Too many request attempts or server issue during request")
 
 
-def discrepancy_check(db, con, lock, blog):
+def discrepancy_check(db, con, blog):
     """Gets actual posts_scraped from DB in case it differs from total/offset"""
 
     if blog.offset != blog.posts_scraped or blog.total_posts < blog.posts_scraped:
@@ -526,11 +526,12 @@ def blog_status_check(db, con, lock, blog, update):
     else:
         isnew = False
 
-    discrepancy_check(db, con, lock, blog)
+    discrepancy_check(db, con, blog)
 
     try:
         api_get_request_wrapper(db, con, lock, blog, update, blog.crawl_status)
-    except:
+    except BaseException as e:
+        logging.debug(f'{BColors.FAIL}Exception while api_get_request_wrapper {e}{BColors.ENDC}')
         raise
 
     if update.valid:
@@ -647,16 +648,17 @@ def update_offset_if_new_posts(blog):
         blog.new_posts = 0
 
 
-def blog_generator(db, con):
+def blog_generator(db, con, lock):
     """Queries DB for a blog that is either new or needs update.
     Returns a TumblrBlog() object instance with no proxy attached to it."""
 
     blog = TumblrBlog()
-    blog.name, blog.offset, blog.health, blog.crawl_status, blog.total_posts, \
-    blog.posts_scraped, blog.last_checked, blog.last_updated = db_handler.fetch_random_blog(db, con)
+    with lock:
+        blog.name, blog.offset, blog.health, blog.crawl_status, blog.total_posts, \
+        blog.posts_scraped, blog.last_checked, blog.last_updated = db_handler.fetch_random_blog(db, con)
 
     if not blog.name:
-        logging.debug(BColors.RED + "No blog fetched in blog_generator()" + BColors.ENDC)
+        logging.debug(f"{BColors.RED}No blog fetched in blog_generator(){BColors.ENDC}")
         return blog
 
     if blog.offset is None:
@@ -664,6 +666,9 @@ def blog_generator(db, con):
 
     if blog.posts_scraped is None:
         blog.posts_scraped = 0
+
+    if blog.total_posts is None:
+        blog.total_posts = 0
 
     # attach a proxy
     blog.attach_proxy()
@@ -673,13 +678,9 @@ def blog_generator(db, con):
 
     logging.info(BColors.CYAN + "{0} Got blog from DB."\
     .format(blog.name) + BColors.ENDC)
-    logging.debug(BColors.CYAN + "{0}".format(blog.__dict__) + BColors.ENDC)
+    logging.debug(f"{BColors.CYAN}blog fields: {blog.__dict__}{BColors.ENDC}")
 
     return blog
-
-
-
-
 
 
 class TumblrBlog:
@@ -850,19 +851,22 @@ class TumblrBlog:
                     raise
 
             except (requests.exceptions.ProxyError, requests.exceptions.Timeout) as e:
-                logging.info(BColors.FAIL + "{0} Proxy {1} error (continuing): {2}"\
+                logging.info(BColors.FAIL + "{0} Proxy {1} error: {2}"\
                 .format(self.name, self.proxy_object.get('ip_address'), e.__repr__()) + BColors.ENDC)
                 try:
                     self.get_new_proxy(lock)
                 except:
                     continue
-
                 continue
+
             except (ConnectionError, requests.exceptions.RequestException) as e:
-                logging.info(BColors.FAIL + "{0} Connection error Proxy {1} (passing): {2}"
+                logging.info(BColors.FAIL + "{0} Connection error Proxy {1}: {2}"
                 .format(self.name, self.proxy_object.get('ip_address'), e.__repr__()) + BColors.ENDC)
-                # raise
-                pass
+                try:
+                    self.get_new_proxy(lock)
+                except:
+                    continue
+                continue
             except (json.decoder.JSONDecodeError) as e:
                 logging.info("{0} Fatal error decoding json, should be removing proxy {1} (continue){2}"
                 .format(BColors.FAIL, self.proxy_object.get('ip_address'), BColors.ENDC))
@@ -903,7 +907,7 @@ class TumblrBlog:
                     try:
                         response_json = response.json()
                     except:
-                        logging.debug(BColors.FAIL + "Fucking damnit can't get a good json!\nProxy: {0}\n{1}"
+                        logging.debug(BColors.FAIL + "Really couldn't get a good json!\nProxy: {0}\n{1}"
                         .format(self.proxy_object.get('ip_address'), response_json[:5000]) + BColors.ENDC)
                         raise
                 except:
@@ -1184,7 +1188,7 @@ def main(args):
     api_keys.threaded_buckets()
 
     # q = []
-    t = threading.Thread(target=input_thread, args=(pill2kill,worker_threads))
+    t = threading.Thread(target=input_thread, args=(pill2kill, worker_threads))
     t.daemon = True
     t.start()
     worker_threads.append(t)

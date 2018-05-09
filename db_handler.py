@@ -817,7 +817,8 @@ def fetch_random_blog(database, con):
     try:
         cur.execute("execute procedure fetch_one_blogname;")
         return cur.fetchone()
-    except:
+    except BaseException as e:
+        logging.debug(f"{BColors.FAIL}Exception when fetching one blog: {e}{BColors.ENDC}")
         return [None * 8]
     finally:
         con.commit()

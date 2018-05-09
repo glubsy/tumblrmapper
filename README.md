@@ -33,8 +33,8 @@ corresponding \_raw files with provided tools.
 
 ## Notes: 
 
-* -i (--ignore\_duplicates) will keep rescraping posts which have already been added to DB
-* -f (--dead\_blogs) will fetch all reblogs from blogs marked as DEAD and populate the DB with all blogs found in notes for each post
+* -f (--ignore\_duplicates) will keep rescraping posts which have already been added to DB
+* -i (--dead\_blogs) will fetch all reblogs from blogs marked as DEAD and populate the DB with all blogs found in notes for each post
 * -l DEBUG to force debug output in stdout
 * Only tested in GNU/Linux
 
