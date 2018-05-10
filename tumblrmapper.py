@@ -430,16 +430,15 @@ def insert_posts(db, con, db_update_lock, blog, update):
             .format(BColors.RED + BColors.BOLD, blog.name, BColors.ENDC))
             blog.eof = True
 
-    logging.warning(BColors.LIGHTYELLOW +
-    "{0} Posts just scraped {1} Offset is now: {2}"
-    .format(blog.name, blog.posts_scraped, blog.offset) + BColors.ENDC)
+    logging.warning(f"{BColors.LIGHTYELLOW}{blog.name} Posts just scraped \
+{blog.posts_scraped} Offset is now: {blog.offset}{BColors.ENDC}")
 
     db_handler.update_blog_info(db, con, blog, ignore_response=True)
     # we may have 0 due to dupes causing errors to negate our processed_posts count
     if blog.posts_scraped == 0:
         blog.posts_scraped = db_handler.get_total_post(db, con, blog)
-        logging.info("{0} Adjusting back total post from Database due to errors: {1}"
-        .format(blog.name, blog.posts_scraped))
+        logging.info(f"{blog.name} Adjusting back total post from Database\
+ due to counting errors: {blog.posts_scraped}")
 
 
 

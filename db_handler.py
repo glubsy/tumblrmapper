@@ -322,6 +322,7 @@ AS
 declare variable v_blog_origin_id d_auto_id;
 declare variable v_fetched_reblogged_blog_id d_auto_id default null;
 declare variable v_b_update_gathered d_boolean default 0;
+declare variable v_crawl_status varchar(10) default null;
 BEGIN
 
 select AUTO_ID from BLOGS where BLOG_NAME = :i_blog_origin into :v_blog_origin_id;
@@ -329,7 +330,7 @@ select AUTO_ID from BLOGS where BLOG_NAME = :i_blog_origin into :v_blog_origin_i
 if (:i_reblogged_blog_name is not null)
 THEN
 execute procedure INSERT_BLOGNAME_GATHERED(:i_reblogged_blog_name)
-returning_values :v_fetched_reblogged_blog_id;
+returning_values :v_fetched_reblogged_blog_id, :v_crawl_status;
 
 INSERT into POSTS (POST_ID, POST_URL, POST_DATE, REMOTE_ID,
 ORIGIN_BLOGNAME, REBLOGGED_BLOGNAME)
@@ -1355,8 +1356,8 @@ def inserted_post(cur, post):
             post.get('reblogged_name')      # reblogged_blog_name
             ))
     except fdb.DatabaseError as e:
-        if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != 1:
-            e = "duplicate"
+        # if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != 1:
+        #     e = "duplicate"
         logging.error(BColors.FAIL + "DB ERROR" + BColors.BLUE + \
         " post\t{0} : {1}".format(post.get('id'), e) + BColors.ENDC)
         errors += 1
@@ -1392,8 +1393,8 @@ def inserted_context(cur, post):
                     ))
         # logging.warning("context returns: {0} ".format(repr(cur.fetchall())))
     except fdb.DatabaseError as e:
-        if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != 1:
-            e = "duplicate"
+        # if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != 1:
+        #     e = "duplicate"
         logging.debug(BColors.FAIL + "DB ERROR" + BColors.BLUE
         + " context\t{0} : {1}".format(post.get('id'), e) + BColors.ENDC)
         errors += 1
@@ -1453,8 +1454,8 @@ def inserted_urls(cur, post):
                             post.get('remote_id')
                             ))
             except fdb.DatabaseError as e:
-                if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != 1:
-                    e = "duplicate"
+                # if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != 1:
+                #     e = "duplicate"
                 logging.debug(BColors.FAIL + "DB ERROR" + BColors.BLUE
                             + " url\t{0} : {1}".format(
                             photo.get('original_size').get('url'),
@@ -1472,8 +1473,8 @@ def inserted_urls(cur, post):
                         post.get('remote_id')
                         ))
         except fdb.DatabaseError as e:
-            if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != 1:
-                e = "duplicate"
+            # if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != 1:
+            #     e = "duplicate"
             logging.debug(BColors.FAIL + "DB ERROR" + BColors.BLUE
             + " url\t{0} : {1}".format(
             url, e) + BColors.ENDC)
