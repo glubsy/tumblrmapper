@@ -40,7 +40,13 @@ corresponding \_raw files with provided tools.
 
 ## Dependencies: 
 
+Python >= 3.6
+
 [Firebird server 2.5](https://firebirdsql.org/)
+
+Requests 2.18.4
+
+lxml
 
 [fake\_useragent](https://pypi.org/project/fake-useragent/)
 

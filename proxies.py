@@ -1,7 +1,6 @@
-
+#!/usr/bin/env python3.6
 import json
 import os
-#!/bin/env python3
 # import json
 import random
 import threading

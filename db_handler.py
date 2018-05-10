@@ -1,4 +1,4 @@
-#!/bin/env python
+#!/usr/bin/env python3.6
 import csv
 import json
 import os
@@ -9,9 +9,10 @@ try:
     HAS_RE2 = True
 except ImportError:
     HAS_RE2 = False
+    logging.debug(f'{BColors.RED}Could not load re2 module!{BColors.ENDC}')
     import re
-else:
-    re.set_fallback_notification(re.FALLBACK_WARNING)
+# else:
+#     re.set_fallback_notification(re.FALLBACK_WARNING)
 import sys
 import time
 import traceback
