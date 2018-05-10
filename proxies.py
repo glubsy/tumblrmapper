@@ -203,6 +203,7 @@ class ProxyScanner():
 
             # wait until the thread terminates.
             q.join()
+            logging.info('Done getting proxies')
 
             attempt += 1
         else: #if no break occured
@@ -245,7 +246,7 @@ class ProxyScanner():
                 not_transparent += '[not(contains(text(),"anonymous"))]'
             has_https = './/td[7][contains(text(),"yes")]'
 
-        for i in parser.xpath('//tbody/tr')[:40]: #FIXME: hardcoded 80 results per top page
+        for i in parser.xpath('//tbody/tr')[:80]: #FIXME: hardcoded 80 results per top page
             if https_strict: #FIXME: the following should be refactored
                 if i.xpath(has_https):
                     if header_strict:

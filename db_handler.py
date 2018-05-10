@@ -985,20 +985,18 @@ def insert_posts(database, con, blog, update):
         con.commit()
 
     t1 = time.time()
-    logging.debug(BColors.BLUE + "Procedures to insert took %.2f ms" \
-                    % (1000*(t1-t0)) + BColors.ENDC)
+    logging.debug(f"{BColors.BLUE}Procedures to insert took {1000*(t1-t0):.2f} ms{BColors.ENDC}")
 
-    logging.info(BColors.BLUE + BColors.BOLD
-    + "{0} Successfully attempted to insert {1} posts. Failed adding {2} posts. \
-Failed adding {3} other items."\
-    .format(blog.name, added, post_errors, errors) + BColors.ENDC)
+    logging.info(f"{BColors.BLUE}{BColors.BOLD}{blog.name} Successfully \
+attempted to insert {added} posts. Failed adding {post_errors} posts. \
+Failed adding {errors} other items.{BColors.ENDC}")
 
     update.posts_response = [] #reset
 
     return added, post_errors
 
 
-def get_total_post(database, con, blog):
+def get_scraped_post_num(database, con, blog):
     """Queries database for total number of post_id linked to blog.name"""
     cur = con.cursor()
     cur.execute("select count(*) from (select POST_ID from POSTS where ORIGIN_BLOGNAME =\
@@ -1156,8 +1154,6 @@ with more recently updated version is_current_item: {3}\n{4}\n----------\n{5}"
     return post
 
 
-
-
 def filter_content_raw(content, parsehtml=False):
     """Eliminates the html tags, redirects, etc. in contexts
     returns context string and a list of isolated found tumblr urls"""
@@ -1178,6 +1174,7 @@ def found_filtered(capped):
     else:
         return False
     return True
+
 
 def extract_urls(content, parsehtml=False):
     """Returns a set of unique urls, unquoted, without redirects,
@@ -1356,7 +1353,7 @@ def inserted_post(cur, post):
             post.get('reblogged_name')      # reblogged_blog_name
             ))
     except fdb.DatabaseError as e:
-        # if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != 1:
+        # if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != -1:
         #     e = "duplicate"
         logging.error(BColors.FAIL + "DB ERROR" + BColors.BLUE + \
         " post\t{0} : {1}".format(post.get('id'), e) + BColors.ENDC)
@@ -1393,7 +1390,7 @@ def inserted_context(cur, post):
                     ))
         # logging.warning("context returns: {0} ".format(repr(cur.fetchall())))
     except fdb.DatabaseError as e:
-        # if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != 1:
+        # if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != -1:
         #     e = "duplicate"
         logging.debug(BColors.FAIL + "DB ERROR" + BColors.BLUE
         + " context\t{0} : {1}".format(post.get('id'), e) + BColors.ENDC)
@@ -1454,7 +1451,7 @@ def inserted_urls(cur, post):
                             post.get('remote_id')
                             ))
             except fdb.DatabaseError as e:
-                # if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != 1:
+                # if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != -1:
                 #     e = "duplicate"
                 logging.debug(BColors.FAIL + "DB ERROR" + BColors.BLUE
                             + " url\t{0} : {1}".format(
@@ -1473,7 +1470,7 @@ def inserted_urls(cur, post):
                         post.get('remote_id')
                         ))
         except fdb.DatabaseError as e:
-            # if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != 1:
+            # if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != -1:
             #     e = "duplicate"
             logging.debug(BColors.FAIL + "DB ERROR" + BColors.BLUE
             + " url\t{0} : {1}".format(

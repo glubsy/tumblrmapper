@@ -12,6 +12,22 @@ import instances
 
 # logging = logging.getLogger()
 
+
+class APIKeyDepleted(Exception):
+    """We assume we have checked that all API keys are now disabled"""
+    def __init__(self, message):
+        super().__init__("No more enabled API Key available")
+        self.next_date_avail = self.get_closest_date()
+
+    def get_closest_date(self):
+        """Read all api key fields for the closest date in which an API is available again"""
+        date_set = set()
+        for key in instances.api_keys:
+            if key.is_disabled: # not really necessary
+                date_set.add(max(key.disabled_until, key.blacklisted_until))
+        return min(date_set)
+
+
 class ListCycle(list):
     """Keeps an up to date cycle of its items"""
     # caveat: cycle is reset on append/remove
@@ -147,7 +163,8 @@ def get_random_api_key(apikey_list=None):
     logging.critical(BColors.FAIL + BColors.BLINKING +
     'Attempts exhausted api_key list length! All keys are disabled! Renew them!'
     + BColors.ENDC)
-    raise BaseException("No more enabled API Key available")
+    raise APIKeyDepleted
+
 
 
 def remove_key(api_key_object):
@@ -229,6 +246,10 @@ class APIKey:
         if (now >= self.disabled_until) and (now >= self.blacklisted_until):
             self.disabled = False
             self.blacklisted = False
+            self.disabled_until = None
+            self.disabled_until_h = None
+            self.blacklisted_until = None
+            self.blacklisted_until_h = None
             return True
         return False
 

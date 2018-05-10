@@ -370,7 +370,7 @@ more to process?{BColors.ENDC}")
                     logging.debug("update.posts_response is {0.posts_response!r}! break".format(update))
                     break
             else:
-                logging.debug("{} inserting new posts".format(blog.name))
+                logging.debug(f"{blog.name} inserting new posts")
 
                 try:
                     insert_posts(db, con, db_update_lock, blog, update)
@@ -436,7 +436,7 @@ def insert_posts(db, con, db_update_lock, blog, update):
     db_handler.update_blog_info(db, con, blog, ignore_response=True)
     # we may have 0 due to dupes causing errors to negate our processed_posts count
     if blog.posts_scraped == 0:
-        blog.posts_scraped = db_handler.get_total_post(db, con, blog)
+        blog.posts_scraped = db_handler.get_scraped_post_num(db, con, blog)
         logging.info(f"{blog.name} Adjusting back total post from Database\
  due to counting errors: {blog.posts_scraped}")
 
@@ -470,7 +470,7 @@ def check_blog_end_of_posts(db, con, lock, blog):
         blog.crawling = 0
 
     if blog.posts_scraped == 0:
-        blog.posts_scraped = db_handler.get_total_post(db, con, blog)
+        blog.posts_scraped = db_handler.get_scraped_post_num(db, con, blog)
     return
 
 
@@ -510,7 +510,8 @@ def discrepancy_check(db, con, blog):
 Getting actual posts_scraped from DB"
         .format(blog.name, blog.offset, blog.posts_scraped) + BColors.ENDC)
 
-        blog.posts_scraped = db_handler.get_total_post(db, con, blog) # gettint actual posts_scraped
+        # getting actual posts_scraped
+        blog.posts_scraped = db_handler.get_scraped_post_num(db, con, blog)
 
         logging.debug(BColors.DARKGRAY + "{0} Got {1} posts_scraped from DB"
         .format(blog.name, blog.posts_scraped) + BColors.ENDC)
@@ -735,17 +736,24 @@ class TumblrBlog:
 
 
     def attach_random_api_key(self):
-        """ attach api key fetched from global list to proxy object already attached"""
+        """ attach api key fetched from global list to proxy object already attached
+        if no key is available anymore, sleep until one becomes available again"""
 
-        try:
-            self.api_key_object_ref = api_keys.get_random_api_key(instances.api_keys)
-            # print("APIKEY attached: {0}".format(self.api_key_object_ref.api_key))
-            # self.proxy_object.api_key = temp_key.api_key
-            # self.proxy_object.secret_key =  temp_key.secret_key
-            # attach string to local proxy dict, in case we need to keep the proxy for later use
-            self.proxy_object.update({'api_key': self.api_key_object_ref.api_key})
-        except (AttributeError, BaseException):
-            raise
+        while True:
+            try:
+                self.api_key_object_ref = api_keys.get_random_api_key(instances.api_keys)
+                # print("APIKEY attached: {0}".format(self.api_key_object_ref.api_key))
+                # self.proxy_object.api_key = temp_key.api_key
+                # self.proxy_object.secret_key =  temp_key.secret_key
+                # attach string to local proxy dict, in case we need to keep the proxy for later use
+                self.proxy_object.update({'api_key': self.api_key_object_ref.api_key})
+                break
+            except api_keys.APIKeyDepleted as e:
+                # all keys are currently disabled or blacklisted
+                time.sleep((e.next_date_avail - time.time()) + random.choice(range(60, 100)))
+                continue
+            except (AttributeError, BaseException):
+                raise
 
 
     def renew_api_key(self, disable=True, old_api_key=None):
@@ -814,7 +822,7 @@ class TumblrBlog:
             params['notes_info'] = True
             #params['reblog_info'] = True
 
-        instances.sleep_here(0, 1)
+        # instances.sleep_here(0, 1)
         attempt = 0
         response = requests.Response()
         response_json = {'meta': {'status': 500, 'msg': 'Server Error'},
