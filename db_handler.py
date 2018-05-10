@@ -278,6 +278,7 @@ if (not exists (select AUTO_ID from BLOGS where (BLOGS.BLOG_NAME = :i_blogname))
 THEN begin
     o_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence2, 1);
     INSERT into BLOGS (AUTO_ID, BLOG_NAME, CRAWL_STATUS) values (:o_generated_auto_id, :i_blogname, :i_new);
+    exit;
     end
 ELSE
 BEGIN
@@ -285,6 +286,7 @@ BEGIN
     if ((:i_new is not NULL ) and (:o_crawl_status is NULL)) then
         begin
             update BLOGS set CRAWL_STATUS = :i_new where BLOG_NAME = :i_blogname;
+            suspend;
             exit;
         end
     else
@@ -322,15 +324,14 @@ AS
 declare variable v_blog_origin_id d_auto_id;
 declare variable v_fetched_reblogged_blog_id d_auto_id default null;
 declare variable v_b_update_gathered d_boolean default 0;
-declare variable v_crawl_status varchar(10) default null;
 BEGIN
 
 select AUTO_ID from BLOGS where BLOG_NAME = :i_blog_origin into :v_blog_origin_id;
 
 if (:i_reblogged_blog_name is not null)
 THEN
-execute procedure INSERT_BLOGNAME_GATHERED(:i_reblogged_blog_name)
-returning_values :v_fetched_reblogged_blog_id, :v_crawl_status;
+select O_GENERATED_AUTO_ID from INSERT_BLOGNAME_GATHERED(:i_reblogged_blog_name)
+into :v_fetched_reblogged_blog_id;
 
 INSERT into POSTS (POST_ID, POST_URL, POST_DATE, REMOTE_ID,
 ORIGIN_BLOGNAME, REBLOGGED_BLOGNAME)
