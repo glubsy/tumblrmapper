@@ -274,7 +274,7 @@ def process(db, lock, db_update_lock, pill2kill):
 
     while not pill2kill.is_set():
         try:
-            blog = blog_generator(db, con, lock)
+            blog_generator(db, con, lock, blog, pill2kill)
         except BaseException as e:
             logging.debug(f"{BColors.FAIL}Exception occured in blog_generator:\
  {e}{BColors.ENDC}")
@@ -648,14 +648,16 @@ def update_offset_if_new_posts(blog):
         blog.new_posts = 0
 
 
-def blog_generator(db, con, lock):
+def blog_generator(db, con, lock, blog, pill2kill):
     """Queries DB for a blog that is either new or needs update.
     Returns a TumblrBlog() object instance with no proxy attached to it."""
 
-    blog = TumblrBlog()
+    blog.__init__()
     with lock:
         blog.name, blog.offset, blog.health, blog.crawl_status, blog.total_posts, \
-        blog.posts_scraped, blog.last_checked, blog.last_updated = db_handler.fetch_random_blog(db, con)
+blog.posts_scraped, blog.last_checked, blog.last_updated = db_handler.fetch_random_blog(db, con)
+
+    blog.pill2kill = pill2kill
 
     if not blog.name:
         logging.debug(f"{BColors.RED}No blog fetched in blog_generator(){BColors.ENDC}")
@@ -678,13 +680,16 @@ def blog_generator(db, con, lock):
 
     logging.info(BColors.CYAN + "{0} Got blog from DB."\
     .format(blog.name) + BColors.ENDC)
-    logging.debug(f"{BColors.CYAN}blog fields: {blog.__dict__}{BColors.ENDC}")
-
-    return blog
+    logging.debug(f"{BColors.CYAN}blog fields: {blog.__slots__}{BColors.ENDC}")
 
 
 class TumblrBlog:
     """blog object, holding retrieved values to pass along"""
+
+    __slots__ = ['name', 'total_posts', 'posts_scraped', 'offset', 'health', 
+    'crawl_status', 'crawling', 'last_checked', 'last_updated', 'proxy_object',
+    'api_key_object_ref', 'requests_session', 'current_json', 'update', 
+    'new_posts', 'temp_disabled', 'eof', 'pill2kill', 'db_response']
 
     def __init__(self, *args):
         self.name = None
@@ -704,21 +709,23 @@ class TumblrBlog:
         self.new_posts = 0
         self.temp_disabled = False
         self.eof = False
+        self.pill2kill = None
+        self.db_response = None
 
     def init_session(self):
         if not self.requests_session: # first time
             requests_session = requests.Session()
-            requests_session.headers.update(\
+            requests_session.headers.update(
             {'User-Agent': self.proxy_object.get('user_agent')})
-            requests_session.proxies.update(\
-            {'http': self.proxy_object.get('ip_address'), \
+            requests_session.proxies.update(
+            {'http': self.proxy_object.get('ip_address'), 
             'https': self.proxy_object.get('ip_address')})
             self.requests_session = requests_session
         else:
-            self.requests_session.headers.update(\
+            self.requests_session.headers.update(
             {'User-Agent': self.proxy_object.get('user_agent')})
-            self.requests_session.proxies.update(\
-            {'http': self.proxy_object.get('ip_address'), \
+            self.requests_session.proxies.update(
+            {'http': self.proxy_object.get('ip_address'), 
             'https': self.proxy_object.get('ip_address')})
 
 
@@ -750,9 +757,18 @@ class TumblrBlog:
                 break
             except api_keys.APIKeyDepleted as e:
                 # all keys are currently disabled or blacklisted
-                time.sleep((e.next_date_avail - time.time()) + random.choice(range(60, 100)))
+                timetosleep = ((e.next_date_avail - time.time()) + random.choice(range(60, 100)))
+                while not self.pill2kill.is_set():
+                    time.sleep(5)
+                    timetosleep -= 5
+                    if timetosleep <= 0:
+                        break
+                    else:
+                        continue
+                logging.info(f'{BColors.LIGHTGRAY}Waking up from slumber{BColors.ENDC}')
                 continue
-            except (AttributeError, BaseException):
+            except (AttributeError, BaseException) as e:
+                logging.debug(f'{BColors.FAIL}Exception in attach_random_api_key:{e}{BColors.ENDC}')
                 raise
 
 
@@ -822,7 +838,7 @@ class TumblrBlog:
             params['notes_info'] = True
             #params['reblog_info'] = True
 
-        # instances.sleep_here(0, 1)
+        instances.sleep_here(0, 10)
         attempt = 0
         response = requests.Response()
         response_json = {'meta': {'status': 500, 'msg': 'Server Error'},
@@ -1086,7 +1102,7 @@ def setup_config(args):
     instances.config = parse_config(args.config_path, args.data_path)
 
     fh = logging.handlers.RotatingFileHandler(filename=instances.config.get('tumblrmapper', 'log_path'),
-                            mode='a', maxBytes=10000000, backupCount=10)
+                            mode='a', maxBytes=100000000, backupCount=10)
     fh.setLevel(getattr(logging, instances.config.get('tumblrmapper', 'log_level')))
     fh.setFormatter(logging.Formatter(
                     '{asctime} {levelname:<9}:{threadName:>5}\t{message}',

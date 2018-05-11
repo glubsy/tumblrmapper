@@ -1,8 +1,21 @@
 #!/usr/bin/env python3.6
 import csv
+import html.parser
 import json
+import logging
 import os
-# import re
+import sys
+import time
+import traceback
+from collections import defaultdict
+from operator import itemgetter
+# import html.parser
+from urllib import parse
+import fdb
+import archive_lists
+# import cProfile
+import tumblrmapper
+from constants import BColors
 HAS_RE2 = False
 try:
     import re2 as re #pip install git+https://github.com/andreasvc/pyre2.git to fix potential catastrophic backtracking failures
@@ -13,20 +26,6 @@ except ImportError:
     import re
 # else:
 #     re.set_fallback_notification(re.FALLBACK_WARNING)
-import sys
-import time
-import traceback
-import logging
-from collections import defaultdict
-# import html.parser
-from urllib import parse
-import html.parser
-from operator import itemgetter
-import fdb
-# import cProfile
-import tumblrmapper
-from constants import BColors
-import archive_lists
 
 http_url_simple_re = re.compile(r'"(https?(?::\/\/|%3A%2F%2F).*?)"', re.I)
 # for single line with http
@@ -1535,4 +1534,3 @@ if __name__ == "__main__":
     # populate_db_with_archives(database, archives_toload)
 
     # print('FILTERED_URL_GLOBAL_COUNT: {0}'.format(len(FILTERED_URL_GLOBAL_COUNT)))
-

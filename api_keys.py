@@ -16,7 +16,7 @@ import instances
 class APIKeyDepleted(Exception):
     """We assume we have checked that all API keys are now disabled"""
     def __init__(self, message):
-        super().__init__("No more enabled API Key available")
+        super().__init__(message)
         self.next_date_avail = self.get_closest_date()
 
     def get_closest_date(self):
@@ -55,13 +55,13 @@ class ListCycle(list):
 
 
 def get_api_key_object_list(api_keys_filepath):
-    """Returns a list of APIKey objects"""
-    api_key_list = ListCycle()
+    """Returns a list cycle of APIKey objects"""
+    api_key_list_cycle = ListCycle()
 
     # for key, secret in read_api_keys_from_csv(api_keys_filepath + '.txt').items():
     #     api_key_list.append(APIKey(key, secret))
     for item in read_api_keys_from_json(api_keys_filepath):
-        api_key_list.append(APIKey(
+        api_key_list_cycle.append(APIKey(
                             api_key=item.get('api_key'),
                             secret_key=item.get('secret_key'),
                             hour_check_time=item.get('hour_check_time'),
@@ -72,15 +72,15 @@ def get_api_key_object_list(api_keys_filepath):
                             bucket_hour=item.get('bucket_hour'),
                             bucket_day=item.get('bucket_day'),
                             disabled=item.get('disabled'),
-                            disabled_until=item.get('disabled_until'),
+                            disabled_until=item.get('disabled_until', 0),
                             disabled_until_h=item.get('disabled_until_h'),
                             blacklisted=item.get('blacklisted'),
                             blacklist_hit=0,
-                            blacklisted_until=item.get('blacklisted_until'),
+                            blacklisted_until=item.get('blacklisted_until', 0),
                             blacklisted_until_h=item.get('blacklisted_until_h')
                             ))
 
-    return api_key_list
+    return api_key_list_cycle
 
 
 def read_api_keys_from_json(myfilepath=None):
@@ -173,7 +173,7 @@ def remove_key(api_key_object):
     try:
         instances.api_keys.remove(api_key_object)
     except Exception as e:
-        logging.error(BColors.FAIL + "Error trying to remove API key {}".format(str(e)) + BColors.ENDC)
+        logging.error(f'{BColors.FAIL}Error trying to remove API key {e}{BColors.ENDC}')
         pass
 
 
@@ -191,7 +191,7 @@ class APIKey:
     # request_max_day = 5000
     # epoch_day = 86400
     # epoch_hour = 3600
-
+    # cannot use __slots__ here because we need its dict to write to disk
     def __init__(self, *args, **kwargs):
         self.api_key = kwargs.get('api_key')
         self.secret_key = kwargs.get('secret_key')
@@ -201,11 +201,11 @@ class APIKey:
         self.last_used_day = kwargs.get('last_used_day', int(time.time()))
         self.last_written_time = kwargs.get('last_written_time', int())
         self.disabled = kwargs.get('disabled')
-        self.disabled_until = kwargs.get('disabled_until')
+        self.disabled_until = kwargs.get('disabled_until', 0)
         self.disabled_until_h = kwargs.get('disabled_until_h')
         self.blacklisted = kwargs.get('blacklisted', False)
         self.blacklist_hit = kwargs.get('blacklist_hit', 0)
-        self.blacklisted_until = kwargs.get('blacklisted_until')
+        self.blacklisted_until = kwargs.get('blacklisted_until', 0)
         self.blacklisted_until_h = kwargs.get('blacklisted_until_h')
         self.bucket_hour = kwargs.get('bucket_hour', float(1000))
         self.bucket_day = kwargs.get('bucket_day', float(5000))
@@ -246,9 +246,9 @@ class APIKey:
         if (now >= self.disabled_until) and (now >= self.blacklisted_until):
             self.disabled = False
             self.blacklisted = False
-            self.disabled_until = None
+            self.disabled_until = 0
             self.disabled_until_h = None
-            self.blacklisted_until = None
+            self.blacklisted_until = 0
             self.blacklisted_until_h = None
             return True
         return False
