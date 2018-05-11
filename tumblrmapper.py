@@ -686,9 +686,9 @@ blog.posts_scraped, blog.last_checked, blog.last_updated = db_handler.fetch_rand
 class TumblrBlog:
     """blog object, holding retrieved values to pass along"""
 
-    __slots__ = ['name', 'total_posts', 'posts_scraped', 'offset', 'health', 
+    __slots__ = ['name', 'total_posts', 'posts_scraped', 'offset', 'health',
     'crawl_status', 'crawling', 'last_checked', 'last_updated', 'proxy_object',
-    'api_key_object_ref', 'requests_session', 'current_json', 'update', 
+    'api_key_object_ref', 'requests_session', 'current_json', 'update',
     'new_posts', 'temp_disabled', 'eof', 'pill2kill', 'db_response']
 
     def __init__(self, *args):
@@ -718,14 +718,14 @@ class TumblrBlog:
             requests_session.headers.update(
             {'User-Agent': self.proxy_object.get('user_agent')})
             requests_session.proxies.update(
-            {'http': self.proxy_object.get('ip_address'), 
+            {'http': self.proxy_object.get('ip_address'),
             'https': self.proxy_object.get('ip_address')})
             self.requests_session = requests_session
         else:
             self.requests_session.headers.update(
             {'User-Agent': self.proxy_object.get('user_agent')})
             self.requests_session.proxies.update(
-            {'http': self.proxy_object.get('ip_address'), 
+            {'http': self.proxy_object.get('ip_address'),
             'https': self.proxy_object.get('ip_address')})
 
 
@@ -783,17 +783,19 @@ class TumblrBlog:
         self.attach_random_api_key()
 
 
-    def blacklist_api_key(self, old_api_key=None):
+    def blacklist_api_key(self, immediate=False, old_api_key=None):
         """Mark key as to be blacklisted after 3 hits"""
         if not old_api_key:
             old_api_key = self.api_key_object_ref
 
-        if old_api_key.blacklist_hit >= 3:
+        if old_api_key.blacklist_hit >= 3 or immediate:
             logging.critical("{0}Blacklisting api key {1}!{2}"
             .format(BColors.MAGENTA, old_api_key.api_key, BColors.ENDC))
 
             api_keys.disable_api_key(old_api_key, blacklist=True)
         else:
+            logging.info(f'{BColors.MAGENTA}Warning for API key \
+{old_api_key.api_key}{BColors.ENDC}')
             old_api_key.blacklist_hit += 1
 
         self.attach_random_api_key()
@@ -949,19 +951,20 @@ class TumblrBlog:
         Last checks before updating BLOG table with info
         if unauthorized in response, change API key here, etc."""
 
-        logging.debug(BColors.LIGHTCYAN +
-        "{0} Before parsing reponse check_response_validate_update response_json status={1} response_json msg {2}"\
-        .format(self.name, response_json.get('meta').get('status'),
-        response_json.get('meta').get('msg')) + BColors.ENDC)
-        logging.debug(BColors.LIGHTCYAN + "{0} JSON is: {1}".format(self.name, str(response_json)[:1000]) + BColors.ENDC)
+        logging.debug(f"{BColors.LIGHTCYAN}{self.name} Before parsing reponse \
+check_response_validate_update response_json status={response_json.get('meta').get('status')} \
+response_json msg {response_json.get('meta').get('msg')}{BColors.ENDC}")
+
+        logging.debug(f"{BColors.LIGHTCYAN}{self.name} JSON is: \
+{str(response_json)[:1000]}{BColors.ENDC}")
 
         update.meta_status = response_json.get('meta').get('status')
         update.meta_msg = response_json.get('meta').get('msg')
 
 
         if not response_json.get('response') or not (200 <= update.meta_status <= 399):
-            logging.debug(BColors.BOLD + "{0} Got errors in Json! response: {1} meta_status: {2}"
-            .format(self.name, response_json.get('response'), update.meta_status) + BColors.ENDC)
+            logging.debug(f"{BColors.BOLD}{self.name} Got errors in Json! response:\
+ {response_json.get('response')} meta_status: {update.meta_status}{BColors.ENDC}")
 
         # BIG PARSE (REMOVE?)
         resp_json = response_json.get('response')
@@ -987,17 +990,26 @@ class TumblrBlog:
 
             if response_json.get('errors', [{}])[0].get('title', str()).find("error") != -1 and\
                 response_json.get('errors', [{}])[0].get('title', str()).find("Unauthorized") != -1:
-
                 logging.critical(BColors.FAIL +
                 "{0} is unauthorized! Rolling for a new API key.\n{1}"\
                 .format(self.name, response_json) + BColors.ENDC)
                 # FIXME: that's assuming only the API key is responsible for unauthorized, might be the IP!
+                # Examples: {"meta":{"status":401,"msg":"Unauthorized"},"response":[],
                 self.blacklist_api_key()
                 update.valid = False
                 return
 
+            if update.meta_status == 429 or update.meta_msg.find("Limit Exceeded") != -1:
+                # 'meta_status': 429, 'meta_msg': Limit Exceeded'
+                logging.critical(f"{BColors.RED}{self.name}Limit Exceeded 429 error{BColors.ENDC}")
+
+                self.renew_api_key(disable=True)
+                update.valid = False
+                return
+
+
             logging.error(BColors.FAIL +
-            "{0} uncaught error in response: {1}"
+            "{0} uncaught fatal error in response: {1}"
             .format(self.name, repr(update.__dict__)[:1000]) + BColors.ENDC)
             update.valid = False
             return
@@ -1102,7 +1114,7 @@ def setup_config(args):
     instances.config = parse_config(args.config_path, args.data_path)
 
     fh = logging.handlers.RotatingFileHandler(filename=instances.config.get('tumblrmapper', 'log_path'),
-                            mode='a', maxBytes=100000000, backupCount=10)
+                            mode='a', maxBytes=10000000, backupCount=20)
     fh.setLevel(getattr(logging, instances.config.get('tumblrmapper', 'log_level')))
     fh.setFormatter(logging.Formatter(
                     '{asctime} {levelname:<9}:{threadName:>5}\t{message}',
@@ -1122,37 +1134,37 @@ def main(args):
             archive_lists.main(output_pickle=True)
 
         if args.create_blank_db:
-            temp_database = db_handler.Database(
-                db_filepath=instances.config.get('tumblrmapper', 'db_filepath')\
-    + os.sep + instances.config.get('tumblrmapper', 'db_filename'),
-                username="sysdba", password="masterkey")
+            database = db_handler.Database(db_filepath=instances.config.get('tumblrmapper', 'db_filepath')
+                            + os.sep + instances.config.get('tumblrmapper', 'db_filename'),
+                            username=instances.config.get('tumblrmapper', 'username'),
+                            password=instances.config.get('tumblrmapper', 'password'))
             try:
-                db_handler.create_blank_database(temp_database)
+                db_handler.create_blank_database(database)
             except Exception as e:
                 logging.error(BColors.FAIL + "Database creation failed:{0}"
                 .format(e) + BColors.ENDC)
 
         if args.update_blogs:
             blogs_toscrape = instances.config.get('tumblrmapper', 'blogs_to_scrape')
-            temp_database = db_handler.Database(
-                db_filepath=instances.config.get('tumblrmapper', 'db_filepath')\
-    + os.sep + instances.config.get('tumblrmapper', 'db_filename'),
-                username="sysdba", password="masterkey")
-            db_handler.populate_db_with_blogs(temp_database, blogs_toscrape)
+            database = db_handler.Database(db_filepath=instances.config.get('tumblrmapper', 'db_filepath')
+                            + os.sep + instances.config.get('tumblrmapper', 'db_filename'),
+                            username=instances.config.get('tumblrmapper', 'username'),
+                            password=instances.config.get('tumblrmapper', 'password'))
+            db_handler.populate_db_with_blogs(database, blogs_toscrape)
             logging.warning(BColors.BLUEOK + BColors.GREEN + "Done inserting blogs"
              + BColors.ENDC)
 
         if args.update_archives:
             archives_toload = instances.config.get('tumblrmapper', 'archives')
-            temp_database = db_handler.Database(
-                db_filepath=instances.config.get('tumblrmapper', 'db_filepath')\
-    + os.sep + instances.config.get('tumblrmapper', 'db_filename'),
-                username="sysdba", password="masterkey")
+            database = db_handler.Database(db_filepath=instances.config.get('tumblrmapper', 'db_filepath')
+                            + os.sep + instances.config.get('tumblrmapper', 'db_filename'),
+                            username=instances.config.get('tumblrmapper', 'username'),
+                            password=instances.config.get('tumblrmapper', 'password'))
             if "pickle" in archives_toload:
-                db_handler.update_db_with_archives(temp_database,
+                db_handler.update_db_with_archives(database,
                 archives_toload, use_pickle=True)
             else:
-                db_handler.update_db_with_archives(temp_database,
+                db_handler.update_db_with_archives(database,
                 archives_toload, use_pickle=False)
             logging.warning(BColors.BLUEOK + BColors.GREEN +
             "Done inserting archives" + BColors.ENDC)

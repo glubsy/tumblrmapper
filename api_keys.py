@@ -16,7 +16,7 @@ import instances
 class APIKeyDepleted(Exception):
     """We assume we have checked that all API keys are now disabled"""
     def __init__(self, message):
-        super().__init__(message)
+        super().__init__(message=message)
         self.next_date_avail = self.get_closest_date()
 
     def get_closest_date(self):

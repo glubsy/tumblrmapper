@@ -58,7 +58,6 @@ lxml
 ## TODO:
 
 * Command line argument to force recheck DONE blogs with post\_scraped == total\_posts
-* Make firebird server optional, replace with [fdb\_embedded](https://github.com/andrewleech/fdb_embedded)if at all possible?
 
 ## License:
 

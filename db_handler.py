@@ -16,6 +16,7 @@ import archive_lists
 # import cProfile
 import tumblrmapper
 from constants import BColors
+import instances
 HAS_RE2 = False
 try:
     import re2 as re #pip install git+https://github.com/andreasvc/pyre2.git to fix potential catastrophic backtracking failures
@@ -211,8 +212,7 @@ FOREIGN KEY(POST_ID) REFERENCES POSTS(POST_ID)
 CREATE TABLE OLD_1280 (
 FILENAME varchar(60) PRIMARY KEY,
 FILEBASENAME varchar(60),
-PATH varchar(10000),
-DL d_boolean
+PATH varchar(10000)
 );""")
 
         # CREATE generators and triggers
@@ -1006,8 +1006,7 @@ def get_scraped_post_num(database, con, blog):
 
 
 def get_remote_id_and_context(post):
-    """if there is no 'content_raw'
-    ---> get 'reblog' instead (it's the same! but for original post)"""
+    """if there is no content_raw -> get 'reblog' instead (it's the same! but for original post)"""
 
     full_context = ''
     post['full_context'] = ''
@@ -1484,6 +1483,7 @@ def inserted_urls(cur, post):
             errors += 1
             if str(e).find('is too long, expected') != -1:
                 try:
+                    url = parse.unquote(url)
                     cur.callproc('insert_url', (url[:999], post.get('id'), post.get('remote_id')))
                 except:
                     continue
@@ -1496,6 +1496,31 @@ def inserted_urls(cur, post):
 
     return True, errors
 
+
+def look_for_lost_urls(db,con):
+    """Very long compute"""
+    cur = con.cursor()
+    print("Getting lost urls")
+    try:
+        cur.execute(r"select a.filebasename, b.file_url from OLD_1280 a join urls b on b.FILE_URL like '%'||a.FILEBASENAME||'%' ROWS 1")
+        # cur.execute(r"select a.filebasename, b.file_url from OLD_1280 a join urls b on b.FILE_URL like '%p7zvznvXdZ1w329z4o%' ROWS 2")
+        return cur.fetchall()
+    except BaseException as e:
+        print(f'Exception occured {e}')
+        pass
+    finally:
+        con.rollback()
+
+
+def delete_all_1280_archives(db,con):
+    """Remove all records in 1280_archives table"""
+    cur = con.cursor()
+    print("Removing all 1280 archives")
+    try:
+        cur.execute(r'delete from OLD_1280;')
+    except:
+        pass
+    print("Removed all from 1280 archives")
 
 
 # DEBUG
@@ -1523,14 +1548,18 @@ if __name__ == "__main__":
 
     blogs_toscrape = SCRIPTDIR + "tools/blogs_toscrape_test.txt"
     archives_toload = SCRIPTDIR +  "tools/1280_files_list.txt"
-    database = Database(db_filepath="/home/firebird/tumblrmapper_test.fdb", \
-                        username="sysdba", password="masterkey")
+    database = Database(db_filepath=instances.config.get('tumblrmapper', 'db_filepath')
+                            + os.sep + instances.config.get('tumblrmapper', 'db_filename'),
+                            username=instances.config.get('tumblrmapper', 'username'),
+                            password=instances.config.get('tumblrmapper', 'password'))
 
-    os.nice(20)
+    # os.nice(20)
     con = database.connect()
     # create_blank_database(database)
     # populate_db_with_blogs(database, blogs_toscrape)
     # Optional archives too
     # populate_db_with_archives(database, archives_toload)
+    print(look_for_lost_urls(database, con))
+
 
     # print('FILTERED_URL_GLOBAL_COUNT: {0}'.format(len(FILTERED_URL_GLOBAL_COUNT)))
