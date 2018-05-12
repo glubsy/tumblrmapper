@@ -252,6 +252,8 @@ def write_to_file(filepath, mylist, use_pickle=False):
                 for item in mylist:
                     f.write("{}\n".format(item))
 
+
+
 def main(output_pickle=True, keep_revision=True):
 
     # FIXME: lots of hard coded values could be in config

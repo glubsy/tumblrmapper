@@ -68,7 +68,7 @@ class ProxyScanner():
         if remove="remove", remove proxy that is unresponsive from the list and regen cycle
         if remove="blacklist", save proxy in json as blacklisted to never use it ever again"""
 
-        logging.info("Removing proxy {0} and getting new one.".format(old_proxy))
+        logging.info(f"Removing proxy {old_proxy} and getting new one.")
 
         if remove == "remove" and old_proxy is not None:
             self.proxy_ua_dict.get('proxies').remove(old_proxy)

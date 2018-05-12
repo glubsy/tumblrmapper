@@ -676,8 +676,10 @@ blog.posts_scraped, blog.last_checked, blog.last_updated = db_handler.fetch_rand
     blog.attach_proxy()
     # init requests.session with headers
     blog.init_session()
-    blog.attach_random_api_key()
-
+    try:
+        blog.attach_random_api_key()
+    except:
+        raise
     logging.info(BColors.CYAN + "{0} Got blog from DB."\
     .format(blog.name) + BColors.ENDC)
     logging.debug(f"{BColors.CYAN}blog fields: {blog.__slots__}{BColors.ENDC}")
@@ -754,10 +756,13 @@ class TumblrBlog:
                 # self.proxy_object.secret_key =  temp_key.secret_key
                 # attach string to local proxy dict, in case we need to keep the proxy for later use
                 self.proxy_object.update({'api_key': self.api_key_object_ref.api_key})
-                break
+                return
             except api_keys.APIKeyDepleted as e:
                 # all keys are currently disabled or blacklisted
                 timetosleep = ((e.next_date_avail - time.time()) + random.choice(range(60, 100)))
+                logging.warning(f"{BColors.MAGENTA}Sleeping for {timetosleep} \
+seconds until {time.ctime(e.next_date_avail)}{BColors.ENDC}")
+
                 while not self.pill2kill.is_set():
                     time.sleep(5)
                     timetosleep -= 5
@@ -765,25 +770,20 @@ class TumblrBlog:
                         break
                     else:
                         continue
+                else:
+                    break
+
                 logging.info(f'{BColors.LIGHTGRAY}Waking up from slumber{BColors.ENDC}')
                 continue
+
             except (AttributeError, BaseException) as e:
                 logging.debug(f'{BColors.FAIL}Exception in attach_random_api_key:{e}{BColors.ENDC}')
                 raise
+        # We asked for termination, and there is still no API key set! # FIXME custom exception
+        raise BaseException("Asked for early termination")
 
 
-    def renew_api_key(self, disable=True, old_api_key=None):
-        """Mark key as disabled from global list pool."""
-        if not old_api_key:
-            old_api_key = self.api_key_object_ref
-
-        if disable:
-            api_keys.disable_api_key(old_api_key)
-
-        self.attach_random_api_key()
-
-
-    def blacklist_api_key(self, immediate=False, old_api_key=None):
+    def blacklist_api_key(self, lock, immediate=False, old_api_key=None):
         """Mark key as to be blacklisted after 3 hits"""
         if not old_api_key:
             old_api_key = self.api_key_object_ref
@@ -792,14 +792,16 @@ class TumblrBlog:
             logging.critical("{0}Blacklisting api key {1}!{2}"
             .format(BColors.MAGENTA, old_api_key.api_key, BColors.ENDC))
 
-            api_keys.disable_api_key(old_api_key, blacklist=True)
+            api_keys.disable_api_key(old_api_key, lock, blacklist=True)
         else:
-            logging.info(f'{BColors.MAGENTA}Warning for API key \
-{old_api_key.api_key}{BColors.ENDC}')
+            logging.info(f"{BColors.MAGENTA}Warning for API key \
+{old_api_key.api_key}{BColors.ENDC}")
             old_api_key.blacklist_hit += 1
 
-        self.attach_random_api_key()
-
+        try:
+            self.attach_random_api_key()
+        except:
+            raise
 
     def get_new_proxy(self, lock, old_proxy_object=None):
         """ Pops old proxy gone bad from cycle, get a new one """
@@ -893,8 +895,8 @@ class TumblrBlog:
                     continue
                 continue
             except (json.decoder.JSONDecodeError) as e:
-                logging.info("{0} Fatal error decoding json, should be removing proxy {1} (continue){2}"
-                .format(BColors.FAIL, self.proxy_object.get('ip_address'), BColors.ENDC))
+                logging.info(f"{BColors.FAIL}Fatal error decoding json, should be \
+removing proxy {self.proxy_object.get('ip_address')} (continue){BColors.ENDC}")
 
                 if response.text.find('Service is temporarily unavailable') != -1:
                     self.temp_disabled = True # HACK: will only be reset next script start
@@ -906,7 +908,7 @@ class TumblrBlog:
             break
 
         try:
-            self.check_response_validate_update(response_json, updateobj)
+            self.check_response_validate_update(response_json, updateobj, lock)
         except:
             raise
 
@@ -920,20 +922,23 @@ class TumblrBlog:
             + "{0} Error trying to parse response into json. Exerpt: {1}"
             .format(self.name, response.text[:5000]) + BColors.ENDC)
 
-            if response.text.find('Service is temporarily unavailable. Our engineers are working quickly to resolve the issue') != -1:
+            if response.text.find('Service is temporarily unavailable. \
+Our engineers are working quickly to resolve the issue') != -1:
                 raise
 
             if response.text.find('"response":{') != -1:
                 try:
-                    response_json = response.text.split('''"response":{''')[1] # for some reason, sometimes it fails there?
-                    response_json = r'{"meta": {"status": 200,"msg": "OK","x_tumblr_content_rating": "adult"},' + response_json[:-1]
+                    response_json = response.text.split('''"response":{''')[1]
+                    # for some reason, sometimes it fails there?
+                    response_json = r'{"meta": \
+{"status": 200,"msg": "OK","x_tumblr_content_rating": "adult"},' + response_json[:-1]
                     logging.debug(BColors.YELLOW + "split: {0}"
                     .format(response_json[:5000]) + BColors.ENDC)
                     try:
                         response_json = response.json()
                     except:
-                        logging.debug(BColors.FAIL + "Really couldn't get a good json!\nProxy: {0}\n{1}"
-                        .format(self.proxy_object.get('ip_address'), response_json[:5000]) + BColors.ENDC)
+                        logging.debug(f"{BColors.FAIL}Really couldn't get a good\
+ json!\nProxy: {self.proxy_object.get('ip_address')}\n{response_json[:5000]}{BColors.ENDC}")
                         raise
                 except:
                     response_json = {'meta': {'status': 500, 'msg': 'Server Error'},
@@ -946,7 +951,7 @@ class TumblrBlog:
         return response_json
 
 
-    def check_response_validate_update(self, response_json, update):
+    def check_response_validate_update(self, response_json, update, lock):
         """ Reads the response object, updates the blog attributes accordingly.
         Last checks before updating BLOG table with info
         if unauthorized in response, change API key here, etc."""
@@ -975,27 +980,27 @@ response_json msg {response_json.get('meta').get('msg')}{BColors.ENDC}")
             update.posts_response = resp_json.get('posts', []) #list of dicts
 
 
-        logging.debug(BColors.LIGHTCYAN +
-        "{0} After parsing reponse, check_response_validate_update update.meta_msg={1} update.meta_status {2}"
-        .format(self.name, update.meta_msg, update.meta_status) + BColors.ENDC)
+        logging.debug(f"{BColors.LIGHTCYAN}{self.name} After parsing reponse, \
+check_response_validate_update update.meta_msg={update.meta_msg} \
+update.meta_status {update.meta_status}{BColors.ENDC}")
 
         if response_json.get('errors') is not None:
             if update.meta_status == 404 or update.meta_msg.find('Not Found') != -1:
-                logging.warning(BColors.FAIL + "{0} update has 404 error status {1} {2}! Setting to DEAD!"\
-                .format(self.name, update.meta_status, update.meta_msg) + BColors.ENDC)
+                logging.warning(f"{BColors.FAIL}{self.name} update has \
+404 error status {update.meta_status} {update.meta_msg}! \
+Setting to DEAD!{BColors.ENDC}")
                 self.health = "DEAD"
                 self.crawl_status = "DEAD"
                 update.valid = True
                 return
 
             if response_json.get('errors', [{}])[0].get('title', str()).find("error") != -1 and\
-                response_json.get('errors', [{}])[0].get('title', str()).find("Unauthorized") != -1:
-                logging.critical(BColors.FAIL +
-                "{0} is unauthorized! Rolling for a new API key.\n{1}"\
-                .format(self.name, response_json) + BColors.ENDC)
+                response_json.get('errors', [{}])[0].get('title', str()).find("Unauthorized") != -1: #FIXME
+                logging.critical(f"{BColors.FAIL}{self.name} is unauthorized! \
+Rolling for a new API key.\n{response_json}{BColors.ENDC}")
                 # FIXME: that's assuming only the API key is responsible for unauthorized, might be the IP!
                 # Examples: {"meta":{"status":401,"msg":"Unauthorized"},"response":[],
-                self.blacklist_api_key()
+                self.blacklist_api_key(lock)
                 update.valid = False
                 return
 
@@ -1003,7 +1008,14 @@ response_json msg {response_json.get('meta').get('msg')}{BColors.ENDC}")
                 # 'meta_status': 429, 'meta_msg': Limit Exceeded'
                 logging.critical(f"{BColors.RED}{self.name}Limit Exceeded 429 error{BColors.ENDC}")
 
-                self.renew_api_key(disable=True)
+                # Renew API key
+                with lock:
+                    api_keys.disable_api_key(self.api_key_object_ref, lock)
+                try:
+                    self.attach_random_api_key()
+                except:
+                    raise
+
                 update.valid = False
                 return
 

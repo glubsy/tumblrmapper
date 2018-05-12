@@ -15,8 +15,10 @@ import instances
 
 class APIKeyDepleted(Exception):
     """We assume we have checked that all API keys are now disabled"""
-    def __init__(self, message):
-        super().__init__(message=message)
+    def __init__(self, message=None):
+        if not message:
+            message = "No more API key available"
+        super().__init__(message)
         self.next_date_avail = self.get_closest_date()
 
     def get_closest_date(self):
@@ -112,32 +114,35 @@ def write_api_keys_to_json(keylist=None, myfilepath=None):
         json.dump(api_dict, f, indent=True)
 
 
-def disable_api_key(api_key_object, blacklist=False, duration=3600):
+def disable_api_key(api_key_object, lock, blacklist=False, duration=3600):
     """This API key caused problem, might have been flagged, add to temporary blacklist
     for a default of one hour"""
 
-    logging.info(BColors.RED + "Disabling API key {0} from instances.api_keys list".format(api_key_object) + BColors.ENDC)
+    with lock:
+        logging.info(f"{BColors.RED}Disabling API key {api_key_object.api_key} \
+from instances.api_keys list{BColors.ENDC}")
 
-    # key = item for item in instances.api_keys if item == api_key_list_object
-    key = next((i for i in instances.api_keys if i == api_key_object), None)
+        # key = item for item in instances.api_keys if item == api_key_list_object
+        key = next((i for i in instances.api_keys if i == api_key_object), None)
 
-    if not key: # should never happen
-        logging.error(BColors.RED + "Did not find this key in instances.api_keys list!?" + BColors.ENDC)
-        return
+        if not key: # should never happen
+            logging.error(f"{BColors.RED}Did not find this key in instances.api_keys list!?{BColors.ENDC}")
+            return
 
-    if blacklist:
-        key.blacklist_until(duration=duration)
+        if blacklist:
+            key.blacklist_until(duration=duration)
 
-    if key.disabled:
-        logging.debug(BColors.BOLD + "Key {0} is already disabled!".format(key.api_key) + BColors.ENDC)
-    else:
-        key.disable_until(duration=duration)
+        if key.disabled:
+            logging.debug(f"{BColors.BOLD}Key {key.api_key} is already disabled until \
+{time.ctime(key.disabled_until)}!{BColors.ENDC}")
+        else:
+            key.disable_until(duration=duration)
 
-    for key in instances.api_keys:
-        logging.debug(BColors.RED + "API key {0} is disabled: {1}. blacklisted: {2}."
-        .format(key.api_key, key.disabled, key.blacklisted) + BColors.ENDC)
+        for key in instances.api_keys:
+            logging.debug(f"{BColors.RED}API key {key.api_key} is disabled: \
+{key.disabled}. blacklisted: {key.blacklisted}.{BColors.ENDC}")
 
-    write_api_keys_to_json()
+        write_api_keys_to_json()
 
 
 def get_random_api_key(apikey_list=None):
@@ -160,9 +165,8 @@ def get_random_api_key(apikey_list=None):
                 return keycheck
         else:
             return keycheck
-    logging.critical(BColors.FAIL + BColors.BLINKING +
-    'Attempts exhausted api_key list length! All keys are disabled! Renew them!'
-    + BColors.ENDC)
+#     logging.critical(f'{BColors.FAIL}{BColors.BLINKING}Attempts exhausted api_key \
+# list length! All keys are disabled! Renew them!{BColors.ENDC}')
     raise APIKeyDepleted
 
 
@@ -218,8 +222,8 @@ class APIKey:
         self.disabled = True
         self.disabled_until = now + duration
         self.disabled_until_h = time.ctime(self.disabled_until)
-        logging.warning("{0}API key {1} disabled until {2}{3}".format(
-            BColors.MAGENTA, self.api_key, self.disabled_until_h, BColors.ENDC))
+        logging.warning(f"{BColors.MAGENTA}API key {self.api_key} just got \
+disabled until {self.disabled_until_h}{BColors.ENDC}")
 
 
     def blacklist_until(self, duration=3600):
@@ -228,8 +232,8 @@ class APIKey:
         self.blacklisted = True
         self.blacklisted_until = now + duration
         self.blacklisted_until_h = time.ctime(self.blacklisted_until)
-        logging.warning("{0}API key {1} blacklisted until {2}{3}".format(
-            BColors.RED, self.api_key, self.blacklisted_until_h, BColors.ENDC))
+        logging.warning(f"{BColors.RED}API key {self.api_key} blacklisted until \
+{self.blacklisted_until_h}{BColors.ENDC}")
 
     def is_disabled(self):
         if self.disabled or self.blacklisted:
