@@ -783,7 +783,7 @@ seconds until {time.ctime(e.next_date_avail)}{BColors.ENDC}")
         raise BaseException("Asked for early termination")
 
 
-    def blacklist_api_key(self, lock, immediate=False, old_api_key=None):
+    def blacklist_api_key(self, immediate=False, old_api_key=None):
         """Mark key as to be blacklisted after 3 hits"""
         if not old_api_key:
             old_api_key = self.api_key_object_ref
@@ -792,7 +792,7 @@ seconds until {time.ctime(e.next_date_avail)}{BColors.ENDC}")
             logging.critical("{0}Blacklisting api key {1}!{2}"
             .format(BColors.MAGENTA, old_api_key.api_key, BColors.ENDC))
 
-            api_keys.disable_api_key(old_api_key, lock, blacklist=True)
+            api_keys.disable_api_key(old_api_key, blacklist=True)
         else:
             logging.info(f"{BColors.MAGENTA}Warning for API key \
 {old_api_key.api_key}{BColors.ENDC}")
@@ -829,6 +829,8 @@ seconds until {time.ctime(e.next_date_avail)}{BColors.ENDC}")
         if not api_key:
             api_key = self.api_key_object_ref
         if api_key.is_disabled():
+            logging.debug(f"{BColors.MAGENTA}Before requests, API key {api_key.api_key} \
+is disabled, trying to get a new one{BColors.ENDC}")
             try:
                 self.attach_random_api_key()
             except:
@@ -1000,24 +1002,26 @@ Setting to DEAD!{BColors.ENDC}")
 Rolling for a new API key.\n{response_json}{BColors.ENDC}")
                 # FIXME: that's assuming only the API key is responsible for unauthorized, might be the IP!
                 # Examples: {"meta":{"status":401,"msg":"Unauthorized"},"response":[],
-                self.blacklist_api_key(lock)
+                with lock:
+                    self.blacklist_api_key()
                 update.valid = False
                 return
 
             if update.meta_status == 429 or update.meta_msg.find("Limit Exceeded") != -1:
                 # 'meta_status': 429, 'meta_msg': Limit Exceeded'
-                logging.critical(f"{BColors.RED}{self.name}Limit Exceeded 429 error{BColors.ENDC}")
+                logging.critical(f"{BColors.RED}{self.name} Limit Exceeded 429 error{BColors.ENDC}")
 
                 # Renew API key
+                logging.critical(f"Renewing API key {api_key_object_ref.api_key}")
                 with lock:
-                    api_keys.disable_api_key(self.api_key_object_ref, lock)
+                    api_keys.disable_api_key(self.api_key_object_ref)
                 try:
                     self.attach_random_api_key()
                 except:
                     raise
 
                 update.valid = False
-                return
+                return #FIXME returning with a now valid api_key only to reroll the same -> twice 
 
 
             logging.error(BColors.FAIL +

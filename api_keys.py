@@ -114,35 +114,34 @@ def write_api_keys_to_json(keylist=None, myfilepath=None):
         json.dump(api_dict, f, indent=True)
 
 
-def disable_api_key(api_key_object, lock, blacklist=False, duration=3600):
+def disable_api_key(api_key_object, blacklist=False, duration=3600):
     """This API key caused problem, might have been flagged, add to temporary blacklist
     for a default of one hour"""
 
-    with lock:
-        logging.info(f"{BColors.RED}Disabling API key {api_key_object.api_key} \
+    logging.info(f"{BColors.RED}Disabling API key {api_key_object.api_key} \
 from instances.api_keys list{BColors.ENDC}")
 
-        # key = item for item in instances.api_keys if item == api_key_list_object
-        key = next((i for i in instances.api_keys if i == api_key_object), None)
+    # key = item for item in instances.api_keys if item == api_key_list_object
+    key = next((i for i in instances.api_keys if i == api_key_object), None)
 
-        if not key: # should never happen
-            logging.error(f"{BColors.RED}Did not find this key in instances.api_keys list!?{BColors.ENDC}")
-            return
+    if not key: # should never happen
+        logging.error(f"{BColors.RED}Did not find this key in instances.api_keys list!?{BColors.ENDC}")
+        return
 
-        if blacklist:
-            key.blacklist_until(duration=duration)
+    if blacklist:
+        key.blacklist_until(duration=duration)
 
-        if key.disabled:
-            logging.debug(f"{BColors.BOLD}Key {key.api_key} is already disabled until \
-{time.ctime(key.disabled_until)}!{BColors.ENDC}")
-        else:
-            key.disable_until(duration=duration)
+    if key.disabled:
+        logging.debug(f"{BColors.BOLD}Key {key.api_key} is already disabled \
+until {time.ctime(key.disabled_until)}!{BColors.ENDC}")
+    else:
+        key.disable_until(duration=duration)
 
-        for key in instances.api_keys:
-            logging.debug(f"{BColors.RED}API key {key.api_key} is disabled: \
+    for key in instances.api_keys:
+        logging.debug(f"{BColors.RED}API key {key.api_key} is disabled: \
 {key.disabled}. blacklisted: {key.blacklisted}.{BColors.ENDC}")
 
-        write_api_keys_to_json()
+    write_api_keys_to_json()
 
 
 def get_random_api_key(apikey_list=None):
@@ -234,6 +233,7 @@ disabled until {self.disabled_until_h}{BColors.ENDC}")
         self.blacklisted_until_h = time.ctime(self.blacklisted_until)
         logging.warning(f"{BColors.RED}API key {self.api_key} blacklisted until \
 {self.blacklisted_until_h}{BColors.ENDC}")
+
 
     def is_disabled(self):
         if self.disabled or self.blacklisted:
