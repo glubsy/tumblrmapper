@@ -45,15 +45,25 @@ class ListCycle(list):
         return next(self._cycle)
 
     def gen_cycle(self):
-        self._cycle = cycle(i for i in self)
+        self._cycle = cycle(i for i in self) #FIXME keep order 
 
     def append(self, item):
-        self.gen_cycle()
         super().append(item)
+        self.gen_cycle()
 
     def remove(self, item):
-        self.gen_cycle()
         super().remove(item)
+        self.gen_cycle()
+
+    def cycle(self, iterable):
+        # cycle('ABCD') --> A B C D A B C D A B C D ...
+        saved = []
+        for element in iterable:
+            yield element
+            saved.append(element)
+        while saved:
+            for element in saved:
+                yield element
 
 
 def get_api_key_object_list(api_keys_filepath):
@@ -109,6 +119,11 @@ def write_api_keys_to_json(keylist=None, myfilepath=None):
     # DEBUG
     # print(BColors.MAGENTA + "write_api_keys_to_json: {0}"\
     # .format(json.dumps(api_dict, indent=True)) + BColors.ENDC)
+
+    if len(api_dict.get('api_keys')) == 0:
+        logging.error(f"{BColors.FAIL}Error when building API key list of dicts: \
+length is 0! Skipping writing to disk!{BColors.ENDC}")
+        return
 
     with open(myfilepath, 'w') as f:
         json.dump(api_dict, f, indent=True)

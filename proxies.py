@@ -6,10 +6,11 @@ import random
 import threading
 import time
 from collections import namedtuple
+from collections import OrderedDict
 import traceback
 from itertools import cycle
 from queue import Queue
-
+from api_keys import ListCycle
 import logging
 import requests
 from fake_useragent import UserAgent, errors
@@ -35,10 +36,9 @@ class ProxyScanner():
 
         self.proxies_path = proxies_path
         self.http_proxies_set = set() #temp set of proxies from free site
-        self.proxy_ua_dict = { "proxies" : [] } # the big global dict
+        self.proxy_ua_dict = { "proxies" : ListCycle() } # the big global dict
         self.print_lock = threading.Lock()
         self.proxy_ua_dict_lock = threading.Lock()
-        self.definitive_proxy_cycle = None #cycle of the list of dicts above
         self.http_proxies_recovered = set() #dicts of proxies previously recorded on disk
         self.restore_proxies_from_disk(proxies_path)
 
@@ -51,27 +51,31 @@ class ProxyScanner():
         self.http_proxies_recovered = filter_dictionary_for_unique(self.get_proxies_from_json_on_disk(proxies_path))
 
         for proxy in self.http_proxies_recovered:
-            
+
             if proxy.get('disabled', False) or proxy.get('blacklisted', False):
-                logging.debug(BColors.YELLOW + "From disk, skipping {0} because blacklisted.".format(proxy.get('ip_address')) + BColors.ENDC)
+                logging.debug(f"{BColors.YELLOW}From disk, skipping \
+{proxy.get('ip_address')} because blacklisted.{BColors.ENDC}")
                 continue
             # self.proxy_ua_dict[proxy.get('ip_address')] = proxy.get('user_agent')
             self.proxy_ua_dict.get('proxies').append(proxy)
 
-        logging.info(BColors.GREEN + "Restored proxies from disk: {0}".format(len(self.proxy_ua_dict.get('proxies'))) + BColors.ENDC)
+        logging.info(f"{BColors.GREEN}Restored proxies from disk: \
+{len(self.proxy_ua_dict.get('proxies'))}{BColors.ENDC}")
 
         return self.proxy_ua_dict.get('proxies')
 
 
     def get_new_proxy(self, old_proxy=None, remove=None):
-        """ Returns a new proxy from the regenerated definitive_proxy_cycle
+        """ Returns a proxy from the cycle generated from the list in proxy_ua_dict
         if remove="remove", remove proxy that is unresponsive from the list and regen cycle
         if remove="blacklist", save proxy in json as blacklisted to never use it ever again"""
 
         logging.info(f"Removing proxy {old_proxy} and getting new one.")
 
-        if remove == "remove" and old_proxy is not None:
+        if remove == 'remove' and old_proxy is not None:
             self.proxy_ua_dict.get('proxies').remove(old_proxy)
+            logging.debug(f"{BColors.DARKGRAY}Removed proxy {old_proxy} \
+from proxy_ua_dict: {self.proxy_ua_dict.get('proxies')}{BColors.ENDC}")
 
         elif remove == "blacklist" is not None: # no remove,
             dict_index = self.proxy_ua_dict.get('proxies').index(old_proxy) #WARNING: assuming the dict is this exact value!
@@ -79,24 +83,12 @@ class ProxyScanner():
             self.write_proxies_to_json_on_disk(self.proxy_ua_dict)
 
         if len(self.proxy_ua_dict.get('proxies')) == 0: # if list of proxy dict is depleted
-            logging.info(BColors.LIGHTGREEN + BColors.BOLD + "List of proxies is empty, getting from internet!" + BColors.ENDC)
+            logging.info(f"{BColors.LIGHTGREEN}{BColors.BOLD}List of proxies is \
+empty, getting from internet!{BColors.ENDC}")
             self.get_proxies_from_internet()
-            self.gen_proxy_cycle() #FIXME: move into get_proxies()?
 
-        return next(self.definitive_proxy_cycle)
+        return next(self.proxy_ua_dict.get('proxies'))
 
-
-    def gen_proxy_cycle(self, solid_dict=None):
-        """ Regens the definitive_proxy_cycle"""
-        if not solid_dict:
-            solid_dict = self.proxy_ua_dict.get('proxies')
-
-        self.definitive_proxy_cycle = cycle(solid_dict)
-
-
-    def get_random(self, mylist):
-        """returns a random item from list"""
-        return random.choice(mylist)
 
 
     def get_proxies_from_json_on_disk(self, myfilepath=None):
@@ -108,7 +100,7 @@ class ProxyScanner():
         try:
             data = json.load(open(myfilepath, 'r'))
         except json.decoder.JSONDecodeError: # got malformed or empty json
-            logging.debug(BColors.FAIL + "Failed decoding proxies json" + BColors.ENDC)
+            logging.debug(f"{BColors.FAIL}Failed decoding proxies json{BColors.ENDC}")
             return []
         # self.http_proxies_recovered = data.get('proxies')
 
@@ -124,26 +116,28 @@ class ProxyScanner():
 
         newlist = data.get('proxies') + self.http_proxies_recovered
 
-        data['proxies'] = filter_dictionary_for_unique(newlist) # merging with saved blacklisted proxies
+        data['proxies'] = ListCycle(filter_dictionary_for_unique(newlist)) # merging with saved blacklisted proxies
 
         # DEBUG
         # logging.debug("New dict: {0}".format(data.get('proxies')))
+
+        if len(data.get('proxies')) == 0:
+            logging.debug("Warning: before writing proxies to disk, list was empty!")
+            return
 
         with open(myfilepath, "w") as f:
             json.dump(data, f, indent=True)
 
 
-
     def get_proxies_from_internet(self, minimum=1):
         """Returns a dict of validated IP:UA
         returns None if fetching free list failed"""
-        logging.warning(BColors.CYAN + "Getting new proxies from the internet!" + BColors.ENDC)
-        big_dict = self.with_threads(minimum)
-        self.write_proxies_to_json_on_disk(big_dict)
-        return big_dict
+        logging.warning(f"{BColors.CYAN}Getting new proxies from the internet!{BColors.ENDC}")
+        self.write_proxies_to_json_on_disk(self.with_threads(minimum))
 
 
     def with_threads(self, minimum=1):
+        """Use threads to test proxies and add them to the proxy_ua_dict"""
 
         # socks_proxies_list = get_free_socks_proxies("https://socks-proxy.net/", type=socks)
         attempt = 0
@@ -158,7 +152,7 @@ class ProxyScanner():
                 attempt += 1
                 continue #re-run!
 
-            useragents_cycle = cycle(self.get_ua_set(len(self.http_proxies_set)))
+            useragents_cycle = cycle(self.get_ua_set(maxlength=len(self.http_proxies_set)))
 
             self.restore_proxies_from_disk()
 
@@ -167,14 +161,16 @@ class ProxyScanner():
                 # logging.debug(BColors.BOLD + "Checking {0} for dupe in recovered set: ".format(ip) + BColors.ENDC)
                 for proxy in self.http_proxies_recovered: # filter out those we already have recorded
                     if ip in proxy.get('ip_address'):
-                        logging.debug(BColors.CYAN + "Skipping {0} because already have it in http_proxies_set.".format(ip) + BColors.ENDC)
+                        logging.debug(f"{BColors.CYAN}Skipping {ip} because \
+already have it in http_proxies_set.{BColors.ENDC}")
                         # self.http_proxies_set.remove(ip)
                         break
                 else: # no break has occured
                     temp_dict = { "ip_address": ip, "user_agent": next(useragents_cycle), "disabled" : False }
                     self.proxy_ua_dict.get('proxies').append(temp_dict)
 
-            logging.debug(BColors.LIGHTCYAN + "proxy_ua_dict populated: {0} ".format(self.proxy_ua_dict) + BColors.ENDC)
+            logging.debug(f"{BColors.LIGHTCYAN}proxy_ua_dict populated to be tested: \
+{self.proxy_ua_dict.get('proxies')}{BColors.ENDC}")
 
             def threader():
                 while True:
@@ -209,7 +205,7 @@ class ProxyScanner():
             return self.proxy_ua_dict
 
         if len(self.http_proxies_set) == 0:
-            logging.warning(BColors.FAIL + "WARNING: NO PROXIES FETCHED!" + BColors.ENDC)
+            logging.warning(f"{BColors.FAIL}WARNING: NO PROXIES FETCHED!{BColors.ENDC}")
             return None
 
 
@@ -325,7 +321,9 @@ class ProxyScanner():
             logging.debug("{0}Proxy {1} did not send back any response code!{2}"
             .format(BColors.FAIL, proxy_ip, BColors.ENDC))
 
+
 def filter_dictionary_for_unique(mylist):
+    """Returns a new list of dictionaries filtered by unique IP"""
     cache = set()
     for dictionary in mylist:
         if dictionary.get('ip') in cache:
@@ -347,6 +345,6 @@ class Proxy:
 
 if __name__ == "__main__":
     scanner = ProxyScanner()
-    proxies = scanner.get_proxies_from_internet()
-    # print("Proxies final: " + str(proxies))
-    json.dumps(proxies, indent=True)
+    json.dumps(scanner.get_proxies_from_internet(), indent=True)
+
+    scanner.write_proxies_to_json_on_disk()

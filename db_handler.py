@@ -928,9 +928,13 @@ def update_blog_info(Database, con, blog, ignore_response=False):
 def reset_to_brand_new(database, con, blog, reset_type):
     """Resets CRAWL_STATUS varchar field for blog to input reset_type"""
     cur = con.cursor()
-    cur.execute(r'execute procedure reset_crawl_status(?,?);',
-                (blog.name, reset_type))
-    con.commit()
+    try:
+        cur.execute(r'execute procedure reset_crawl_status(?,?);',
+                    (blog.name, reset_type))
+    except:
+        raise
+    finally:
+        con.commit()
 
 
 def update_crawling(database, con, blog=None):
@@ -964,6 +968,7 @@ def insert_posts(database, con, blog, update):
         try:
             get_remote_id_and_context(post)
         except:
+            con.commit()
             raise
 
         results = inserted_post(cur, post)
@@ -1520,6 +1525,8 @@ def delete_all_1280_archives(db,con):
         cur.execute(r'delete from OLD_1280;')
     except:
         pass
+    finally:
+        con.commit()
     print("Removed all from 1280 archives")
 
 
