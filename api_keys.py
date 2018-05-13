@@ -32,38 +32,47 @@ class APIKeyDepleted(Exception):
 
 class ListCycle(list):
     """Keeps an up to date cycle of its items"""
-    # caveat: cycle is reset on append/remove
-    # potential fix, reimplement Cycle() ourselves
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, _iter=None):
+        if not _iter:
+            _iter = []
+        super().__init__(_iter)
         self._cycle = None
 
     def __next__(self):
         if self._cycle is None:
-            self.gen_cycle()
+            self.gen_cycle(init=True)
         return next(self._cycle)
 
-    def gen_cycle(self):
-        self._cycle = cycle(i for i in self) #FIXME keep order 
+    def gen_cycle(self, init=False):
+        self._cycle = self.cycle(self, init=init)
 
     def append(self, item):
         super().append(item)
         self.gen_cycle()
 
     def remove(self, item):
+        index = self.index(item)
+        if index >= self.cur:
+            self.cur -= 1 # we'll miss one
+
         super().remove(item)
         self.gen_cycle()
 
-    def cycle(self, iterable):
-        # cycle('ABCD') --> A B C D A B C D A B C D ...
-        saved = []
-        for element in iterable:
-            yield element
-            saved.append(element)
-        while saved:
-            for element in saved:
-                yield element
+    def cycle(self, iterable, init=False):
+        if init:
+            self.cur = -1
+        try:
+            while True:
+                self.cur += 1
+
+                if self.cur >= len(iterable):
+                    self.cur = 0
+
+                yield iterable[self.cur]
+
+        except BaseException as e:
+            print(f"Exception in cycle of ListCycle(): {e}")
 
 
 def get_api_key_object_list(api_keys_filepath):

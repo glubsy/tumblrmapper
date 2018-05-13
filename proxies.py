@@ -74,8 +74,7 @@ class ProxyScanner():
 
         if remove == 'remove' and old_proxy is not None:
             self.proxy_ua_dict.get('proxies').remove(old_proxy)
-            logging.debug(f"{BColors.DARKGRAY}Removed proxy {old_proxy} \
-from proxy_ua_dict: {self.proxy_ua_dict.get('proxies')}{BColors.ENDC}")
+            logging.debug(f"{BColors.DARKGRAY}Removed proxy {old_proxy.get('ip_address')}{BColors.ENDC}")
 
         elif remove == "blacklist" is not None: # no remove,
             dict_index = self.proxy_ua_dict.get('proxies').index(old_proxy) #WARNING: assuming the dict is this exact value!
