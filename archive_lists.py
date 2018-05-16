@@ -7,15 +7,14 @@
 #   minus -> raw_downloads_tuple.txt (or raw_archives_autogen.txt if not present)
 #   minus -> archive_files_to_delete (if exists)
 #
-
-import tumblrmapper
-import db_handler
-import sys
 import os
 import pickle
-from collections import Counter
-import fdb
 import re
+import sys
+from collections import Counter
+import db_handler
+import fdb
+
 
 tumblr_base_noext_re = re.compile(r'(tumblr_(?:inline_|messaging_)?.*?(?:_r\d)?)_.{3,4}.*') # tumblr_xxx_r1
 # tumblr_base_norev_noext_re = re.compile(r'(tumblr_.*)(?:_r\d)?_.{3,4}.*')
@@ -384,5 +383,3 @@ def main(output_pickle=True, keep_revision=True):
 if __name__ == "__main__":
     DEBUG = True
     main(output_pickle=True)
-
-

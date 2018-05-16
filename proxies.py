@@ -19,11 +19,7 @@ import instances
 # import tumblrmapper
 from constants import BColors
 
-try:
-    ua = UserAgent() # init database, retrieves UAs
-except errors.FakeUserAgentError as e:
-    logging.exception(e)
-    pass
+
 
 SCRIPTDIR = os.path.dirname(__file__)
 
@@ -41,7 +37,11 @@ class ProxyScanner():
         self.proxy_ua_dict_lock = threading.Lock()
         self.http_proxies_recovered = set() #dicts of proxies previously recorded on disk
         self.restore_proxies_from_disk(proxies_path)
-
+        try:
+            self.ua = UserAgent() # init database, retrieves UAs
+        except errors.FakeUserAgentError as e:
+            logging.exception(e)
+            pass
 
     def restore_proxies_from_disk(self, proxies_path=None):
         """populate with our previously recorded proxies, returns proxy_ua_dict['proxies']"""
@@ -212,7 +212,7 @@ already have it in http_proxies_set.{BColors.ENDC}")
         """Returns a set of random UAs, of size maxlength"""
         ua_set = set()
         for _ in range(0, maxlength): #FIXME: hardcoded
-            ua_string = ua.random
+            ua_string = self.ua.random
             ua_set.add(ua_string)
         logging.debug("ua_set length: {0}".format(len(ua_set)))
         return ua_set

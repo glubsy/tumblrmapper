@@ -13,10 +13,10 @@ from operator import itemgetter
 from urllib import parse
 import fdb
 import archive_lists
-# import cProfile
-import tumblrmapper
-from constants import BColors
 import instances
+# import cProfile
+from constants import BColors
+
 HAS_RE2 = False
 try:
     import re2 as re #pip install git+https://github.com/andreasvc/pyre2.git to fix potential catastrophic backtracking failures
@@ -27,7 +27,6 @@ except ImportError:
     import re
 # else:
 #     re.set_fallback_notification(re.FALLBACK_WARNING)
-
 http_url_simple_re = re.compile(r'"(https?(?::\/\/|%3A%2F%2F).*?)"', re.I)
 # for single line with http
 http_url_single_re = re.compile(r'(https?(?::\/\/|%3A%2F%2F).*?)(?:\s)*?$', re.I)
@@ -1557,6 +1556,7 @@ def unittest_update_table(db, con, payload):
 
 
 if __name__ == "__main__":
+    import tumblrmapper
     SCRIPTDIR = os.path.dirname(__file__) + os.sep
     args = tumblrmapper.parse_args()
     tumblrmapper.setup_config(args)

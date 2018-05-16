@@ -15,11 +15,11 @@ from concurrent import futures
 from itertools import cycle
 from logging.handlers import RotatingFileHandler
 import requests
-import api_keys
-import archive_lists
 import db_handler
+import api_keys
 import instances
-import proxies
+import archive_lists
+from proxies import ProxyScanner
 from constants import BColors
 
 # try:
@@ -1206,7 +1206,7 @@ def main(args):
 
     # === PROXIES ===
     # Get proxies from free proxies site
-    instances.proxy_scanner = proxies.ProxyScanner(proxies_path=instances.config.get('tumblrmapper', 'proxies'))
+    instances.proxy_scanner = ProxyScanner(proxies_path=instances.config.get('tumblrmapper', 'proxies'))
 
     if len(instances.proxy_scanner.proxy_ua_dict.get('proxies')) <= THREADS:
         instances.proxy_scanner.get_proxies_from_internet(minimum=THREADS)

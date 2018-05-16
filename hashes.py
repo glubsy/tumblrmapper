@@ -1,14 +1,12 @@
-#!/usr/bin/python3.6
+#!/usr/bin/env python3.6
+import logging
 import os
+import re
 import sys
-import tumblrmapper
-import archive_lists
-import db_handler
+from collections import Counter
 import instances
 from constants import BColors
-from collections import Counter
-import logging
-import re
+from db_handler import Database
 
 re_6letters = re.compile(r'tumblr_.*?1(.{6})\w{0,2}(?:_.{2})?_\d{3,4}\..*', re.I)
 
@@ -223,12 +221,13 @@ def ResultIter(cur):
 
 
 if __name__ == "__main__":
+    import tumblrmapper
     SCRIPTDIR = os.path.dirname(__file__) + os.sep
     args = tumblrmapper.parse_args()
     tumblrmapper.setup_config(args)
 
     # archives_toload = SCRIPTDIR +  "tools/1280_files_list.txt"
-    database = db_handler.Database(db_filepath=instances.config.get('tumblrmapper', 'db_filepath')
+    database = Database(db_filepath=instances.config.get('tumblrmapper', 'db_filepath')
                             + os.sep + instances.config.get('tumblrmapper', 'db_filename'),
                             username=instances.config.get('tumblrmapper', 'username'),
                             password=instances.config.get('tumblrmapper', 'password'))
