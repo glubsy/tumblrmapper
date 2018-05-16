@@ -186,7 +186,12 @@ reblogs for {posts_rows[0][-1]}{BColors.ENDC}')
         for row in posts_rows:
             if pill2kill.is_set():
                 break
-            if row[1] in rid_cache:
+            if row[1] in rid_cache and row[1] is not None:
+                continue
+            if row[1] is None and row[0] is not None: 
+                # this is an original post! #TODO scrape them too later
+                # TODO: if row[1] is none, scrape the blog present row[-1] because it's the actual origin blogname!
+                # that blog probably died or got wiped and we have some posts from it
                 continue
             rid_cache.add(row[1])
             requester.name = row[-3]
@@ -279,7 +284,7 @@ def process(db, lock, db_update_lock, pill2kill):
             logging.debug(f"{BColors.FAIL}Exception occured in blog_generator:\
  {e}{BColors.ENDC}")
             pill2kill.set()
-            traceback.print_exc()
+            # traceback.print_exc()
             break
 
         if blog.name is None:
@@ -753,7 +758,8 @@ class TumblrBlog:
         while True:
             try:
                 self.api_key_object_ref = api_keys.get_random_api_key(instances.api_keys)
-                logging.debug(f"APIKEY attached to {self.name}: {self.api_key_object_ref.api_key}")
+                logging.debug(f"APIKEY attached to {self.name}: \
+{self.api_key_object_ref.api_key}")
                 # self.proxy_object.api_key = temp_key.api_key
                 # self.proxy_object.secret_key =  temp_key.secret_key
                 # attach string to local proxy dict, in case we need to keep the proxy for later use
@@ -830,7 +836,7 @@ seconds until {time.ctime(e.next_date_avail)}{BColors.ENDC}")
         """Returns requests.response object, reqype=[posts|info]"""
         if not api_key:
             api_key = self.api_key_object_ref
-        if api_key.is_disabled():
+        if api_key.is_disabled(): # FIXME: key should use_once() here, decrement if network error
             logging.debug(f"{BColors.MAGENTA}Before requests, API key {api_key.api_key} \
 is disabled, trying to get a new one{BColors.ENDC}")
             try:

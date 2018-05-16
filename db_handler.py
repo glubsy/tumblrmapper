@@ -132,6 +132,8 @@ def populate_db_with_tables(database):
         con.execute_immediate("CREATE DOMAIN D_EPOCH AS BIGINT;")
         con.execute_immediate("CREATE DOMAIN D_POST_NO AS BIGINT;")
         con.execute_immediate("CREATE DOMAIN D_SUPER_LONG_TEXT AS VARCHAR(32765)")
+        con.execute_immediate("CREATE DOMAIN D_HASH AS VARCHAR(20)")
+        con.execute_immediate("CREATE DOMAIN D_INLINE_HASH AS VARCHAR(40)")
         con.execute_immediate(
 """CREATE DOMAIN D_BOOLEAN AS smallint default 0
 CHECK (VALUE IS NULL OR VALUE IN (0, 1, 2));""")
@@ -152,6 +154,8 @@ POSTS_SCRAPED   INTEGER,
 LAST_CHECKED    D_EPOCH,
 LAST_UPDATE     D_EPOCH,
 PRIORITY        smallint,
+HASH            D_HASH,
+INLINE_HASH     D_INLINE_HASH,
 CONSTRAINT blognames_unique UNIQUE (BLOG_NAME) using index ix_blognames
 );""")
 
@@ -469,7 +473,8 @@ if (exists (select BLOG_NAME from BLOGS where (CRAWL_STATUS = 'DONE'))) then
 END
 """)
 
-
+        # fetch posts/reblogged posts, only if they have no notes recorded
+        # returns nothing when all have been processed
         con.execute_immediate(\
 """
 CREATE OR ALTER PROCEDURE FETCH_DEAD_BLOGS_POSTS
@@ -506,7 +511,10 @@ BEGIN
 end
 """)
 
-
+        # selectable procedure!
+        # O_ORIGIN_ID2 / O_ORIGIN_NAME = the reblogged blog (if there's one, otherwise null)
+        # O_REBLOGGED_ID2 / O_REBLOGGED_NAME2 = the actual poster
+        # WARNING the names are mixed up, reblogged_name2 is actually misleading
         con.execute_immediate(\
 """
 CREATE OR ALTER PROCEDURE FETCH_DEAD_POSTS (
@@ -525,8 +533,8 @@ AS
 begin
     for select p.post_id, p.remote_id, p.ORIGIN_BLOGNAME, p.REBLOGGED_BLOGNAME, p.notes, c1.auto_id, c1.BLOG_NAME, c2.auto_id, c2.BLOG_NAME
     from posts as p
-    inner join blogs as c1 on c1.auto_id = p.ORIGIN_BLOGNAME
-    inner join blogs as c2 on c2.auto_id = p.REBLOGGED_BLOGNAME
+    left join blogs as c1 on c1.auto_id = p.reblogged_blogname or (c1.auto_id = p.ORIGIN_BLOGNAME and c1.auto_id = p.REBLOGGED_BLOGNAME)
+    left join blogs as c2 on c2.auto_id = p.origin_blogname or (c2.auto_id = p.REBLOGGED_BLOGNAME and c2.auto_id = p.ORIGIN_BLOGNAME)
     where (p.reblogged_blogname = (select auto_id from blogs where blogs.blog_name = :i_name))
     or (p.ORIGIN_BLOGNAME = (select auto_id from blogs where blogs.blog_name = :i_name))
     into :o_post_id, :o_remote_id, :o_origin_id, :o_reblogged_id, :o_notes,

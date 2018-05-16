@@ -5,6 +5,7 @@ import os
 import random
 import threading
 import logging
+import traceback
 from itertools import cycle
 # import tumblrmapper
 from constants import BColors
@@ -33,11 +34,14 @@ class APIKeyDepleted(Exception):
 class ListCycle(list):
     """Keeps an up to date cycle of its items"""
 
+    __slots__ = ['_iter', '_cycle', 'cur', ]
+
     def __init__(self, _iter=None):
         if not _iter:
             _iter = []
         super().__init__(_iter)
         self._cycle = None
+        self.cur = 0
 
     def __next__(self):
         if self._cycle is None:
@@ -70,9 +74,12 @@ class ListCycle(list):
                     self.cur = 0
 
                 yield iterable[self.cur]
-
+        except GeneratorExit:
+            #https://amir.rachum.com/blog/2017/03/03/generator-cleanup/
+            pass
         except BaseException as e:
-            print(f"Exception in cycle of ListCycle(): {e}")
+            logging.debug(f"{BColors.RED}Exception in cycle of ListCycle(): {e}{BColors.ENDC}")
+            traceback.print_exc
 
 
 def get_api_key_object_list(api_keys_filepath):
