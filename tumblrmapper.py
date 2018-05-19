@@ -57,8 +57,10 @@ def parse_args():
                     help="Populate DB with blogs")
     parser.add_argument('-f', '--ignore_duplicates', action="store_true", default=False,
                 help="Ignore duplicate posts, keep scraping away")
-    parser.add_argument('-i', '--dead_blogs', action="store_true", default=False,
-                help="Scrape rebogs from dead blog to populate blogs with notes")
+    parser.add_argument('-i', '--scrape_notes', action="store", default=None,
+                help="Try to populate BLOGS table with new blogs: all\
+blogs which have appeared in the notes of posts that belonged to either dead blogs (reblogs) \
+or blogs sorted by priority (regular posts). value=[dead|priority]")
 
     parser.add_argument('-p', '--proxies', action="store_true", default=False,
                         help="Use randomly selected proxies")
@@ -151,7 +153,7 @@ def input_thread(event, worker_threads):
     #         qlist.append(None)
 
 
-def process_dead(db, lock, db_update_lock, pill2kill):
+def process_notes(db, lock, db_update_lock, pill2kill, priority):
     """Fetch dead or wiped blog from BLOGS table in DB
     for each reblog of that blog, request the post through the REST API
     and add all blogs found in the notes to our BLOGS table for later scraping"""
@@ -164,7 +166,7 @@ def process_dead(db, lock, db_update_lock, pill2kill):
 
         while not pill2kill.is_set():
             with db_update_lock:
-                posts_rows = db_handler.fetch_dead_blogs_posts(db, con)
+                posts_rows = db_handler.fetch_dead_blogs_posts(db, con, priority=priority)
             if len(posts_rows) == 0:
                 break
             if posts_rows[0][0] == 0: # o_post_id
@@ -186,17 +188,17 @@ reblogs for {posts_rows[0][-1]}{BColors.ENDC}')
         for row in posts_rows:
             if pill2kill.is_set():
                 break
-            if row[1] in rid_cache and row[1] is not None:
+            if row[1] is not None and row[1] in rid_cache:
                 continue
             if row[1] is None and row[0] is not None: 
-                # this is an original post! #TODO scrape them too later
-                # TODO: if row[1] is none, scrape the blog present row[-1] because it's the actual origin blogname!
+                # this is an original post! #TODO scrape them too later, but only for NON-DEAD blogs
+                # TODO: if row[1] is none, scrape the blog present in row[-1] because it's the actual origin blogname!
                 # that blog probably died or got wiped and we have some posts from it
                 continue
             rid_cache.add(row[1])
             requester.name = row[-3]
 
-            logging.warning(f'{BColors.YELLOW}Fetching reblogged post for dead blog {row[-1]}:\
+            logging.warning(f'{BColors.YELLOW}Fetching reblogged post for {row[-1]}:\
  {posts_rows.index(row) + 1}/{len(posts_rows)}{BColors.ENDC}')
 
             try:
@@ -1246,13 +1248,16 @@ def main(args):
     t.start()
     worker_threads.append(t)
 
-    if args.dead_blogs:
-        tgt = process_dead
+    args = (db, lock, db_update_lock, pill2kill)
+
+    if args.scrape_notes:
+        tgt = process_notes
+        args = args + (args.scrape_notes,)
     else:
         tgt = process
 
     for _ in range(0, THREADS):
-        args = (db, lock, db_update_lock, pill2kill)
+
         t = threading.Thread(target=tgt, args=args)
         worker_threads.append(t)
         # t.daemon = True

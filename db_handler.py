@@ -131,8 +131,8 @@ def populate_db_with_tables(database):
         con.execute_immediate("CREATE DOMAIN D_EPOCH AS BIGINT;")
         con.execute_immediate("CREATE DOMAIN D_POST_NO AS BIGINT;")
         con.execute_immediate("CREATE DOMAIN D_SUPER_LONG_TEXT AS VARCHAR(32765)")
-        con.execute_immediate("CREATE DOMAIN D_HASH AS VARCHAR(20)")
-        con.execute_immediate("CREATE DOMAIN D_INLINE_HASH AS VARCHAR(40)")
+        con.execute_immediate("CREATE DOMAIN D_HASH AS VARCHAR(25)")
+        con.execute_immediate("CREATE DOMAIN D_INLINE_HASH AS VARCHAR(45)")
         con.execute_immediate(
 """CREATE DOMAIN D_BOOLEAN AS smallint default 0
 CHECK (VALUE IS NULL OR VALUE IN (0, 1, 2));""")
@@ -472,11 +472,13 @@ if (exists (select BLOG_NAME from BLOGS where (CRAWL_STATUS = 'DONE'))) then
 END
 """)
 
-        # fetch posts/reblogged posts, only if they have no notes recorded
+        # for dead blog accounts or account sorted by priority
+        # fetch reblogged posts, only if they have no notes recorded
         # returns nothing when all have been processed
         con.execute_immediate(\
 """
-CREATE OR ALTER PROCEDURE FETCH_DEAD_BLOGS_POSTS
+CREATE OR ALTER PROCEDURE FETCH_ALL_BLOG_S_POSTS
+(i_param varchar(10))
 RETURNS (
     O_POST_ID D_POST_NO,
     O_REMOTE_ID D_POST_NO,
@@ -488,24 +490,49 @@ RETURNS (
     O_REBLOGGED_ID2 D_AUTO_ID,
     O_REBLOGGED_NAME2 D_BLOG_NAME )
 AS
-declare variable v_dead D_BLOG_NAME;
+declare variable v_blog D_BLOG_NAME;
 BEGIN
-    for select first 1 (BLOG_NAME) from BLOGS where (((HEALTH = 'DEAD') and (CRAWLING != 1)) or ((HEALTH = 'WIPED' and TOTAL_POSTS <= 2) and (CRAWLING != 1))) into :v_dead do
+    if (:i_param = 'dead') then
     begin
-        update blogs set CRAWLING = 1 where blogs.blog_name = :v_dead; --avoid rerolling it
-        if (exists (select first 1 * from FETCH_DEAD_POSTS(:v_dead) where o_notes is null)) THEN
+        for select first 1 (BLOG_NAME) from BLOGS where (((HEALTH = 'DEAD') and (CRAWLING != 1)) 
+        or ((HEALTH = 'WIPED' and TOTAL_POSTS <= 2) and (CRAWLING != 1))) into :v_blog do
         begin
-            for select * from FETCH_DEAD_POSTS(:v_dead) where o_notes is null
-            into :o_post_id, :o_remote_id, :o_origin_id, :o_reblogged_id, :o_notes,
-            :o_origin_id2, :o_origin_name, :o_reblogged_id2, :o_reblogged_name2
-            do
+            update blogs set CRAWLING = 1 where blogs.blog_name = :v_blog; --avoid rerolling it
+            if (exists (select first 1 * from FETCH_DEAD_POSTS(:v_blog) where o_notes is null)) THEN
+            begin
+                for select * from FETCH_DEAD_POSTS(:v_blog) where o_notes is null
+                into :o_post_id, :o_remote_id, :o_origin_id, :o_reblogged_id, :o_notes,
+                :o_origin_id2, :o_origin_name, :o_reblogged_id2, :o_reblogged_name2
+                do
+                suspend;
+                exit;
+            end
+            else
+            O_REBLOGGED_NAME2 = :v_blog;
+            O_post_id = 0; -- no reblogs found found
             suspend;
-            exit;
         end
-        else
-        O_REBLOGGED_NAME2 = :v_dead;
-        O_post_id = 0; -- no reblogs found found
-        suspend;
+    end
+    else if (:i_param = 'priority') then
+    begin
+        for select first 1 (BLOG_NAME) from BLOGS where ((PRIORITY is not null) and (CRAWLING != 1))
+        order by PRIORITY desc nulls last into :v_blog do
+        begin
+            update blogs set CRAWLING = 1 where blogs.blog_name = :v_blog; --avoid rerolling it
+            if (exists (select first 1 * from FETCH_DEAD_POSTS(:v_blog) where o_notes is null)) THEN
+            begin
+                for select * from FETCH_DEAD_POSTS(:v_blog) where o_notes is null
+                into :o_post_id, :o_remote_id, :o_origin_id, :o_reblogged_id, :o_notes,
+                :o_origin_id2, :o_origin_name, :o_reblogged_id2, :o_reblogged_name2
+                do
+                suspend;
+                exit;
+            end
+            else
+            O_REBLOGGED_NAME2 = :v_blog;
+            O_post_id = 0; -- no reblogs found found
+            suspend;
+        end
     end
 end
 """)
@@ -833,14 +860,15 @@ def fetch_random_blog(database, con):
         con.commit()
 
 
-def fetch_dead_blogs_posts(database, con):
-    """ Queries DB for a dead blog and returns all rows of posts and reblogs
+def fetch_all_blog_s_posts(database, con, priority='dead'):
+    """ Queries DB for either a dead blog or blog sorted by priority and returns 
+    all rows of posts and reblogs. priority=[dead|priority] to fetch by either.
     returns
     (O_POST_ID , O_REMOTE_ID, O_ORIGIN_ID, O_REBLOGGED_ID,O_NOTES,O_ORIGIN_ID2,
     O_ORIGIN_NAME,O_REBLOGGED_ID2,O_REBLOGGED_NAME2)"""
     cur = con.cursor()
     try:
-        cur.execute("select * from FETCH_DEAD_BLOGS_POSTS;")
+        cur.execute("select * from FETCH_ALL_BLOG_S_POSTS(?);", (priority,))
         return cur.fetchall()
     except:
         raise
@@ -1509,19 +1537,26 @@ def inserted_urls(cur, post):
     return True, errors
 
 
-def look_for_lost_urls(db,con):
-    """Very long compute"""
+def look_for_lost_urls(con, write_path):
+    """Warning: Very long compute. Fetch all URLS which point to a file's base hash
+    listed in the 1280 archive table and write a csv to the write_path"""
     cur = con.cursor()
     print("Getting lost urls")
-    try:
-        cur.execute(r"select a.filebasename, b.file_url from OLD_1280 a join urls b on b.FILE_URL like '%'||a.FILEBASENAME||'%' ROWS 1")
-        # cur.execute(r"select a.filebasename, b.file_url from OLD_1280 a join urls b on b.FILE_URL like '%p7zvznvXdZ1w329z4o%' ROWS 2")
-        return cur.fetchall()
-    except BaseException as e:
-        print(f'Exception occured {e}')
-        pass
-    finally:
-        con.rollback()
+    with open(write_path, 'w') as f:
+        try:
+            cur.execute(r"select a.filebasename, b.file_url from OLD_1280 a join urls b on b.FILE_URL like '%'||a.FILEBASENAME||'%' ROWS 2")
+            while True:
+                results = cur.fetchmany()
+                if not results:
+                    break
+                for filebasename, url in results:
+                    f.write(f'{filebasename}\t{url}\n')
+
+        except BaseException as e:
+            print(f'Exception occured {e}')
+            pass
+        finally:
+            con.rollback()
 
 
 def delete_all_1280_archives(db,con):
@@ -1537,24 +1572,6 @@ def delete_all_1280_archives(db,con):
     print("Removed all from 1280 archives")
 
 
-# DEBUG
-def unittest_update_table(db, con, payload):
-    """feed testing data"""
-    json = payload.get('response')
-    # con = fdb.connect(database=database.db_filepath,
-    # user=database.username, password=database.password)
-
-    blog = tumblrmapper.TumblrBlog()
-    blog.name = json.get('blog').get('name')
-
-    update = tumblrmapper.UpdatePayload()
-    update.posts_response = json.get('posts') #list
-    cur = con.cursor()
-    cur.execute('execute procedure insert_blogname(?,?,?)', (blog.name, None, 1))
-    con.commit()
-    return insert_posts(db, con, blog, update)
-
-
 if __name__ == "__main__":
     import tumblrmapper
     SCRIPTDIR = os.path.dirname(__file__) + os.sep
@@ -1563,6 +1580,7 @@ if __name__ == "__main__":
 
     blogs_toscrape = SCRIPTDIR + "tools/blogs_toscrape_test.txt"
     archives_toload = SCRIPTDIR +  "tools/1280_files_list.txt"
+    found_urls_in_db_txt = SCRIPTDIR + "tools/found_urls_in_db.txt"
     database = Database(db_filepath=instances.config.get('tumblrmapper', 'db_filepath')
                             + os.sep + instances.config.get('tumblrmapper', 'db_filename'),
                             username=instances.config.get('tumblrmapper', 'username'),
@@ -1574,7 +1592,6 @@ if __name__ == "__main__":
     # populate_db_with_blogs(database, blogs_toscrape)
     # Optional archives too
     # populate_db_with_archives(database, archives_toload)
-    print(look_for_lost_urls(database, con))
-
+    look_for_lost_urls(con, found_urls_in_db_txt)
 
     # print('FILTERED_URL_GLOBAL_COUNT: {0}'.format(len(FILTERED_URL_GLOBAL_COUNT)))

@@ -96,11 +96,12 @@ def weigh_sets(_set):
     return r
 
 
-def list_to_string(_list):
+def list_to_string(_list, default='None'):
     """format to pass in an sql query for a record's field, 
     returns None if empty list"""
     if not _list:
-        return None
+        # return
+        return default 
     return ','.join(_list)
 
 
@@ -109,7 +110,7 @@ def update_hash_in_db(con, blog, normal_hashes, inline_hashes):
     cur = con.cursor()
     try:
         cur.execute(r"""update BLOGS set HASH = ?, INLINE_HASH = ? where blog_name = ?;""", 
-        (list_to_string(normal_hashes), list_to_string(inline_hashes), blog))
+        (list_to_string(normal_hashes), list_to_string(inline_hashes, default=None), blog))
     except BaseException as e:
         logging.error(f"{BColors.FAIL}Exception during update DB of hashes: {e}{BColors.ENDC}")
         raise

@@ -9,7 +9,7 @@ Fortunately for us, they also keep \_raw original files on their CDN.
 Unfortunately, they do no document this anywhere, it's essentially hidden from the public.
 
 The original \_raw files are hidden behind paths such as:
-`http://data.tumblr.com/{SHA1}/tumblr_{hash}_raw.jpg`
+`http://data.tumblr.com/{SHA1}/tumblr_{hash}1{hash}_raw.jpg`
 where {SHA1} is the sha1sum of the _original_ file (the \_raw one). 
 
 This makes it impossible to retrieve files without knowing the sha1 checksum beforehand (TODO: write a script to brute-force SHA1 for each 4000 files to recover...)
