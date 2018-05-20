@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3.6
 #
 # Build the file list of archived files for which we need to recover their _raw
 #
@@ -14,6 +14,8 @@ import sys
 from collections import Counter
 import db_handler
 import fdb
+import tumblrmapper
+import instances
 
 
 tumblr_base_noext_re = re.compile(r'(tumblr_(?:inline_|messaging_)?.*?(?:_r\d)?)_.{3,4}.*') # tumblr_xxx_r1
@@ -193,12 +195,14 @@ def remove_todelete_from_list(current_1280_set, todelete_txt, keep_rev=False, sl
     else:
         todelete_tuple = remove_file_string_extensions(readfile(todelete_txt, evaluate=False), keep_rev=keep_rev)
         todelete_set = set(todelete_tuple)
+        #HACK added files to ignore here
+        todelete_set = todelete_set | set(readfile(SCRIPTDIR + os.sep + "tools/files_to_ignore.txt"))
         if DEBUG:
-            print("Length of generated todelete_set: {0}".format(len(todelete_set)))
+            print(f"Length of generated todelete_set: {len(todelete_set)}")
             write_to_file(to_delete_archives_set_debug_path, todelete_set)
 
-        print("doing difference between current_set: {0} and todelete_set: {1}"
-        .format(len(current_1280_set[0]), len(todelete_set)))
+        print(f"doing difference between current_set: {len(current_1280_set[0])}\
+ and todelete_set: {len(todelete_set)}")
 
         return difference(current_1280_set[0], current_1280_set[1], todelete_set)
 
@@ -225,7 +229,7 @@ def readfile(filepath, evaluate=False):
             if evaluate:
                 listoflists.append(eval(line))
             else:
-                listoflists.append(line)
+                listoflists.append(line.rstrip())
 
     return tuple(listoflists)
 
@@ -267,7 +271,7 @@ def main(output_pickle=True, keep_revision=True):
     raw_downloads_tuple_debug = SCRIPTDIR + os.sep + "tools/downloads_raw_set_debug.txt" #debug
 
     # optional todelete files (filter out)
-    to_delete_archives_txt = os.path.expanduser("~/Documents/DOCUMENTS/archive_files_to_delete.txt")
+    to_delete_archives_txt = SCRIPTDIR + os.sep + "tools/archive_files_to_delete.txt"
 
     # final filtered file outputs
     archives_minus_raw_path = SCRIPTDIR + os.sep + "tools/archives_minus_raw.txt"
@@ -276,14 +280,17 @@ def main(output_pickle=True, keep_revision=True):
 
     # archives _1280
     CGI_database = db_handler.Database(db_filepath="/home/firebird/CGI.vvv", \
-                        username="sysdba", password="masterkey")
+                        username=instances.config.get('tumblrmapper', 'username'),
+                            password=instances.config.get('tumblrmapper', 'password'))
 
     bluray_database = db_handler.Database(db_filepath="/home/firebird/bluray_backups.vvv", \
-                        username="sysdba", password="masterkey")
+                        username=instances.config.get('tumblrmapper', 'username'),
+                            password=instances.config.get('tumblrmapper', 'password'))
 
     # current downloads _raw
     downloads_database = db_handler.Database(db_filepath="/home/firebird/downloads.vvv", \
-                        username="sysdba", password="masterkey")
+                        username=instances.config.get('tumblrmapper', 'username'),
+                            password=instances.config.get('tumblrmapper', 'password'))
 
     customTPB = fdb.TPB()
     customTPB.access_mode = fdb.isc_tpb_read  # read only
@@ -381,5 +388,7 @@ def main(output_pickle=True, keep_revision=True):
 
 
 if __name__ == "__main__":
+    args = tumblrmapper.parse_args()
+    tumblrmapper.setup_config(args)
     DEBUG = True
     main(output_pickle=True)

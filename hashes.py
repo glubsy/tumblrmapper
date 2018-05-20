@@ -3,14 +3,18 @@ import logging
 import os
 import re
 import sys
+import json
 from collections import Counter
+from collections import defaultdict
+import db_handler
 import instances
 from constants import BColors
-from db_handler import Database
 
+
+# capture the 6 letter hash after 1
 re_6letters = re.compile(r'tumblr_.*?1(.{6})\w{0,2}(?:_.{2})?_\d{3,4}\..*', re.I)
-
-# get each like tumblr_ url
+re_6letters_base = re.compile(r'tumblr_.*1(.{6})\w{0,2}', re.I)
+# get each like tumblr_ url in table URLS
 # for each, get post_id, r_id
 # if post_id, associate hash with blogname
 # if r_id, associate with reblogged_blogname
@@ -18,9 +22,6 @@ re_6letters = re.compile(r'tumblr_.*?1(.{6})\w{0,2}(?:_.{2})?_\d{3,4}\..*', re.I
 # we want a list / dict
 # hashes -> blogname
 
-# get each blog name's auto_id from bLOGS table
-# -> get POSTS post_id, get file_url where like "tumblr\_"
-# make column in BLOGS for the hash
 
 def get_blog(con):
     """builds a list of hashes associated with blog name"""
@@ -42,7 +43,7 @@ BEGIN
 END
 """)
     # cur.execute(r"""select * from blogs where blog_name = 'atrociousalpaca'""")
-    
+
     try:
         cur.execute(query)
         return cur.fetchall()[0]
@@ -97,11 +98,11 @@ def weigh_sets(_set):
 
 
 def list_to_string(_list, default='None'):
-    """format to pass in an sql query for a record's field, 
+    """format to pass in an sql query for a record's field,
     returns None if empty list"""
     if not _list:
         # return
-        return default 
+        return default
     return ','.join(_list)
 
 
@@ -109,7 +110,7 @@ def update_hash_in_db(con, blog, normal_hashes, inline_hashes):
     """Updates blog row with each set of 3 pausible hashes"""
     cur = con.cursor()
     try:
-        cur.execute(r"""update BLOGS set HASH = ?, INLINE_HASH = ? where blog_name = ?;""", 
+        cur.execute(r"""update BLOGS set HASH = ?, INLINE_HASH = ? where blog_name = ?;""",
         (list_to_string(normal_hashes), list_to_string(inline_hashes, default=None), blog))
     except BaseException as e:
         logging.error(f"{BColors.FAIL}Exception during update DB of hashes: {e}{BColors.ENDC}")
@@ -131,7 +132,7 @@ def reset_crawling(con):
     con.commit()
 
 
-def main(db):
+def compute_hashes(db):
     con = db.connect()
 
     reset_crawling(con)
@@ -221,15 +222,115 @@ def ResultIter(cur):
             yield result
 
 
-if __name__ == "__main__":
-    import tumblrmapper
-    SCRIPTDIR = os.path.dirname(__file__) + os.sep
-    args = tumblrmapper.parse_args()
-    tumblrmapper.setup_config(args)
+def lookup_blog_for_hash_in_blogs(con, _hash):
+    """Returns a list of blogs which have this hash as a potential hash
+    in their hash colum"""
+    cur = con.cursor()
+    try:
+        cur.execute(r"""
+select blog_name, hash, inline_hash from blogs
+where hash similar to '%?,?""" + _hash + r""",?%?'
+or inline_hash similar to '%?,?""" + _hash + r""",?%?';
+""")
+        #[(blogname, hash, inlinehash), (blogname, hash, inlinehash), (blogname, hash, inlinehash)]
+        return cur.fetchall()
+    except BaseException as e:
+        logging.error(f"Exception when lookup hash {_hash}: {e}")
+    finally:
+        con.rollback()
 
-    # archives_toload = SCRIPTDIR +  "tools/1280_files_list.txt"
-    database = Database(db_filepath=instances.config.get('tumblrmapper', 'db_filepath')
+
+def get_blog_name_from_reversed_lookup_in_urls(con, _hash):
+    """Reversed lookup for hash in URLs and figure out the blog from reblogs remote_id
+    if the last row is empty, there was an error from tumblr and we instead only have
+    the reblogger's post"""
+
+    cur = con.cursor()
+    try:
+        cur.execute(r"""
+    select u.file_url, u.post_id, u.remote_id, b.blog_name
+from (select * from urls where file_url similar to '%tumblr\_%1""" + _hash + r"""%' escape '\' rows 5) as u
+left join posts as p on u.remote_id = p.remote_id
+left join blogs as b on b.auto_id = p.reblogged_blogname
+""")
+        return cur.fetchall()
+    except BaseException as e:
+        logging.error(f"Exception when reverse lookup {_hash}: {e}")
+    finally:
+        con.rollback()
+
+
+def get_lost_filenames(con):
+    cur = con.cursor()
+    try:
+        cur.execute(r"""select filebasename from old_1280;""")
+        return cur.fetchall()
+    except BaseException as e:
+        logging.error(f"Error while fetching lost filenames: {e}")
+    finally:
+        con.rollback()
+
+
+def fetch_corresponding_hashes(db, result_txt):
+    """lost_files are bases only one per line, result will be written """
+    con = db.connect()
+
+    # get list of lost filenames from DB
+    lost_f = get_lost_filenames(con)
+    logging.warning(f"We have currently {len(lost_f)} unique filenames to look for.")
+
+    hash_dict = {}
+
+    with open(result_txt, 'w') as result_f:
+        lost_count = 0
+        for filename in lost_f:
+            match = re_6letters_base.search(filename[0])
+            if match: #there should always be a match here anyway
+                lost_count += 1
+                if hash_dict.get(match.group(1)) is None: # already seen this hash
+                    hash_dict.setdefault(match.group(1), {'files': list(), 'blogname': set()})
+
+                 # skip anymore blog lookups if we already have done one lookup for this hash
+                if not len(hash_dict.get(match.group(1)).get('files')):
+                    blog_list = lookup_blog_for_hash_in_blogs(con, match.group(1))
+
+                    if not blog_list:
+                        # we haven't computed which blog this hash belongs to yet
+                        for row in get_blog_name_from_reversed_lookup_in_urls(con, match.group(1)):
+                            if row[-1] is None:
+                                # the api screwed up and didn't give us the remote_id
+                                continue
+                            hash_dict[match.group(1)].get('blogname').add(row[-1])
+                    else:
+                        for item in blog_list:
+                            hash_dict[match.group(1)].get('blogname').add(item[0])
+
+                hash_dict[match.group(1)].get('files').append(filename[0].strip('\n'))
+
+        logging.warning(f"Matched {lost_count} lines with regex")
+        json.dump(hash_dict, result_f, indent=True)
+
+
+
+def main(args):
+    SCRIPTDIR = os.path.dirname(__file__)
+    result_hash_pairs = SCRIPTDIR + os.sep + "tools/lost_file_blog_hash_pairs.json"
+
+    database = db_handler.Database(db_filepath=instances.config.get('tumblrmapper', 'db_filepath')
                             + os.sep + instances.config.get('tumblrmapper', 'db_filename'),
                             username=instances.config.get('tumblrmapper', 'username'),
                             password=instances.config.get('tumblrmapper', 'password'))
-    main(database)
+
+    if args.compute_hashes:
+        compute_hashes(database)
+    elif args.match_hashes:
+        fetch_corresponding_hashes(database, result_hash_pairs)
+
+
+if __name__ == "__main__":
+    import tumblrmapper
+    args = tumblrmapper.parse_args()
+    tumblrmapper.setup_config(args)
+    main(args)
+
+

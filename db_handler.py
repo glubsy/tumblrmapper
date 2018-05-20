@@ -494,7 +494,7 @@ declare variable v_blog D_BLOG_NAME;
 BEGIN
     if (:i_param = 'dead') then
     begin
-        for select first 1 (BLOG_NAME) from BLOGS where (((HEALTH = 'DEAD') and (CRAWLING != 1)) 
+        for select first 1 (BLOG_NAME) from BLOGS where (((HEALTH = 'DEAD') and (CRAWLING != 1))
         or ((HEALTH = 'WIPED' and TOTAL_POSTS <= 2) and (CRAWLING != 1))) into :v_blog do
         begin
             update blogs set CRAWLING = 1 where blogs.blog_name = :v_blog; --avoid rerolling it
@@ -721,6 +721,7 @@ end""")
 def update_db_with_archives(database, archivepath, use_pickle=True):
     """Reads the trimmed archive list and updates DB table OLD_1280"""
     con = database.connect()
+    delete_all_1280_archives(con)
     cur = con.cursor()
     t0 = time.time()
     dupecount = 0
@@ -756,6 +757,19 @@ while inserting archives. Inserted {2} new items."
     t1 = time.time()
     logging.warning(BColors.BLUE + "Inserting records into OLD_1280 Took %.2f ms"
                   % (1000*(t1-t0)) + BColors.ENDC)
+
+
+def delete_all_1280_archives(con):
+    """Remove all records in 1280_archives table"""
+    cur = con.cursor()
+    print("Removing all 1280 archives")
+    try:
+        cur.execute(r'delete from OLD_1280;')
+    except BaseException as e:
+        logging.debug(f'Error while deleting 1280 archives: {e}')
+    finally:
+        con.commit()
+    print("Removed all from 1280 archives")
 
 
 # def populate_db_with_archives(database, archivepath):
@@ -861,7 +875,7 @@ def fetch_random_blog(database, con):
 
 
 def fetch_all_blog_s_posts(database, con, priority='dead'):
-    """ Queries DB for either a dead blog or blog sorted by priority and returns 
+    """ Queries DB for either a dead blog or blog sorted by priority and returns
     all rows of posts and reblogs. priority=[dead|priority] to fetch by either.
     returns
     (O_POST_ID , O_REMOTE_ID, O_ORIGIN_ID, O_REBLOGGED_ID,O_NOTES,O_ORIGIN_ID2,
@@ -1541,14 +1555,17 @@ def look_for_lost_urls(con, write_path):
     """Warning: Very long compute. Fetch all URLS which point to a file's base hash
     listed in the 1280 archive table and write a csv to the write_path"""
     cur = con.cursor()
-    print("Getting lost urls")
-    with open(write_path, 'w') as f:
+    logging.warning("Getting lost urls")
+    counter = 0
+    t0 = time.time()
+    with open(os.sep + write_path + "found_urls_in_db" + time.strftime('%Y%m%d_%H%M%S'), 'w') as f:
         try:
-            cur.execute(r"select a.filebasename, b.file_url from OLD_1280 a join urls b on b.FILE_URL like '%'||a.FILEBASENAME||'%' ROWS 2")
+            cur.execute(r"""select a.filebasename, b.file_url from OLD_1280 a join urls b on b.FILE_URL like '%'||a.FILEBASENAME||'%'""")
             while True:
                 results = cur.fetchmany()
                 if not results:
                     break
+                counter += 1
                 for filebasename, url in results:
                     f.write(f'{filebasename}\t{url}\n')
 
@@ -1557,30 +1574,18 @@ def look_for_lost_urls(con, write_path):
             pass
         finally:
             con.rollback()
-
-
-def delete_all_1280_archives(db,con):
-    """Remove all records in 1280_archives table"""
-    cur = con.cursor()
-    print("Removing all 1280 archives")
-    try:
-        cur.execute(r'delete from OLD_1280;')
-    except:
-        pass
-    finally:
-        con.commit()
-    print("Removed all from 1280 archives")
+    logging.warning(f"{BColors.BLUE}Found {counter} urls in {(time.time() - t0):.2f} sec.{BColors.ENDC}")
 
 
 if __name__ == "__main__":
     import tumblrmapper
-    SCRIPTDIR = os.path.dirname(__file__) + os.sep
+    SCRIPTDIR = os.path.dirname(__file__)
     args = tumblrmapper.parse_args()
     tumblrmapper.setup_config(args)
 
-    blogs_toscrape = SCRIPTDIR + "tools/blogs_toscrape_test.txt"
-    archives_toload = SCRIPTDIR +  "tools/1280_files_list.txt"
-    found_urls_in_db_txt = SCRIPTDIR + "tools/found_urls_in_db.txt"
+    blogs_toscrape = SCRIPTDIR + os.sep + "tools/blogs_toscrape_test.txt"
+    archives_toload = SCRIPTDIR + os.sep +  "tools/1280_files_list.txt"
+    found_urls_in_db_path = SCRIPTDIR + os.sep + "tools"
     database = Database(db_filepath=instances.config.get('tumblrmapper', 'db_filepath')
                             + os.sep + instances.config.get('tumblrmapper', 'db_filename'),
                             username=instances.config.get('tumblrmapper', 'username'),
@@ -1592,6 +1597,6 @@ if __name__ == "__main__":
     # populate_db_with_blogs(database, blogs_toscrape)
     # Optional archives too
     # populate_db_with_archives(database, archives_toload)
-    look_for_lost_urls(con, found_urls_in_db_txt)
+    look_for_lost_urls(con, found_urls_in_db_path)
 
     # print('FILTERED_URL_GLOBAL_COUNT: {0}'.format(len(FILTERED_URL_GLOBAL_COUNT)))

@@ -19,6 +19,7 @@ import db_handler
 import api_keys
 import instances
 import archive_lists
+import hashes
 from proxies import ProxyScanner
 from constants import BColors
 
@@ -61,6 +62,14 @@ def parse_args():
                 help="Try to populate BLOGS table with new blogs: all\
 blogs which have appeared in the notes of posts that belonged to either dead blogs (reblogs) \
 or blogs sorted by priority (regular posts). value=[dead|priority]")
+
+    parser.add_argument('-q', '--compute_hashes', action="store_true", default=False,
+                help="For each blog, compute hashes based on filenames belonging \
+to respective posts, and add them to the hashes columns in DB.")
+    parser.add_argument('-z', '--match_hashes', action="store_true", default=False,
+                help="Group all lost file basenames by their blog hashes and\
+attempts to match them to known hashes in hash column in DB")
+
 
     parser.add_argument('-p', '--proxies', action="store_true", default=False,
                         help="Use randomly selected proxies")
@@ -166,7 +175,7 @@ def process_notes(db, lock, db_update_lock, pill2kill, priority):
 
         while not pill2kill.is_set():
             with db_update_lock:
-                posts_rows = db_handler.fetch_dead_blogs_posts(db, con, priority=priority)
+                posts_rows = db_handler.fetch_all_blog_s_posts(db, con, priority=priority)
             if len(posts_rows) == 0:
                 break
             if posts_rows[0][0] == 0: # o_post_id
@@ -1196,8 +1205,12 @@ def main(args):
             logging.warning(BColors.BLUEOK + BColors.GREEN +
             "Done inserting archives" + BColors.ENDC)
 
-        sys.exit(0)
+        return
 
+    # modules:
+    if args.compute_hashes or args.match_hashes:
+        hashes.main(args) # FIXME: pass file to write from config as argument too
+        return
 
     instances.my_args = args
 
@@ -1248,17 +1261,17 @@ def main(args):
     t.start()
     worker_threads.append(t)
 
-    args = (db, lock, db_update_lock, pill2kill)
+    thread_args = (db, lock, db_update_lock, pill2kill)
 
-    if args.scrape_notes:
+    if instances.my_args.scrape_notes:
         tgt = process_notes
-        args = args + (args.scrape_notes,)
+        thread_args = thread_args + (args.scrape_notes,)
     else:
         tgt = process
 
     for _ in range(0, THREADS):
 
-        t = threading.Thread(target=tgt, args=args)
+        t = threading.Thread(target=tgt, args=thread_args)
         worker_threads.append(t)
         # t.daemon = True
         t.start()

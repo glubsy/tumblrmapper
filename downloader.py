@@ -190,10 +190,11 @@ if __name__ == '__main__':
     
     myargs = []
 
-    myargs.append(SCRIPTDIR + os.sep + 'tools/found_raw_for_1280_brute.txt')
+    # the actual download list
+    myargs.append(SCRIPTDIR + os.sep + 'tools/found_urls_in_db.txt')
 
     database = {'filepath': "/home/firebird/tumblrmapper.fdb",
-                        'username': "sysdba", 'password': "masterkey"}
+                        'username': "sysdba", 'password': r"""masterkey"""}
     myargs.append(database)
 
     main(myargs)
