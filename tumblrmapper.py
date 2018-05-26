@@ -58,6 +58,8 @@ def parse_args():
                     help="Populate DB with blogs")
     parser.add_argument('-f', '--ignore_duplicates', action="store_true", default=False,
                 help="Ignore duplicate posts, keep scraping away")
+    parser.add_argument('-w', '--record_context', action="store_true", default=False,
+                help="Don't skip recording context of posts in DB.")
     parser.add_argument('-i', '--scrape_notes', action="store", default=None,
                 help="Try to populate BLOGS table with new blogs: all\
 blogs which have appeared in the notes of posts that belonged to either dead blogs (reblogs) \
@@ -69,6 +71,15 @@ to respective posts, and add them to the hashes columns in DB.")
     parser.add_argument('-z', '--match_hashes', action="store_true", default=False,
                 help="Group all lost file basenames by their blog hashes and\
 attempts to match them to known hashes in hash column in DB")
+
+    parser.add_argument('-w', '--reset_blogs_by_hash', action="store_true", default=False,
+                help="reset status for blogs for which we have found their corresponding\
+hashes in the hashes module, listed in the json. Then re-scrape them deep to add\
+all blogs found in notes from the reblogs.")
+
+    parser.add_argument('-g', '--deep_scrape', action="store_true", default=False,
+                help="scrape notes and reblogs info from blogs by priority, add\
+blogs found in notes and reblogs to gathered blogs in BLOGS table.")
 
 
     parser.add_argument('-p', '--proxies', action="store_true", default=False,
@@ -167,10 +178,15 @@ def process_notes(db, lock, db_update_lock, pill2kill, priority):
     for each reblog of that blog, request the post through the REST API
     and add all blogs found in the notes to our BLOGS table for later scraping"""
 
+    deep_scrape = {}
+    if instances.my_args.deep_scrape:
+        deep_scrape['notes_info'] = True
+        deep_scrape['reblog_info'] = True
+
     con = db.connect()
     while not pill2kill.is_set():
 
-        requester = Requester()
+        requester = Requester(pill2kill=pill2kill)
         update = UpdatePayload()
 
         while not pill2kill.is_set():
@@ -199,7 +215,7 @@ reblogs for {posts_rows[0][-1]}{BColors.ENDC}')
                 break
             if row[1] is not None and row[1] in rid_cache:
                 continue
-            if row[1] is None and row[0] is not None: 
+            if row[1] is None and row[0] is not None:
                 # this is an original post! #TODO scrape them too later, but only for NON-DEAD blogs
                 # TODO: if row[1] is none, scrape the blog present in row[-1] because it's the actual origin blogname!
                 # that blog probably died or got wiped and we have some posts from it
@@ -211,7 +227,8 @@ reblogs for {posts_rows[0][-1]}{BColors.ENDC}')
  {posts_rows.index(row) + 1}/{len(posts_rows)}{BColors.ENDC}')
 
             try:
-                post_get_wrapper(requester, db_update_lock, update, post_id=row[0])
+                post_get_wrapper(requester, db_update_lock, update, deep_scrape,
+                post_id=row[0])
             except:
                 rid_cache.remove(row[1])
                 continue
@@ -230,7 +247,7 @@ reblogs for {posts_rows[0][-1]}{BColors.ENDC}')
             with db_update_lock:
                 for blogname in blogslist:
                     try:
-                        db_handler.insert_blogname_gathered(db, con, blogname, 'new')
+                        db_handler.insert_blogname_gathered(con, blogname, 'new')
                     except:
                         pass
                 try:
@@ -243,7 +260,7 @@ for {posts_rows[0][-1]}{BColors.ENDC}")
 
 
 
-def post_get_wrapper(requester, db_update_lock, update, post_id):
+def post_get_wrapper(requester, db_update_lock, update, deep_scrape, post_id):
     """Handle exceptions"""
 
     update.__init__()
@@ -251,7 +268,8 @@ def post_get_wrapper(requester, db_update_lock, update, post_id):
     while not update.valid and attempts < 3:
         attempts += 1
         try:
-            requester.api_get_request(db_update_lock, update, post_id=post_id)
+            requester.api_get_request(db_update_lock, update, deep_scrape,
+            post_id=post_id)
             if update.valid:
                 return
             else:
@@ -285,6 +303,11 @@ def parse_post_json(update):
 def process(db, lock, db_update_lock, pill2kill):
     """Thread process"""
 
+    deep_scrape = {}
+    if instances.my_args.deep_scrape:
+        deep_scrape['notes_info'] = True
+        deep_scrape['reblog_info'] = True
+
     con = db.connect()
     blog = TumblrBlog()
 
@@ -303,16 +326,14 @@ def process(db, lock, db_update_lock, pill2kill):
 more to process?{BColors.ENDC}")
             break
 
-
         # instances.sleep_here(0,1)
         update = UpdatePayload()
-
         # blog.database = db
         # blog.con = con
 
         if blog.crawl_status == 'new': # not yet updated
             try:
-                blog_status_check(db, con, lock, blog, update)
+                blog_status_check(db, con, lock, blog, update, deep_scrape)
             except BaseException as e:
                 logging.debug(f'{BColors.FAIL}Exception while status_check {e}{BColors.ENDC}')
                 continue
@@ -332,7 +353,7 @@ more to process?{BColors.ENDC}")
 
         elif blog.crawl_status == 'resume':
             try:
-                blog_status_check(db, con, lock, blog, update)
+                blog_status_check(db, con, lock, blog, update, deep_scrape)
             except BaseException as e:
                 logging.debug(f'{BColors.FAIL}Exception while status_check {e}{BColors.ENDC}')
                 continue
@@ -343,7 +364,7 @@ more to process?{BColors.ENDC}")
 
         elif blog.crawl_status == 'DONE':
             try:
-                blog_status_check(db, con, lock, blog, update)
+                blog_status_check(db, con, lock, blog, update, deep_scrape)
             except BaseException as e:
                 logging.debug(f'{BColors.FAIL}Exception while status_check {e}{BColors.ENDC}')
                 continue
@@ -370,7 +391,7 @@ more to process?{BColors.ENDC}")
 
                 try:
                     api_get_request_wrapper(db, con, lock, blog,
-                    update, blog.crawl_status)
+                    update, deep_scrape, blog.crawl_status)
                 except BaseException as e:
                     logging.debug(BColors.FAIL
                      + "{0} Exception in api_get_request_wrapper from loop! {1!r}"
@@ -494,7 +515,7 @@ def check_blog_end_of_posts(db, con, lock, blog):
 
 
 
-def api_get_request_wrapper(db, con, lock, blog, update, crawl_status, post_id=None):
+def api_get_request_wrapper(db, con, lock, blog, update, deep_scrape, crawl_status, post_id=None):
     """Updates the update, valid or invalid"""
 
     # Retry getting /posts until either 404 or success
@@ -503,7 +524,8 @@ def api_get_request_wrapper(db, con, lock, blog, update, crawl_status, post_id=N
     while not update.valid and attempts < 3:
         attempts += 1
         try:
-            blog.api_get_request(lock, update, api_key=None, reqtype="posts", post_id=post_id)
+            blog.api_get_request(lock, update, deep_scrape, api_key=None, reqtype="posts",
+            post_id=post_id)
             if update.valid:
                 return
             else:
@@ -518,6 +540,7 @@ def api_get_request_wrapper(db, con, lock, blog, update, crawl_status, post_id=N
     logging.error(f"{BColors.RED}{blog.name} Too many request attempts or server \
 issue during request. Skipping for now. {BColors.ENDC}")
     raise BaseException("Too many request attempts or server issue during request")
+
 
 
 def discrepancy_check(db, con, blog):
@@ -536,7 +559,7 @@ Getting actual posts_scraped from DB"
 
 
 
-def blog_status_check(db, con, lock, blog, update):
+def blog_status_check(db, con, lock, blog, update, deep_scrape):
     """Returns True on update validated, otherwise false"""
 
     if blog.crawl_status == 'new':
@@ -547,7 +570,7 @@ def blog_status_check(db, con, lock, blog, update):
     discrepancy_check(db, con, blog)
 
     try:
-        api_get_request_wrapper(db, con, lock, blog, update, blog.crawl_status)
+        api_get_request_wrapper(db, con, lock, blog, update, deep_scrape, blog.crawl_status)
     except BaseException as e:
         logging.debug(f'{BColors.FAIL}Exception while api_get_request_wrapper {e}{BColors.ENDC}')
         raise
@@ -670,12 +693,10 @@ def blog_generator(db, con, lock, blog, pill2kill):
     """Queries DB for a blog that is either new or needs update.
     Returns a TumblrBlog() object instance with no proxy attached to it."""
 
-    blog.__init__()
+    blog.__init__(pill2kill=pill2kill)
     with lock:
         blog.name, blog.offset, blog.health, blog.crawl_status, blog.total_posts, \
 blog.posts_scraped, blog.last_checked, blog.last_updated = db_handler.fetch_random_blog(db, con)
-
-    blog.pill2kill = pill2kill
 
     if not blog.name:
         logging.debug(f"{BColors.RED}No blog fetched in blog_generator(){BColors.ENDC}")
@@ -711,7 +732,7 @@ class TumblrBlog:
     'api_key_object_ref', 'requests_session', 'current_json', 'update',
     'new_posts', 'temp_disabled', 'eof', 'pill2kill', 'db_response']
 
-    def __init__(self, *args):
+    def __init__(self, *args, **kwargs):
         self.name = None
         self.total_posts = 0
         self.posts_scraped = 0
@@ -729,7 +750,7 @@ class TumblrBlog:
         self.new_posts = 0
         self.temp_disabled = False
         self.eof = False
-        self.pill2kill = None
+        self.pill2kill = kwargs.get('pill2kill')
         self.db_response = None
 
     def init_session(self):
@@ -843,7 +864,7 @@ seconds until {time.ctime(e.next_date_avail)}{BColors.ENDC}")
 
 
 
-    def api_get_request(self, lock, updateobj, api_key=None, reqtype="posts", post_id=None):
+    def api_get_request(self, lock, updateobj, deep_scrape, api_key=None, reqtype="posts", post_id=None):
         """Returns requests.response object, reqype=[posts|info]"""
         if not api_key:
             api_key = self.api_key_object_ref
@@ -858,10 +879,12 @@ is disabled, trying to get a new one{BColors.ENDC}")
         params = {}
         if self.offset is not None and self.offset != 0:
             params['offset'] = self.offset
-        if post_id is not None:
+            if deep_scrape:
+                params.update(deep_scrape)
+        if post_id is not None: # we ask for just a post_id
             params['id'] = post_id
-            params['notes_info'] = True
-            #params['reblog_info'] = True
+            if deep_scrape:
+                params.update(deep_scrape)
 
         instances.sleep_here(0, 10)
         attempt = 0
@@ -875,8 +898,7 @@ is disabled, trying to get a new one{BColors.ENDC}")
             .format(self.name, self.requests_session.proxies,
             self.requests_session.headers))
 
-        url = 'https://api.tumblr.com/v2/blog/{}/{}?api_key={}'.format(self.name,
-        reqtype, api_key.api_key)
+        url = f'https://api.tumblr.com/v2/blog/{self.name}/{reqtype}?api_key={api_key.api_key}'
 
         if params:
             for param in params.keys():
@@ -889,7 +911,10 @@ is disabled, trying to get a new one{BColors.ENDC}")
                 "{0} GET ip: {1} url: {2}".format(self.name,
                 self.proxy_object.get('ip_address'), url) + BColors.ENDC)
 
-                response = self.requests_session.get(url=url, timeout=10)
+                if reqtype == "posts": # no need OAuth
+                    response = self.requests_session.get(url=url, timeout=10)
+                else: # need OAuth for "likes" or "followers"
+                    response = self.requests_session.get(url=url, oauth=api_key.oauth, timeout=10)
 
                 api_keys.inc_key_request(api_key)
 
@@ -925,6 +950,7 @@ removing proxy {self.proxy_object.get('ip_address')} (continue){BColors.ENDC}")
                 #else: self.get_new_proxy(lock)
                 continue
             except:
+                logging.debug(f"{BColors.FAIL}Uncaught exception in request! (continue){BColors.ENDC}")
                 continue
             break
 
@@ -1040,7 +1066,7 @@ Rolling for a new API key.\n{response_json}{BColors.ENDC}")
                     raise
 
                 update.valid = False
-                return #FIXME returning with a now valid api_key only to reroll the same -> twice 
+                return #FIXME returning with a now valid api_key only to reroll the same -> twice
 
 
             logging.error(BColors.FAIL +
@@ -1066,8 +1092,8 @@ Rolling for a new API key.\n{response_json}{BColors.ENDC}")
 
 class Requester(TumblrBlog):
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, *args, **kwargs):
+        super().__init__(**kwargs)
         self.attach_proxy()
         # init requests.session with headers
         self.init_session()
@@ -1119,7 +1145,7 @@ def thread_good_cleanup(db, con, blog):
     .format(blog.name) + BColors.ENDC )
 
     blog.crawling = 0
-    # db_handler.update_crawling(db, con, blog)
+    # db_handler.update_crawling(con, blog)
     db_handler.update_blog_info(db, con, blog, ignore_response=True)
 
 
@@ -1159,6 +1185,29 @@ def setup_config(args):
 
     logging.debug("Debugging Enabled.")
     return rootLogger
+
+
+def init_global_api_keys():
+    # === API KEY ===
+    # list of APIKey objects
+    instances.api_keys = api_keys.get_api_key_object_list(SCRIPTDIR + os.sep
+    + instances.config.get('tumblrmapper', 'api_keys'))
+
+    # Initialize use counter for API keys
+    api_keys.threaded_buckets()
+
+
+def init_global_proxies(THREADS, pill2kill):
+    # === PROXIES ===
+    # Get proxies from free proxies site
+    instances.proxy_scanner = ProxyScanner(proxies_path=instances.config.get('tumblrmapper', 'proxies'))
+
+    if len(instances.proxy_scanner.proxy_ua_dict.get('proxies')) <= THREADS:
+        instances.proxy_scanner.get_proxies_from_internet(minimum=THREADS, pill2kill=pill2kill)
+
+    logging.debug(f"Will use this proxy listcycle: {instances.proxy_scanner.proxy_ua_dict.get('proxies')}")
+
+    # fresh_proxy_dict = {'proxies': [{'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36(KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '47.206.51.67:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.4; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2225.0 Safari/537.36', 'disabled': False}, {'ip_address': '92.53.73.138:8118', 'user_agent': 'Mozilla/5.0 (Windows NT6.1; WOW64; rv:21.0) Gecko/20130331 Firefox/21.0', 'disabled': False}, {'ip_address': '45.77.247.164:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '80.211.4.187:8080', 'user_agent': 'Mozilla/5.0 (Microsoft Windows NT 6.2.9200.0); rv:22.0) Gecko/20130405 Firefox/22.0', 'disabled': False}, {'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '66.82.123.234:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1985.67 Safari/537.36', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64;x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh;Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '52.164.249.198:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.2309.372 Safari/537.36', 'disabled': False}, {'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '47.206.51.67:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.4; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2225.0 Safari/537.36', 'disabled':False}, {'ip_address': '92.53.73.138:8118', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:21.0) Gecko/20130331 Firefox/21.0', 'disabled': False}, {'ip_address': '45.77.247.164:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '80.211.4.187:8080', 'user_agent': 'Mozilla/5.0 (Microsoft Windows NT 6.2.9200.0); rv:22.0) Gecko/20130405 Firefox/22.0', 'disabled': False}, {'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '191.34.157.243:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.124 Safari/537.36', 'disabled': False}, {'ip_address': '61.91.251.235:8080', 'user_agent': 'Opera/9.80 (Windows NT 5.1; U; zh-tw) Presto/2.8.131 Version/11.10', 'disabled': False}, {'ip_address': '41.190.33.162:8080', 'user_agent': 'Mozilla/5.0 (X11; CrOS i686 4319.74.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/29.0.1547.57 Safari/537.36', 'disabled': False}, {'ip_address': '80.48.119.28:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '213.99.103.187:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/28.0.1464.0 Safari/537.36', 'disabled': False}, {'ip_address': '141.105.121.181:80', 'user_agent': 'Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 7.0; InfoPath.3; .NET CLR 3.1.40767; Trident/6.0; en-IN)', 'disabled': False}]}
 
 
 def main(args):
@@ -1207,41 +1256,16 @@ def main(args):
 
         return
 
-    # modules:
-    if args.compute_hashes or args.match_hashes:
-        hashes.main(args) # FIXME: pass file to write from config as argument too
-        return
-
     instances.my_args = args
-
-    # === API KEY ===
-    # list of APIKey objects
-    instances.api_keys = api_keys.get_api_key_object_list(SCRIPTDIR + os.sep 
-    + instances.config.get('tumblrmapper', 'api_keys'))
-
-    # === PROXIES ===
-    # Get proxies from free proxies site
-    instances.proxy_scanner = ProxyScanner(proxies_path=instances.config.get('tumblrmapper', 'proxies'))
-
-    if len(instances.proxy_scanner.proxy_ua_dict.get('proxies')) <= THREADS:
-        instances.proxy_scanner.get_proxies_from_internet(minimum=THREADS)
-
-    logging.debug(f"Will use this proxy listcycle: {instances.proxy_scanner.proxy_ua_dict.get('proxies')}")
-
-    # fresh_proxy_dict = {'proxies': [{'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36(KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '47.206.51.67:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.4; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2225.0 Safari/537.36', 'disabled': False}, {'ip_address': '92.53.73.138:8118', 'user_agent': 'Mozilla/5.0 (Windows NT6.1; WOW64; rv:21.0) Gecko/20130331 Firefox/21.0', 'disabled': False}, {'ip_address': '45.77.247.164:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '80.211.4.187:8080', 'user_agent': 'Mozilla/5.0 (Microsoft Windows NT 6.2.9200.0); rv:22.0) Gecko/20130405 Firefox/22.0', 'disabled': False}, {'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '66.82.123.234:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1985.67 Safari/537.36', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64;x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh;Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '52.164.249.198:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 5.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.2309.372 Safari/537.36', 'disabled': False}, {'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '47.206.51.67:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.4; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2225.0 Safari/537.36', 'disabled':False}, {'ip_address': '92.53.73.138:8118', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:21.0) Gecko/20130331 Firefox/21.0', 'disabled': False}, {'ip_address': '45.77.247.164:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '80.211.4.187:8080', 'user_agent': 'Mozilla/5.0 (Microsoft Windows NT 6.2.9200.0); rv:22.0) Gecko/20130405 Firefox/22.0', 'disabled': False}, {'ip_address': '89.236.17.106:3128', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '42.104.84.106:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1944.0 Safari/537.36', 'disabled': False}, {'ip_address': '61.216.96.43:8081', 'user_agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36', 'disabled': False}, {'ip_address': '185.119.56.8:53281', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/27.0.1453.93 Safari/537.36', 'disabled': False}, {'ip_address': '191.34.157.243:8080', 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.124 Safari/537.36', 'disabled': False}, {'ip_address': '61.91.251.235:8080', 'user_agent': 'Opera/9.80 (Windows NT 5.1; U; zh-tw) Presto/2.8.131 Version/11.10', 'disabled': False}, {'ip_address': '41.190.33.162:8080', 'user_agent': 'Mozilla/5.0 (X11; CrOS i686 4319.74.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/29.0.1547.57 Safari/537.36', 'disabled': False}, {'ip_address': '80.48.119.28:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.17 (KHTML, like Gecko) Chrome/24.0.1312.60 Safari/537.17', 'disabled': False}, {'ip_address': '213.99.103.187:8080', 'user_agent': 'Mozilla/5.0 (Windows NT 6.2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/28.0.1464.0 Safari/537.36', 'disabled': False}, {'ip_address': '141.105.121.181:80', 'user_agent': 'Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 7.0; InfoPath.3; .NET CLR 3.1.40767; Trident/6.0; en-IN)', 'disabled': False}]}
 
     # === DATABASE ===
     db = db_handler.Database(db_filepath=instances.config.get('tumblrmapper', 'db_filepath')
                             + os.sep + instances.config.get('tumblrmapper', 'db_filename'),
                             username=instances.config.get('tumblrmapper', 'username'),
                             password=instances.config.get('tumblrmapper', 'password'))
-    con = db.connect()
-    db_handler.update_crawling(db, con) # reset crawling values in DB
-    db.close_connection(con)
 
 
     os.nice(instances.config.getint('tumblrmapper', 'nice_level'))
-    # === BLOG ===
 
     worker_threads = []
 
@@ -1253,14 +1277,30 @@ def main(args):
     signal_handler = SignalHandler(pill2kill, worker_threads)
     signal.signal(signal.SIGINT, signal_handler)
 
-    api_keys.threaded_buckets()
-
-    # q = []
+    # Thread handling keyboard input to interrupt
     t = threading.Thread(target=input_thread, args=(pill2kill, worker_threads))
     t.daemon = True
     t.start()
     worker_threads.append(t)
 
+    # Modules / plugins:
+    if args.compute_hashes or args.match_hashes:
+        init_global_api_keys()
+        init_global_proxies(THREADS=1, pill2kill=pill2kill)
+        kwargs_module = dict(pill2kill=pill2kill, lock=lock, db=db)
+        hashes.main(args, kwargs_module) # FIXME: pass file to write from config as argument too
+        return
+
+    init_global_api_keys()
+
+    init_global_proxies(THREADS, pill2kill)
+
+    # Reset crawling status for all blogs in DB
+    con = db.connect()
+    db_handler.update_crawling(con)
+    db.close_connection(con)
+
+    # Common thread arguments
     thread_args = (db, lock, db_update_lock, pill2kill)
 
     if instances.my_args.scrape_notes:
@@ -1270,7 +1310,6 @@ def main(args):
         tgt = process
 
     for _ in range(0, THREADS):
-
         t = threading.Thread(target=tgt, args=thread_args)
         worker_threads.append(t)
         # t.daemon = True

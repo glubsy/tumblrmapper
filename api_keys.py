@@ -10,6 +10,13 @@ from itertools import cycle
 # import tumblrmapper
 from constants import BColors
 import instances
+try:
+    from requests_oauthlib import OAuth1
+    OAUTHLIB_AVAIL = True
+except ImportError:
+    OAUTHLIB_AVAIL = False
+
+
 
 # logging = logging.getLogger()
 
@@ -92,6 +99,8 @@ def get_api_key_object_list(api_keys_filepath):
         api_key_list_cycle.append(APIKey(
                             api_key=item.get('api_key'),
                             secret_key=item.get('secret_key'),
+                            oauth_token=item.get('oauth_token'),
+                            oauth_secret=item.get('oauth_secret'),
                             hour_check_time=item.get('hour_check_time'),
                             day_check_time=item.get('day_check_time'),
                             last_written_time=item.get('last_written_time'),
@@ -131,6 +140,11 @@ def write_api_keys_to_json(keylist=None, myfilepath=None):
     for obj in keylist:
         obj.last_written_time = int(time.time())
         api_dict['api_keys'].append(obj.__dict__)
+    
+    # Remove field holding a non serializable object
+    for dict_repr in api_dict['api_keys']:
+        if dict_repr.get('oauth') is not None:
+            del dict_repr['oauth']
 
     # DEBUG
     # print(BColors.MAGENTA + "write_api_keys_to_json: {0}"\
@@ -229,6 +243,8 @@ class APIKey:
     def __init__(self, *args, **kwargs):
         self.api_key = kwargs.get('api_key')
         self.secret_key = kwargs.get('secret_key')
+        self.oauth_token = kwargs.get('oauth_token')
+        self.oauth_secret = kwargs.get('oauth_secret')
         self.hour_check_time = kwargs.get('hour_check_time', int())
         self.day_check_time = kwargs.get('day_check_time', int())
         self.last_used_hour = kwargs.get('last_used_hour', int(time.time()))
@@ -244,7 +260,18 @@ class APIKey:
         self.bucket_hour = kwargs.get('bucket_hour', float(1000))
         self.bucket_day = kwargs.get('bucket_day', float(5000))
         self.print_count = 0
+        self.oauth = self.init_oauth()
 
+    def init_oauth(self):
+        if OAUTHLIB_AVAIL:
+            return OAuth1(
+            self.api_key,
+            client_secret=self.secret_key,
+            resource_owner_key=self.oauth_token,
+            resource_owner_secret=self.oauth_secret
+            )
+        logging.debug(f"requests_oauth was not found, no oauth member available.")
+        return None
 
     def disable_until(self, duration=3600):
         """duration in second, computes date from now until it's disabled"""

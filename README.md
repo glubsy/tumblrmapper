@@ -54,6 +54,7 @@ lxml
 
 [re2](https://github.com/andreasvc/pyre2) otherwise falls back to re, but can lead to a runaway process
 
+requests-oauth in order to get followers / likes on a blog through OAuth (need manual setup of keys first)
 
 ## TODO:
 

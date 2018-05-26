@@ -903,7 +903,7 @@ def update_remote_ids_with_notes_count(db, con, rid, name, count):
         con.commit()
 
 
-def insert_blogname_gathered(db, con, name, crawling_status=None):
+def insert_blogname_gathered(con, name, crawling_status=None):
     """Inserting a gathered blog with crawling status (default null), or
     updating an existing blog with crawling status"""
     cur = con.cursor()
@@ -986,26 +986,38 @@ def reset_to_brand_new(database, con, blog, reset_type):
         con.commit()
 
 
-def update_crawling(database, con, blog=None):
+def update_crawling(con, blog=None):
     """ Sets blog crawling status to 0 or 1, if blog=None, reset all to 0"""
 
     cur = con.cursor()
     if not blog:
-        cur.execute('''update BLOGS set CRAWLING = 0 where CRAWLING is not null;''')
-        cur.execute('''update BLOGS set CRAWL_STATUS = 'new' where CRAWL_STATUS = 'init';''')
-        logging.info(BColors.BLUEOK + BColors.BLUE
-        + "Reset crawl_status & crawling for all" + BColors.ENDC)
+        try:
+            logging.warning(f"Resetting crawling_status for BLOGS table")
+            cur.execute(r"""update BLOGS set CRAWLING = 0 where CRAWLING is not null;""")
+            cur.execute(r"""update BLOGS set CRAWL_STATUS = 'new' where CRAWL_STATUS = 'init';""")
+            logging.info(BColors.BLUEOK + BColors.BLUE
+            + "Reset crawl_status & crawling for all" + BColors.ENDC)
+        except BaseException as e:
+            logging.error(f"Exception while resetting crawling status: {e}")
+        finally:
+            con.commit()
     else:
-        cur.execute('execute procedure update_crawling_blog_status(?,?);',
-                    (blog.name, blog.crawling))
-        logging.debug(BColors.BLUEOK + BColors.BLUE
-        + "{0} set crawling to {1}".format(blog.name, blog.crawling) + BColors.ENDC)
-    con.commit()
+        try:
+            logging.warning(f"Resetting crawling_status for {blog} in BLOGS table")
+            cur.execute(r"""execute procedure update_crawling_blog_status(?,?);""",
+                        (blog.name, blog.crawling))
+            logging.debug(BColors.BLUEOK + BColors.BLUE
+            + "{0} set crawling to {1}".format(blog.name, blog.crawling) + BColors.ENDC)
+        except BaseException as e:
+            logging.error(f"Exception while resetting crawling status: {e}")
+        finally:
+            con.commit()
 
 
 
 def insert_posts(database, con, blog, update):
-    """ Returns a tuple of number of posts processed, and dupe errors """
+    """ Returns a tuple of number of posts processed, and dupe errors.
+    CALL ONLY WITH A LOCK!"""
     cur = con.cursor()
     t0 = time.time()
     added = 0
@@ -1015,7 +1027,7 @@ def insert_posts(database, con, blog, update):
     for post in update.posts_response: # list of dicts
 
         try:
-            get_remote_id_and_context(post)
+            get_post_details(post)
         except:
             con.commit()
             raise
@@ -1035,7 +1047,7 @@ def insert_posts(database, con, blog, update):
         results = inserted_urls(cur, post)
         errors += results[1]
 
-    else:
+    else: # no problem occured
         logging.debug(BColors.BLUE + "COMMITTING" + BColors.ENDC)
         con.commit()
 
@@ -1059,7 +1071,7 @@ def get_scraped_post_num(database, con, blog):
     return cur.fetchone()[0]
 
 
-def get_remote_id_and_context(post):
+def get_post_details(post):
     """if there is no content_raw -> get 'reblog' instead (it's the same! but for original post)"""
 
     full_context = ''
@@ -1074,7 +1086,8 @@ def get_remote_id_and_context(post):
         'answer':                post.get('answer'),    # type: answer
         'question':              post.get('question'),    # type: answer
         'link_url':              post.get('link_url'), # type: photos
-        'content_raw':           ''}
+        'content_raw':           ''
+        }
 
     trail          = post.get('trail')
     reblogged_name = None
@@ -1190,12 +1203,21 @@ with more recently updated version is_current_item: {3}\n{4}\n----------\n{5}"
     # attr['content_raw'] = longest_strings[0]
 
     attr['content_raw'] = attr.get('content_raw').replace('\n', '')
-    if attr.get('content_raw') == '':
+    if attr.get('content_raw') == '' or instances.my_args.record_context:
         attr['content_raw'] = None
 
-    post['reblogged_name']  = reblogged_name
-    post['remote_id']       = remote_id
-    post['content_raw']     = attr.get('content_raw')
+    if post.get('reblogged_root_id'): # we asked for a deep-scrape
+        post['remote_id'] = post['reblogged_root_id']
+        post['reblogged_name'] = post['reblogged_root_name']
+    elif post.get('reblogged_from_id'):
+        post['remote_id'] = post['reblogged_from_id']
+        post['reblogged_name'] = post['reblogged_from_name']
+    else:
+        post['remote_id']       = remote_id
+        post['reblogged_name']  = reblogged_name
+
+
+    post['content_raw'] = attr.get('content_raw')
     post['full_context'], post['filtered_urls'] = filter_content_raw(full_context)
 
 #     logging.warning(BColors.CYAN + "Added fields to post {0}:\n{1}:{2}\nremoteid={3}:{4}\n\
@@ -1390,8 +1412,6 @@ def htmlToText(raw_html):
     return ret
 
 
-
-
 def inserted_post(cur, post):
     """Returns True to ignore error"""
     # cur = con.cursor()
@@ -1409,15 +1429,41 @@ def inserted_post(cur, post):
     except fdb.DatabaseError as e:
         # if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != -1:
         #     e = "duplicate"
-        logging.error(BColors.FAIL + "DB ERROR" + BColors.BLUE + \
-        " post\t{0} : {1}".format(post.get('id'), e) + BColors.ENDC)
+        logging.error(f"{BColors.FAIL}DB ERROR{BColors.BLUE} post\t{post.get('id')} : {e}{BColors.ENDC}")
         errors += 1
         success = False
     except Exception as e:
-        logging.debug(BColors.FAIL + "ERROR" + \
-        " post\t{0} : {1}".format(post.get('id'), e) + BColors.ENDC)
+        logging.debug(f"{BColors.FAIL}ERROR post\t{post.get('id')} : {e}{BColors.ENDC}")
         errors += 1
         success = False
+
+    if post.get('notes'): # only if deep-scrape
+        for note in post.get('notes'):
+            if note.get('post_id'):
+                try:
+                    cur.callproc('insert_post', (
+                        note.get('post_id'),            # post_id
+                        note.get('blog_name'),          # blog_name
+                        None,                           # post_url
+                        note.get('timestamp'),          # timestamp
+                        post.get('remote_id'),          # remote_id
+                        note.get('reblogged_name')      # reblogged_blog_name
+                        ))
+                except fdb.DatabaseError as e:
+                    # if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != -1:
+                    #     e = "duplicate"
+                    logging.error(f"{BColors.FAIL}DB ERROR{BColors.BLUE} \
+post note\t{post.get('id')} : {e}{BColors.ENDC}")
+                except Exception as e:
+                    logging.debug(f"{BColors.FAIL}ERROR post note\t\
+{post.get('id')} : {e}{BColors.ENDC}")
+            elif note.get('blog_name') is not None:
+                try:
+                    cur.callproc('insert_blogname_gathered', 
+                                (note.get('blog_name'), 'new'))
+                except BaseException as e:
+                    logging.debug(f"{BColors.FAIL}error while inserting \
+{note.get('blog_name')} crawling_status: new. {e}{BColors.ENDC}")
 
     # con.commit()
     return success, errors

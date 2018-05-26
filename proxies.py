@@ -128,19 +128,19 @@ empty, getting from internet!{BColors.ENDC}")
             json.dump(data, f, indent=True)
 
 
-    def get_proxies_from_internet(self, minimum=1):
+    def get_proxies_from_internet(self, pill2kill, minimum=1):
         """Returns a dict of validated IP:UA
         returns None if fetching free list failed"""
         logging.warning(f"{BColors.CYAN}Getting new proxies from the internet!{BColors.ENDC}")
-        self.write_proxies_to_json_on_disk(self.with_threads(minimum))
+        self.write_proxies_to_json_on_disk(self.with_threads(pill2kill, minimum))
 
 
-    def with_threads(self, minimum=1):
+    def with_threads(self, pill2kill, minimum=1):
         """Use threads to test proxies and add them to the proxy_ua_dict"""
 
         # socks_proxies_list = get_free_socks_proxies("https://socks-proxy.net/", type=socks)
         attempt = 0
-        while len(self.proxy_ua_dict.get('proxies', [])) < minimum:
+        while len(self.proxy_ua_dict.get('proxies', [])) < minimum and not pill2kill.is_set():
             if attempt > 5:
                 break
 
