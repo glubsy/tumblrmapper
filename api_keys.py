@@ -39,7 +39,8 @@ class APIKeyDepleted(Exception):
 
 
 class ListCycle(list):
-    """Keeps an up to date cycle of its items"""
+    """Keeps an up to date cycle of its items. Returns None if list is empty and
+    next() has been called on it."""
 
     __slots__ = ['_iter', '_cycle', 'cur', ]
 
@@ -53,7 +54,10 @@ class ListCycle(list):
     def __next__(self):
         if self._cycle is None:
             self.gen_cycle(init=True)
-        return next(self._cycle)
+        try:
+            return next(self._cycle)
+        except StopIteration:
+            return
 
     def gen_cycle(self, init=False):
         self._cycle = self.cycle(self, init=init)
@@ -77,6 +81,9 @@ class ListCycle(list):
             while True:
                 self.cur += 1
 
+                if not len(iterable):
+                    return
+
                 if self.cur >= len(iterable):
                     self.cur = 0
 
@@ -85,8 +92,8 @@ class ListCycle(list):
             #https://amir.rachum.com/blog/2017/03/03/generator-cleanup/
             pass
         except BaseException as e:
-            logging.debug(f"{BColors.RED}Exception in cycle of ListCycle(): {e}{BColors.ENDC}")
-            traceback.print_exc
+            traceback.print_exc()
+            logging.debug(f"{BColors.RED}Exception in cycle of ListCycle() cursor={self.cur} length={len(iterable)}: {e}{BColors.ENDC}")
 
 
 def get_api_key_object_list(api_keys_filepath):
@@ -140,7 +147,7 @@ def write_api_keys_to_json(keylist=None, myfilepath=None):
     for obj in keylist:
         obj.last_written_time = int(time.time())
         api_dict['api_keys'].append(obj.__dict__)
-    
+
     # Remove field holding a non serializable object
     for dict_repr in api_dict['api_keys']:
         if dict_repr.get('oauth') is not None:

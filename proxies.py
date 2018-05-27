@@ -65,12 +65,12 @@ class ProxyScanner():
         return self.proxy_ua_dict.get('proxies')
 
 
-    def get_new_proxy(self, old_proxy=None, remove=None):
+    def get_new_proxy(self, pill2kill, old_proxy=None, remove=None):
         """ Returns a proxy from the cycle generated from the list in proxy_ua_dict
         if remove="remove", remove proxy that is unresponsive from the list and regen cycle
         if remove="blacklist", save proxy in json as blacklisted to never use it ever again"""
 
-        logging.info(f"Removing proxy {old_proxy} and getting new one.")
+        logging.info(f"Removing proxy {old_proxy} and getting a new one.")
 
         if remove == 'remove' and old_proxy is not None:
             self.proxy_ua_dict.get('proxies').remove(old_proxy)
@@ -84,7 +84,7 @@ class ProxyScanner():
         if len(self.proxy_ua_dict.get('proxies')) == 0: # if list of proxy dict is depleted
             logging.info(f"{BColors.LIGHTGREEN}{BColors.BOLD}List of proxies is \
 empty, getting from internet!{BColors.ENDC}")
-            self.get_proxies_from_internet()
+            self.get_proxies_from_internet(pill2kill)
 
         return next(self.proxy_ua_dict.get('proxies'))
 
@@ -344,6 +344,7 @@ class Proxy:
 
 if __name__ == "__main__":
     scanner = ProxyScanner()
-    json.dumps(scanner.get_proxies_from_internet(), indent=True)
+    pill2kill = threading.Event()
+    json.dumps(scanner.get_proxies_from_internet(pill2kill), indent=True)
 
     scanner.write_proxies_to_json_on_disk()

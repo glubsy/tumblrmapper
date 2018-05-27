@@ -58,7 +58,7 @@ def parse_args():
                     help="Populate DB with blogs")
     parser.add_argument('-f', '--ignore_duplicates', action="store_true", default=False,
                 help="Ignore duplicate posts, keep scraping away")
-    parser.add_argument('-w', '--record_context', action="store_true", default=False,
+    parser.add_argument('-m', '--record_context', action="store_true", default=False,
                 help="Don't skip recording context of posts in DB.")
     parser.add_argument('-i', '--scrape_notes', action="store", default=None,
                 help="Try to populate BLOGS table with new blogs: all\
@@ -186,7 +186,7 @@ def process_notes(db, lock, db_update_lock, pill2kill, priority):
     con = db.connect()
     while not pill2kill.is_set():
 
-        requester = Requester(pill2kill=pill2kill)
+        requester = Requester(pill2kill=pill2kill, lock=lock)
         update = UpdatePayload()
 
         while not pill2kill.is_set():
@@ -333,7 +333,7 @@ more to process?{BColors.ENDC}")
 
         if blog.crawl_status == 'new': # not yet updated
             try:
-                blog_status_check(db, con, lock, blog, update, deep_scrape)
+                blog_status_check(db, con, blog, update, deep_scrape)
             except BaseException as e:
                 logging.debug(f'{BColors.FAIL}Exception while status_check {e}{BColors.ENDC}')
                 continue
@@ -353,7 +353,7 @@ more to process?{BColors.ENDC}")
 
         elif blog.crawl_status == 'resume':
             try:
-                blog_status_check(db, con, lock, blog, update, deep_scrape)
+                blog_status_check(db, con, blog, update, deep_scrape)
             except BaseException as e:
                 logging.debug(f'{BColors.FAIL}Exception while status_check {e}{BColors.ENDC}')
                 continue
@@ -364,7 +364,7 @@ more to process?{BColors.ENDC}")
 
         elif blog.crawl_status == 'DONE':
             try:
-                blog_status_check(db, con, lock, blog, update, deep_scrape)
+                blog_status_check(db, con, blog, update, deep_scrape)
             except BaseException as e:
                 logging.debug(f'{BColors.FAIL}Exception while status_check {e}{BColors.ENDC}')
                 continue
@@ -390,7 +390,7 @@ more to process?{BColors.ENDC}")
                 .format(blog.name, blog.offset, blog.total_posts) + BColors.ENDC)
 
                 try:
-                    api_get_request_wrapper(db, con, lock, blog,
+                    api_get_request_wrapper(db, con, blog,
                     update, deep_scrape, blog.crawl_status)
                 except BaseException as e:
                     logging.debug(BColors.FAIL
@@ -425,7 +425,7 @@ more to process?{BColors.ENDC}")
                     break
 
         # We're done, no more found
-        check_blog_end_of_posts(db, con, lock, blog)
+        check_blog_end_of_posts(db, con, blog)
         db_handler.update_blog_info(db, con, blog, ignore_response=True)
 
         logging.warning(f"{BColors.GREENOK}{BColors.BOLD}{BColors.GREEN}\
@@ -482,7 +482,7 @@ def insert_posts(db, con, db_update_lock, blog, update):
 
 
 
-def check_blog_end_of_posts(db, con, lock, blog):
+def check_blog_end_of_posts(db, con, blog):
     """Check if we have indeed done everything right"""
 
     logging.debug("{0} check_blog_end_of_posts".format(blog.name))
@@ -515,7 +515,7 @@ def check_blog_end_of_posts(db, con, lock, blog):
 
 
 
-def api_get_request_wrapper(db, con, lock, blog, update, deep_scrape, crawl_status, post_id=None):
+def api_get_request_wrapper(db, con, blog, update, deep_scrape, crawl_status, post_id=None):
     """Updates the update, valid or invalid"""
 
     # Retry getting /posts until either 404 or success
@@ -524,7 +524,7 @@ def api_get_request_wrapper(db, con, lock, blog, update, deep_scrape, crawl_stat
     while not update.valid and attempts < 3:
         attempts += 1
         try:
-            blog.api_get_request(lock, update, deep_scrape, api_key=None, reqtype="posts",
+            blog.api_get_request(update, deep_scrape, api_key=None, reqtype="posts",
             post_id=post_id)
             if update.valid:
                 return
@@ -559,7 +559,7 @@ Getting actual posts_scraped from DB"
 
 
 
-def blog_status_check(db, con, lock, blog, update, deep_scrape):
+def blog_status_check(db, con, blog, update, deep_scrape):
     """Returns True on update validated, otherwise false"""
 
     if blog.crawl_status == 'new':
@@ -570,7 +570,7 @@ def blog_status_check(db, con, lock, blog, update, deep_scrape):
     discrepancy_check(db, con, blog)
 
     try:
-        api_get_request_wrapper(db, con, lock, blog, update, deep_scrape, blog.crawl_status)
+        api_get_request_wrapper(db, con, blog, update, deep_scrape, blog.crawl_status)
     except BaseException as e:
         logging.debug(f'{BColors.FAIL}Exception while api_get_request_wrapper {e}{BColors.ENDC}')
         raise
@@ -693,7 +693,7 @@ def blog_generator(db, con, lock, blog, pill2kill):
     """Queries DB for a blog that is either new or needs update.
     Returns a TumblrBlog() object instance with no proxy attached to it."""
 
-    blog.__init__(pill2kill=pill2kill)
+    blog.__init__(pill2kill=pill2kill, lock=lock)
     with lock:
         blog.name, blog.offset, blog.health, blog.crawl_status, blog.total_posts, \
 blog.posts_scraped, blog.last_checked, blog.last_updated = db_handler.fetch_random_blog(db, con)
@@ -730,7 +730,7 @@ class TumblrBlog:
     __slots__ = ['name', 'total_posts', 'posts_scraped', 'offset', 'health',
     'crawl_status', 'crawling', 'last_checked', 'last_updated', 'proxy_object',
     'api_key_object_ref', 'requests_session', 'current_json', 'update',
-    'new_posts', 'temp_disabled', 'eof', 'pill2kill', 'db_response']
+    'new_posts', 'temp_disabled', 'eof', 'pill2kill', 'lock', 'db_response']
 
     def __init__(self, *args, **kwargs):
         self.name = None
@@ -751,6 +751,7 @@ class TumblrBlog:
         self.temp_disabled = False
         self.eof = False
         self.pill2kill = kwargs.get('pill2kill')
+        self.lock = kwargs.get('lock')
         self.db_response = None
 
     def init_session(self):
@@ -773,8 +774,12 @@ class TumblrBlog:
     def attach_proxy(self, proxy_object=None):
         """ attach proxy object, refresh session on update too"""
 
-        if not proxy_object:  #common case
-            proxy_object = next(instances.proxy_scanner.proxy_ua_dict.get('proxies'))
+        if not proxy_object: #common case
+            while not proxy_object:
+                proxy_object = next(instances.proxy_scanner.proxy_ua_dict.get('proxies'))
+                if not proxy_object:
+                    with self.lock:
+                        proxy_object = instances.proxy_scanner.get_new_proxy(self.pill2kill)
 
         if not self.proxy_object: #first time
             self.proxy_object = proxy_object
@@ -843,13 +848,13 @@ seconds until {time.ctime(e.next_date_avail)}{BColors.ENDC}")
         except:
             raise
 
-    def get_new_proxy(self, lock, old_proxy_object=None):
+    def get_new_proxy(self, old_proxy_object=None):
         """ Pops old proxy gone bad from cycle, get a new one """
         if not old_proxy_object:
             old_proxy_object = self.proxy_object
 
-        with lock: # get_new_proxy() requires a lock!
-            self.proxy_object = instances.proxy_scanner.get_new_proxy(
+        with self.lock: # get_new_proxy() requires a lock!
+            self.proxy_object = instances.proxy_scanner.get_new_proxy(self.pill2kill,
                 old_proxy_object, remove='remove')
 
         try:
@@ -864,7 +869,7 @@ seconds until {time.ctime(e.next_date_avail)}{BColors.ENDC}")
 
 
 
-    def api_get_request(self, lock, updateobj, deep_scrape, api_key=None, reqtype="posts", post_id=None):
+    def api_get_request(self, updateobj, deep_scrape, api_key=None, reqtype="posts", post_id=None):
         """Returns requests.response object, reqype=[posts|info]"""
         if not api_key:
             api_key = self.api_key_object_ref
@@ -927,7 +932,7 @@ is disabled, trying to get a new one{BColors.ENDC}")
                 logging.info(BColors.FAIL + "{0} Proxy {1} error: {2}"\
                 .format(self.name, self.proxy_object.get('ip_address'), e.__repr__()) + BColors.ENDC)
                 try:
-                    self.get_new_proxy(lock)
+                    self.get_new_proxy()
                 except:
                     continue
                 continue
@@ -936,7 +941,7 @@ is disabled, trying to get a new one{BColors.ENDC}")
                 logging.info(BColors.FAIL + "{0} Connection error Proxy {1}: {2}"
                 .format(self.name, self.proxy_object.get('ip_address'), e.__repr__()) + BColors.ENDC)
                 try:
-                    self.get_new_proxy(lock)
+                    self.get_new_proxy()
                 except:
                     continue
                 continue
@@ -947,7 +952,7 @@ removing proxy {self.proxy_object.get('ip_address')} (continue){BColors.ENDC}")
                 if response.text.find('Service is temporarily unavailable') != -1:
                     self.temp_disabled = True # HACK: will only be reset next script start
                     raise BaseException("Server on hold!")
-                #else: self.get_new_proxy(lock)
+                #else: self.get_new_proxy()
                 continue
             except:
                 logging.debug(f"{BColors.FAIL}Uncaught exception in request! (continue){BColors.ENDC}")
@@ -955,7 +960,7 @@ removing proxy {self.proxy_object.get('ip_address')} (continue){BColors.ENDC}")
             break
 
         try:
-            self.check_response_validate_update(response_json, updateobj, lock)
+            self.check_response_validate_update(response_json, updateobj, self.lock)
         except:
             raise
 
@@ -1188,6 +1193,7 @@ def setup_config(args):
 
 
 def init_global_api_keys():
+    """Instantiate list of api keys in global and starts the thread to look over them"""
     # === API KEY ===
     # list of APIKey objects
     instances.api_keys = api_keys.get_api_key_object_list(SCRIPTDIR + os.sep
@@ -1278,21 +1284,21 @@ def main(args):
     signal.signal(signal.SIGINT, signal_handler)
 
     # Thread handling keyboard input to interrupt
-    t = threading.Thread(target=input_thread, args=(pill2kill, worker_threads))
-    t.daemon = True
-    t.start()
-    worker_threads.append(t)
+    input_t = threading.Thread(target=input_thread, args=(pill2kill, worker_threads))
+    input_t.daemon = True
+    worker_threads.append(input_t)
 
     # Modules / plugins:
     if args.compute_hashes or args.match_hashes:
         init_global_api_keys()
+        input_t.start()
         init_global_proxies(THREADS=1, pill2kill=pill2kill)
         kwargs_module = dict(pill2kill=pill2kill, lock=lock, db=db)
         hashes.main(args, kwargs_module) # FIXME: pass file to write from config as argument too
         return
 
     init_global_api_keys()
-
+    input_t.start()
     init_global_proxies(THREADS, pill2kill)
 
     # Reset crawling status for all blogs in DB
