@@ -281,6 +281,7 @@ if (not exists (select AUTO_ID from BLOGS where (BLOGS.BLOG_NAME = :i_blogname))
 THEN begin
     o_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence2, 1);
     INSERT into BLOGS (AUTO_ID, BLOG_NAME, CRAWL_STATUS) values (:o_generated_auto_id, :i_blogname, :i_new);
+    suspend;
     exit;
     end
 ELSE
@@ -293,6 +294,7 @@ BEGIN
             exit;
         end
     else
+        suspend;
         exit;
 END
 WHEN GDSCODE unique_key_violation
@@ -322,7 +324,8 @@ CREATE OR ALTER PROCEDURE INSERT_POST (
     I_POST_URL D_POSTURL,
     I_POST_DATE D_EPOCH,
     I_REMOTEID D_POST_NO DEFAULT null,
-    I_REBLOGGED_BLOG_NAME D_BLOG_NAME DEFAULT null )
+    I_REBLOGGED_BLOG_NAME D_BLOG_NAME DEFAULT null,
+    I_NOTES integer default null)
 AS
 declare variable v_blog_origin_id d_auto_id;
 declare variable v_fetched_reblogged_blog_id d_auto_id default null;
@@ -330,6 +333,11 @@ declare variable v_b_update_gathered d_boolean default 0;
 BEGIN
 
 select AUTO_ID from BLOGS where BLOG_NAME = :i_blog_origin into :v_blog_origin_id;
+if (v_blog_origin_id is null) THEN 
+begin
+    select O_GENERATED_AUTO_ID from INSERT_BLOGNAME_GATHERED(:i_blog_origin)
+    into :v_blog_origin_id;
+END
 
 if (:i_reblogged_blog_name is not null)
 THEN
@@ -337,9 +345,9 @@ select O_GENERATED_AUTO_ID from INSERT_BLOGNAME_GATHERED(:i_reblogged_blog_name)
 into :v_fetched_reblogged_blog_id;
 
 INSERT into POSTS (POST_ID, POST_URL, POST_DATE, REMOTE_ID,
-ORIGIN_BLOGNAME, REBLOGGED_BLOGNAME)
+ORIGIN_BLOGNAME, REBLOGGED_BLOGNAME, NOTES)
 values (:i_postid, :i_post_url, :i_post_date, :i_remoteid,
-:v_blog_origin_id, :v_fetched_reblogged_blog_id);
+:v_blog_origin_id, :v_fetched_reblogged_blog_id, :i_notes);
 END
 """)
 
@@ -1207,6 +1215,8 @@ with more recently updated version is_current_item: {3}\n{4}\n----------\n{5}"
         attr['content_raw'] = None
 
     if post.get('reblogged_root_id'): # we asked for a deep-scrape
+        # logging.warning(f"{BColors.LIGHTPINK}reblogged_root_id found: \
+        # {post.get('reblogged_root_id')} {post.get('reblogged_root_name')}{BColors.ENDC}")
         post['remote_id'] = post['reblogged_root_id']
         post['reblogged_name'] = post['reblogged_root_name']
     elif post.get('reblogged_from_id'):
@@ -1220,12 +1230,9 @@ with more recently updated version is_current_item: {3}\n{4}\n----------\n{5}"
     post['content_raw'] = attr.get('content_raw')
     post['full_context'], post['filtered_urls'] = filter_content_raw(full_context)
 
-#     logging.warning(BColors.CYAN + "Added fields to post {0}:\n{1}:{2}\nremoteid={3}:{4}\n\
-# {5}:{6}\n{7}:{8}\n{9}:{10}\nblogname={11}"
-#     .format(post.get('id'), 'reblogged_name',
-#     post.get('reblogged_name'), 'remote_id', post.get('remote_id'),
-#     'content_raw', repr(post.get('content_raw')), 'full_context', len(post.get('full_context')),
-#     'filtered_urls', post.get('filtered_urls'), post.get('blog_name')) + BColors.ENDC)
+#     logging.debug(f"{BColors.CYAN}Added fields to post {post.get('id')}:\nreblogged_name={post.get('reblogged_name')}\n\
+# remote_id={post.get('remote_id')}\ncontent_raw={post.get('content_raw')}\nfull_context={post.get('full_context')}\n\
+# filtered_urls={post.get('filtered_urls')}\nblogname={post.get('blog_name')}{BColors.ENDC}")
 
     return post
 
@@ -1417,6 +1424,11 @@ def inserted_post(cur, post):
     # cur = con.cursor()
     errors = 0
     success = True
+    note_count = None
+    if post.get('notes'):
+        note_count = 0
+        for note in post.get('notes'):
+            note_count += 1
     try:
         cur.callproc('insert_post', (
             post.get('id'),                 # post_id
@@ -1424,7 +1436,8 @@ def inserted_post(cur, post):
             post.get('post_url'),           # post_url
             post.get('timestamp'),          # timestamp
             post.get('remote_id'),          # remote_id
-            post.get('reblogged_name')      # reblogged_blog_name
+            post.get('reblogged_name'),     # reblogged_blog_name
+            note_count                      # number or notes is any
             ))
     except fdb.DatabaseError as e:
         # if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != -1:
@@ -1439,25 +1452,28 @@ def inserted_post(cur, post):
 
     if post.get('notes'): # only if deep-scrape
         for note in post.get('notes'):
-            if note.get('post_id'):
+            if note.get('post_id') is not None: # only when "type": "reblog"
+                # logging.debug(f"{BColors.LIGHTPINK}Note: {note.get('post_id')} {note.get('blog_name')}{BColors.ENDC}")
                 try:
                     cur.callproc('insert_post', (
-                        note.get('post_id'),            # post_id
-                        note.get('blog_name'),          # blog_name
-                        None,                           # post_url
-                        note.get('timestamp'),          # timestamp
-                        post.get('remote_id'),          # remote_id
-                        note.get('reblogged_name')      # reblogged_blog_name
+                        note.get('post_id'),                                # post_id
+                        note.get('blog_name'),                              # blog_name (not null)
+                        note.get('blog_url') + "post/" + note.get('post_id'),# post_url (not null)
+                        note.get('timestamp'),                              # timestamp
+                        post.get('remote_id'),                              # remote_id
+                        post.get('reblogged_name')                          # reblogged_blog_name
                         ))
                 except fdb.DatabaseError as e:
                     # if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != -1:
                     #     e = "duplicate"
                     logging.error(f"{BColors.FAIL}DB ERROR{BColors.BLUE} \
-post note\t{post.get('id')} : {e}{BColors.ENDC}")
-                except Exception as e:
+post note\t{post.get('id')}: {e}{BColors.ENDC}")
+                except BaseException as e:
                     logging.debug(f"{BColors.FAIL}ERROR post note\t\
 {post.get('id')} : {e}{BColors.ENDC}")
-            elif note.get('blog_name') is not None:
+
+
+            elif note.get('blog_name') is not None: # otherwise, just a "type": "like"
                 try:
                     cur.callproc('insert_blogname_gathered', 
                                 (note.get('blog_name'), 'new'))

@@ -397,16 +397,15 @@ def reset_blogs_by_hash(db, _json):
         hash_dict = json.load(f)
     hash_count = 0
     blogname_count = 0
-    for key in hash_dict.key():
+    for key in hash_dict.keys():
         hash_count += 1
-        for blogname in key.get('blogname'):
+        for blogname in hash_dict.get(key).get('blogname'):
             if blogname.find('??') != 1:
                 blogname = blogname.strip('??')
             blogname_count += 1
             try:
-                cur.execute(r"""
-update BLOGS set crawl_status 'new', priority 200 where blog_name = '"""
- + blogname + r"""';""")
+                # insert or update with priority 200 and status "new"
+                cur.callproc(r"insert_blogname", (blogname, 'new', 200))
             except BaseException as e:
                 logging.error(f"Error while updating: {e}")
             finally:
