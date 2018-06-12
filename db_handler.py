@@ -158,11 +158,14 @@ INLINE_HASH     D_INLINE_HASH,
 CONSTRAINT blognames_unique UNIQUE (BLOG_NAME) using index ix_blognames
 );""")
 
-        # con.execute_immediate(\
-        #     """CREATE TABLE GATHERED_BLOGS (
-        #     AUTO_ID      D_AUTO_ID PRIMARY KEY,
-        #     BLOG_NAME    D_BLOG_NAME );""")
-        #     #TODO: make constraint CHECK to only create if not already in tBLOGS?
+        con.execute_immediate(
+"""
+CREATE TABLE CRAWLING(
+BLOG_NAME D_BLOG_NAME PRIMARY KEY
+);
+"""
+        )
+
 
         con.execute_immediate(\
 """
@@ -1466,7 +1469,7 @@ def inserted_post(cur, post):
                 except fdb.DatabaseError as e:
                     # if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != -1:
                     #     e = "duplicate"
-                    logging.error(f"{BColors.FAIL}DB ERROR{BColors.BLUE} \
+                    logging.info(f"{BColors.FAIL}DB ERROR{BColors.BLUE} \
 post note\t{post.get('id')}: {e}{BColors.ENDC}")
                 except BaseException as e:
                     logging.debug(f"{BColors.FAIL}ERROR post note\t\

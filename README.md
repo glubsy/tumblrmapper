@@ -6,21 +6,21 @@ Tumblr serves compressed and downsized files by default (with suffix \_1280 for 
 
 Fortunately for us, they also keep \_raw original files on their CDN.
 
-Unfortunately, they do no document this anywhere, it's essentially hidden from the public.
+Unfortunately, they do not document this anywhere, it's essentially hidden from the public eye and knowledge.
 
 The original \_raw files are hidden behind paths such as:
 `http://data.tumblr.com/{SHA1}/tumblr_{hash}1{hash}_raw.jpg`
 where {SHA1} is the sha1sum of the _original_ file (the \_raw one). 
 
-This makes it impossible to retrieve files without knowing the sha1 checksum beforehand (TODO: write a script to brute-force SHA1 for each 4000 files to recover...)
+This makes it impossible to retrieve files without knowing the sha1 checksum beforehand (TODO: write a script to brute-force SHA1 for each files to recover...?)
 
 This tool scrapes all URLs on a supplied list of tumblr blogs and stores the following in a firebird database, in the hopes to find URLs for each \_1280 file already downloaded:
 * Blog names, total posts, last updated
-* Posts, remote\_id, post URL
-* Posts' context (text content only) and most importantly
-* File's URLs (both tumblr's and all other detected valid URLs inside each post)
+* Posts, post URL, reblogged\_id (remote\_id)
+* Posts' context (text content only) optionally and most importantly
+* File's URLs (all valid URLS found in each post)
 
-Optionally, if you have a list of \_1280 files, you can store them in the DB and look for the
+Optionally, if we have a premade list of \_1280 files, we can store them in the DB and look for the
 corresponding \_raw files with provided tools.
 
 ## How to use:
@@ -54,7 +54,7 @@ lxml
 
 [re2](https://github.com/andreasvc/pyre2) otherwise falls back to re, but can lead to a runaway process
 
-requests-oauth in order to get followers / likes on a blog through OAuth (need manual setup of keys first)
+[requests-oauthlib](https://pypi.org/project/requests-oauthlib/) in order to get followers/likes for each blog (need manual setup of API keys first)
 
 ## TODO:
 
@@ -62,4 +62,4 @@ requests-oauth in order to get followers / likes on a blog through OAuth (need m
 
 ## License:
 
-This is just a personal project, the code is horrendous and needs improvements. Therefore, the license is MIT.
+This is just a personal project, the code is horrendously messy. Therefore, the license is MIT.

@@ -454,7 +454,6 @@ more to process?{BColors.ENDC}")
 # def update_pbar(pbar, blog):
 #     yield pbar.update(blog.offset)
 
-
 def insert_posts(db, con, db_update_lock, blog, update):
     with db_update_lock:
         processed_posts, errors = db_handler.insert_posts(db, con, blog, update)
@@ -1023,6 +1022,12 @@ response_json msg {response_json.get('meta').get('msg')}{BColors.ENDC}")
             logging.debug(f"{BColors.BOLD}{self.name} Got errors in Json! response:\
  {response_json.get('response')} meta_status: {update.meta_status}{BColors.ENDC}")
 
+        if update.meta_status == 403:
+            self.health = "DEAD"
+            self.crawl_status = "DEAD"
+            update.valid = True
+            return
+
         # BIG PARSE (REMOVE?)
         resp_json = response_json.get('response')
         if resp_json is not None and resp_json != []:
@@ -1175,7 +1180,7 @@ def setup_config(args):
 
     sh = logging.StreamHandler(sys.stdout)
     sh.setLevel(getattr(logging, args.log_level.upper()))
-    sh.setFormatter(logging.Formatter('{levelname:<9}:\t{message}', None, '{'))
+    sh.setFormatter(logging.Formatter('{asctime} {levelname:<9}:\t{message}', '%y/%m/%d %H:%M:%S', '{'))
     rootLogger.addHandler(sh)
 
     instances.config = parse_config(args.config_path, args.data_path)
