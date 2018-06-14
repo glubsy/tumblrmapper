@@ -49,12 +49,12 @@ class ProxyScanner():
             proxies_path = self.proxies_path
 
         self.http_proxies_recovered = filter_dictionary_for_unique(self.get_proxies_from_json_on_disk(proxies_path))
+        logging.debug(f"Recovered {len(self.http_proxies_recovered)} unique proxies from json")
 
         for proxy in self.http_proxies_recovered:
-
-            if proxy.get('disabled', False) or proxy.get('blacklisted', False):
+            if proxy.get('disabled') == True or proxy.get('blacklisted') == True:
                 logging.debug(f"{BColors.YELLOW}From disk, skipping \
-{proxy.get('ip_address')} because blacklisted.{BColors.ENDC}")
+{proxy.get('ip_address')} because disabled.{BColors.ENDC}")
                 continue
             # self.proxy_ua_dict[proxy.get('ip_address')] = proxy.get('user_agent')
             self.proxy_ua_dict.get('proxies').append(proxy)
@@ -325,10 +325,11 @@ def filter_dictionary_for_unique(mylist):
     """Returns a new list of dictionaries filtered by unique IP"""
     cache = set()
     for dictionary in mylist:
-        if dictionary.get('ip') in cache:
+        if dictionary.get('ip_address') in cache:
             mylist.remove(dictionary)
         else:
-            cache.add(dictionary.get('ip'))
+            if dictionary.get('ip_address') is not None:
+                cache.add(dictionary.get('ip_address'))
     return mylist
 
 

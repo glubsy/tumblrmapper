@@ -161,10 +161,10 @@ CONSTRAINT blognames_unique UNIQUE (BLOG_NAME) using index ix_blognames
         con.execute_immediate(
 """
 CREATE TABLE CRAWLING(
-BLOG_NAME D_BLOG_NAME PRIMARY KEY
+BLOG_NAME D_BLOG_NAME PRIMARY KEY,
+CRAWL_STATUS varchar(20)
 );
-"""
-        )
+""")
 
 
         con.execute_immediate(\
@@ -336,7 +336,7 @@ declare variable v_b_update_gathered d_boolean default 0;
 BEGIN
 
 select AUTO_ID from BLOGS where BLOG_NAME = :i_blog_origin into :v_blog_origin_id;
-if (v_blog_origin_id is null) THEN 
+if (v_blog_origin_id is null) THEN
 begin
     select O_GENERATED_AUTO_ID from INSERT_BLOGNAME_GATHERED(:i_blog_origin)
     into :v_blog_origin_id;
@@ -434,9 +434,11 @@ end
 END
 """)
 
+        # Fetch new blogs, priority first
         con.execute_immediate(\
 """
 CREATE OR ALTER PROCEDURE FETCH_ONE_BLOGNAME
+( i_status_type varchar(10) default 'resume')
 RETURNS (
     O_NAME D_BLOG_NAME,
     O_OFFSET INTEGER,
@@ -448,40 +450,115 @@ RETURNS (
     O_UPDATED D_EPOCH )
 AS
 BEGIN
-if (exists (select (BLOG_NAME) from BLOGS where ((CRAWL_STATUS = 'resume') and (CRAWLING = 0)))) then
+if (exists (select BLOG_NAME from BLOGS where ((CRAWL_STATUS = :i_status_type) and (CRAWLING = 0)))) then
     begin
     for select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED, LAST_UPDATE
-    from BLOGS where ((CRAWL_STATUS = 'resume') and (CRAWLING = 0)) order by PRIORITY desc nulls last ROWS 1
-    with lock
+    from BLOGS where ((CRAWL_STATUS = :i_status_type) and (CRAWLING = 0)) order by PRIORITY desc nulls last ROWS 1 with lock
     into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated
     as cursor cur do
-        update BLOGS set CRAWLING = 1 where current of cur;
+        if (:o_status = 'resume') THEN
+        begin
+            update BLOGS set CRAWLING = 1 where current of cur;
+            insert into CRAWLING (BLOG_NAME, CRAWL_STATUS) values (:o_name, 'progress');
+        end
+        else if (:o_status = 'new') THEN
+        begin
+            update BLOGS set CRAWL_STATUS = 'init', CRAWLING = 1 where current of cur;
+            insert into CRAWLING (BLOG_NAME, CRAWL_STATUS) values (:o_name, 'init');
+        end
     exit;
     end
-else
-if (exists (select (BLOG_NAME) from BLOGS where (CRAWL_STATUS = 'new'))) then
-    begin
-    for select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED, LAST_UPDATE
-            from BLOGS where (CRAWL_STATUS = 'new')
-        order by PRIORITY desc nulls last ROWS 1 with lock
-        into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated
-        as cursor tcur do
-            update BLOGS set CRAWL_STATUS = 'init', CRAWLING = 1 where current of tcur;
-    exit;
-    end
-ELSE /*fetch the oldest last checked blog*/
+END
+""")
+
+        # Fetch DONE blogs ordered by last scraped
+        con.execute_immediate(\
+"""
+CREATE OR ALTER PROCEDURE FETCH_ONE_DONE_BLOGNAME
+RETURNS (
+    O_NAME D_BLOG_NAME,
+    O_OFFSET INTEGER,
+    O_HEALTH VARCHAR(5),
+    O_STATUS VARCHAR(10),
+    O_TOTAL INTEGER,
+    O_SCRAPED INTEGER,
+    O_CHECKED D_EPOCH,
+    O_UPDATED D_EPOCH )
+AS
+BEGIN
 if (exists (select BLOG_NAME from BLOGS where (CRAWL_STATUS = 'DONE'))) then
     BEGIN
     for select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED, LAST_UPDATE
-        from BLOGS where ((CRAWL_STATUS = 'DONE') and (POSTS_SCRAPED != TOTAL_POSTS))
+        from BLOGS where (CRAWL_STATUS = 'DONE')
         order by (LAST_CHECKED) asc nulls last ROWS 1 with lock
         into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated
         as cursor tcur do
+        begin
             update BLOGS set CRAWL_STATUS = 'resume', CRAWLING = 1 where current of tcur;
+            insert into CRAWLING (BLOG_NAME, CRAWL_STATUS) values (:o_name, 'progress');
+        end
         exit;
     END
 END
 """)
+
+#         # Testing method with CRAWLING table (not used, ugly code)
+#         con.execute_immediate(
+# """
+# CREATE OR ALTER PROCEDURE FETCH_ONE_BLOGNAME_CRAWLING_TABLE
+# (   i_status_type varchar(10) default 'resume'
+# )
+# RETURNS (
+#     O_NAME D_BLOG_NAME,
+#     O_OFFSET INTEGER,
+#     O_HEALTH VARCHAR(5),
+#     O_STATUS VARCHAR(10),
+#     O_TOTAL INTEGER,
+#     O_SCRAPED INTEGER,
+#     O_CHECKED D_EPOCH,
+#     O_UPDATED D_EPOCH )
+# AS
+# declare variable v_counter bigint default -1;
+# BEGIN
+# while (v_counter >= -2) do
+# begin
+#     o_name = null;
+#     if (v_counter = -2) THEN
+#     begin
+#         i_status_type = 'new';
+#         v_counter = -1;
+#     end
+#     v_counter = :v_counter + 1;
+#     select  first 1 skip (:v_counter) BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED, LAST_UPDATE
+#     from BLOGS where ((CRAWL_STATUS = :i_status_type )) order by PRIORITY desc nulls last
+#     --with lock
+#     into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated;
+#     if (:o_name is null) THEN
+#     begin
+#         v_counter = -2;
+#     end
+#     if (:v_counter != -2) then
+#     begin
+#         if (not exists (select blog_name from CRAWLING where blog_name = :o_name)) then
+#         begin
+#             insert into CRAWLING (BLOG_NAME, CRAWL_STATUS) values (:o_name, 'progress');
+#             if (:o_status = 'new') then
+#             begin
+#                 update CRAWLING set CRAWL_STATUS = 'init' where BLOG_NAME = :o_name;
+#             end
+#             else
+#             if (:o_status = 'DONE') then
+#             begin
+#                 update BLOGS set CRAWL_STATUS = 'resume' where BLOG_NAME = :o_name;
+#             end
+#             exit;
+#         end
+#     end
+# end
+# END
+# """)
+
+
 
         # for dead blog accounts or account sorted by priority
         # fetch reblogged posts, only if they have no notes recorded
@@ -509,6 +586,7 @@ BEGIN
         or ((HEALTH = 'WIPED' and TOTAL_POSTS <= 2) and (CRAWLING != 1))) into :v_blog do
         begin
             update blogs set CRAWLING = 1 where blogs.blog_name = :v_blog; --avoid rerolling it
+            insert into CRAWLING (BLOG_NAME, CRAWL_STATUS) values (:v_blog, 'progress');
             if (exists (select first 1 * from FETCH_DEAD_POSTS(:v_blog) where o_notes is null)) THEN
             begin
                 for select * from FETCH_DEAD_POSTS(:v_blog) where o_notes is null
@@ -530,6 +608,7 @@ BEGIN
         order by PRIORITY desc nulls last into :v_blog do
         begin
             update blogs set CRAWLING = 1 where blogs.blog_name = :v_blog; --avoid rerolling it
+            insert into CRAWLING (BLOG_NAME, CRAWL_STATUS) values (:v_blog, 'progress');
             if (exists (select first 1 * from FETCH_DEAD_POSTS(:v_blog) where o_notes is null)) THEN
             begin
                 for select * from FETCH_DEAD_POSTS(:v_blog) where o_notes is null
@@ -612,6 +691,8 @@ LAST_CHECKED = :v_checked
 where BLOG_NAME = :i_name
 returning old.HEALTH, old.total_posts, old.LAST_UPDATE, old.LAST_CHECKED, POST_OFFSET, POSTS_SCRAPED
 into O_health, O_total_posts, O_updated, O_last_checked, O_offset, O_scraped;
+if (:i_crawling != 0) then
+    insert into CRAWLING (BLOG_NAME, CRAWL_STATUS) values (:i_name, 'progress');
 END""")
 
         # Update whenever API gives us new different values than what we already had
@@ -649,24 +730,51 @@ BEGIN
     where BLOG_NAME = :i_name
     returning old.HEALTH, old.TOTAL_POSTS, old.LAST_UPDATE, old.LAST_CHECKED, old.POST_OFFSET, old.POSTS_SCRAPED
     into O_health, O_total_posts, O_updated, O_last_checked, O_offset, O_scraped;
+    if (:i_crawling != 0) then
+        update or insert into CRAWLING (BLOG_NAME, CRAWL_STATUS)
+        values (:i_name, 'progress') MATCHING (BLOG_NAME);
+    else if (:i_crawling = 0) then
+        delete from CRAWLING where BLOG_NAME = :i_name;
 END""")
 
 
-        # called when quitting script, or done scaping total_posts
+        # called when quitting script, or done scraping total_posts
         con.execute_immediate(\
-"""CREATE OR ALTER PROCEDURE update_crawling_blog_status (i_name d_blog_name, i_input d_boolean)
+"""CREATE OR ALTER PROCEDURE reset_blog_crawling_status (i_name d_blog_name)
 AS BEGIN
+delete from CRAWLING where BLOG_NAME = :i_name;
 update BLOGS set CRAWLING = 0 where BLOG_NAME = :i_name;
 END""")
 
 
+
+        # Uses the CRAWLING table to reset BLOGS rows on script startup
+        con.execute_immediate(
+"""
+CREATE OR ALTER PROCEDURE reset_crawl_status_all
+AS
+declare variable v_status varchar(10);
+declare variable v_blog d_blog_name;
+BEGIN
+for select BLOG_NAME, CRAWL_STATUS from CRAWLING into :v_blog, :v_status
+do
+BEGIN
+    if (:v_status = 'init') THEN
+        update BLOGS set CRAWL_STATUS = 'new', CRAWLING = NULL where blog_name = :v_blog;
+    else if (:v_status = 'progress') THEN
+        update BLOGS set CRAWLING = 0 where blog_name = :v_blog;
+END
+delete from CRAWLING;
+END
+""")
 
         # insert_archive
         # 'inputs are (filename without revision, filename, path origin) if path is already
         # in the path col, append it with ## before it. Returns 1 if filename was found.
         con.execute_immediate(\
 """
-create or alter procedure insert_archive (i_f varchar(60),
+create or alter procedure insert_archive (
+i_f varchar(60),
 i_fb varchar(60),
 i_p varchar(100))
 returns (f D_BOOLEAN)
@@ -690,34 +798,6 @@ ELSE
         INSERT INTO OLD_1280 (FILENAME, FILEBASENAME, PATH) VALUES (:i_f,:i_fb,:i_p);
     end
 end""")
-
-
-
-            #reset column CRAWLING on script startup in case we halted without cleaning
-
-        # con.execute_immediate(
-            # "CREATE PROCEDURE check_blog_status")
-            # retrieve health check:
-            # if health is "alive" and status not "crawling"
-            # THEN retrieve total_posts check: if null, go http test it and update total_posts, if 0 change health to wiped
-            # if health is "dead" THEN return dead
-            # if health is wiped, keep wiped (but crawl still)
-
-            # if status is new: not initialized, can start -> fetch_blog_info(blog)
-            # if status is DONE: all scraped, skip
-            # if status is CRAWLING: skip
-            # if status is RESUME: fetch offset
-            # if total_post > posts_scraped: start crawling at offset
-
-
-        # con.execute_immediate(
-        # "CREATE PROCEDURE update_blog_status")
-            # on table BLOGS:
-            # when total_posts = posts_scraped -> set status to "DONE"
-            # update timestamp on post insert_post committed
-            # update last post done on insert_post committed
-            # update offset on each post insert_post committed (last offset done)
-
 
         # Create views
         # con.execute_immediate(
@@ -868,21 +948,39 @@ def readlines(filepath):
     return data
 
 
-def fetch_random_blog(database, con):
-    """ Queries DB for a blog that is available
+def fetch_random_blog(database, con, status_req=None):
+    """ Queries DB for a blog that is available, with its crawl_status = type
+    [new|resume|DONE]
+    By default, looks for any "resume", then "new", then "DONE".
+    If status_req is new or resume, DONE blogs will be skipped.
     returns: name, offset, health, status, total posts,
     scraped posts, last checked, last updated
     """
     cur = con.cursor()
+    if status_req is None:
+        status_try_order = ["resume", "new", "DONE"]
+    elif status_req == "DONE":
+        status_try_order = ["DONE"]
+    else: # only asked for new/resume, not DONE
+        status_try_order = ["resume", "new"]
     # with fdb.TransactionContext(con):
-    try:
-        cur.execute("execute procedure fetch_one_blogname;")
-        return cur.fetchone()
-    except BaseException as e:
-        logging.debug(f"{BColors.FAIL}Exception when fetching one blog: {e}{BColors.ENDC}")
-        return [None * 8]
-    finally:
-        con.commit()
+
+    for status_type in status_try_order:
+        row = (None,) * 8
+        try:
+            if status_type != "DONE":
+                cur.callproc("fetch_one_blogname", (status_type,))
+            else:
+                cur.callproc("fetch_one_done_blogname")
+            row = cur.fetchone()
+        except BaseException as e:
+            logging.debug(f"{BColors.FAIL}Exception when fetching one blog: {e}{BColors.ENDC}")
+            return (None,) * 8
+        finally:
+            con.commit()
+
+        if row[0] is not None:
+            return row
 
 
 def fetch_all_blog_s_posts(database, con, priority='dead'):
@@ -892,6 +990,7 @@ def fetch_all_blog_s_posts(database, con, priority='dead'):
     (O_POST_ID , O_REMOTE_ID, O_ORIGIN_ID, O_REBLOGGED_ID,O_NOTES,O_ORIGIN_ID2,
     O_ORIGIN_NAME,O_REBLOGGED_ID2,O_REBLOGGED_NAME2)"""
     cur = con.cursor()
+    # logging.debug(f"{BColors.BLUE}Getting dead blogs posts by priority: {priority}{BColors.ENDC}")
     try:
         cur.execute("select * from FETCH_ALL_BLOG_S_POSTS(?);", (priority,))
         return cur.fetchall()
@@ -917,6 +1016,7 @@ def update_remote_ids_with_notes_count(db, con, rid, name, count):
 def insert_blogname_gathered(con, name, crawling_status=None):
     """Inserting a gathered blog with crawling status (default null), or
     updating an existing blog with crawling status"""
+    logging.debug(f"insert_blogname_gathered({name})")
     cur = con.cursor()
     try:
         cur.callproc('insert_blogname_gathered', (name, crawling_status))
@@ -986,7 +1086,8 @@ def update_blog_info(Database, con, blog, ignore_response=False):
 
 
 def reset_to_brand_new(database, con, blog, reset_type):
-    """Resets CRAWL_STATUS varchar field for blog to input reset_type"""
+    """Resets CRAWL_STATUS varchar field for blog to input reset_type
+    called on thread premature cleanup"""
     cur = con.cursor()
     try:
         cur.execute(r'execute procedure reset_crawl_status(?,?);',
@@ -998,29 +1099,25 @@ def reset_to_brand_new(database, con, blog, reset_type):
 
 
 def update_crawling(con, blog=None):
-    """ Sets blog crawling status to 0 or 1, if blog=None, reset all to 0"""
+    """ Sets blog crawling status to 0 or 1, if blog=None, reset all to 0.
+    Resets any left over 'init' to 'new'"""
 
     cur = con.cursor()
-    if not blog:
+    if blog is None:
         try:
-            logging.warning(f"Resetting crawling_status for BLOGS table")
-            cur.execute(r"""update BLOGS set CRAWLING = 0 where CRAWLING is not null;""")
-            cur.execute(r"""update BLOGS set CRAWL_STATUS = 'new' where CRAWL_STATUS = 'init';""")
-            logging.info(BColors.BLUEOK + BColors.BLUE
-            + "Reset crawl_status & crawling for all" + BColors.ENDC)
+            logging.warning(f"Resetting 'crawling' in BLOGS table for all")
+            # Resets crawling_status from init to new and crawling to 0
+            cur.callproc(r"""reset_crawl_status_all""")
         except BaseException as e:
-            logging.error(f"Exception while resetting crawling status: {e}")
+            logging.error(f"Exception in procedure reset_crawl_status_all: {e}")
         finally:
             con.commit()
     else:
         try:
-            logging.warning(f"Resetting crawling_status for {blog} in BLOGS table")
-            cur.execute(r"""execute procedure update_crawling_blog_status(?,?);""",
-                        (blog.name, blog.crawling))
-            logging.debug(BColors.BLUEOK + BColors.BLUE
-            + "{0} set crawling to {1}".format(blog.name, blog.crawling) + BColors.ENDC)
+            logging.debug(f"{BColors.BLUE}Resetting crawling_status for '{blog}'{BColors.ENDC}")
+            cur.callproc(r"""reset_blog_crawling_status""", (blog,))
         except BaseException as e:
-            logging.error(f"Exception while resetting crawling status: {e}")
+            logging.error(f"Exception in procedure reset_blog_crawling_status: {e}")
         finally:
             con.commit()
 
@@ -1478,7 +1575,7 @@ post note\t{post.get('id')}: {e}{BColors.ENDC}")
 
             elif note.get('blog_name') is not None: # otherwise, just a "type": "like"
                 try:
-                    cur.callproc('insert_blogname_gathered', 
+                    cur.callproc('insert_blogname_gathered',
                                 (note.get('blog_name'), 'new'))
                 except BaseException as e:
                     logging.debug(f"{BColors.FAIL}error while inserting \

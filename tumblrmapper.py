@@ -179,7 +179,7 @@ def process_notes(db, lock, db_update_lock, pill2kill, priority):
     and add all blogs found in the notes to our BLOGS table for later scraping"""
 
     deep_scrape = {}
-    if instances.my_args.deep_scrape:
+    if instances.my_args.deep_scrape:  # should always be True here!
         deep_scrape['notes_info'] = True
         deep_scrape['reblog_info'] = True
 
@@ -192,19 +192,27 @@ def process_notes(db, lock, db_update_lock, pill2kill, priority):
         while not pill2kill.is_set():
             with db_update_lock:
                 posts_rows = db_handler.fetch_all_blog_s_posts(db, con, priority=priority)
-            if len(posts_rows) == 0:
+                if len(posts_rows) == 0:
+                    # we're most likely done
+                    break
+                if posts_rows[0][0] == 0: # o_post_id
+                    # this one had nothing :(
+                    logging.warning(f"{BColors.YELLOW}Blog \
+'{posts_rows[0][-1]}' found no reblog (with no notes) in DB.{BColors.ENDC}")
+                    continue
                 break
-            if posts_rows[0][0] == 0: # o_post_id
-                continue
-            break
 
         if not posts_rows:
             logging.warning(f'{BColors.GREEN}{BColors.BLINKING}\
 Done fetching reblogs and populating blogs from notes.{BColors.ENDC}')
             break
 
+        targeted_dead_blog = posts_rows[0][-3]
+        if targeted_dead_blog is None:
+            targeted_dead_blog = posts_rows[0][-1]
+
         logging.warning(f'{BColors.GREENOK}Got {len(posts_rows)} \
-reblogs for {posts_rows[0][-1]}{BColors.ENDC}')
+reblogs for {targeted_dead_blog}{BColors.ENDC}')
 
         if pill2kill.is_set():
             break
@@ -221,20 +229,21 @@ reblogs for {posts_rows[0][-1]}{BColors.ENDC}')
                 # that blog probably died or got wiped and we have some posts from it
                 continue
             rid_cache.add(row[1])
-            requester.name = row[-3]
+            requester.name = row[-1]
 
-            logging.warning(f'{BColors.YELLOW}Fetching reblogged post for {row[-1]}:\
+            logging.warning(f'{BColors.YELLOW}Fetching reblogged post for {row[-3]}:\
  {posts_rows.index(row) + 1}/{len(posts_rows)}{BColors.ENDC}')
 
             try:
-                post_get_wrapper(requester, db_update_lock, update, deep_scrape,
-                post_id=row[0])
+                post_get_wrapper(requester, update, deep_scrape, post_id=row[0])
             except:
                 rid_cache.remove(row[1])
                 continue
 
             try:
                 blogslist, notes_count = parse_post_json(update)
+                logging.debug(f"PostID {row[0]} blog {row[-1]} yielded \
+bloglist: {blogslist} notes_count {notes_count}")
             except BaseException as e:
                 traceback.print_exc()
                 rid_cache.remove(row[1])
@@ -245,22 +254,27 @@ reblogs for {posts_rows[0][-1]}{BColors.ENDC}')
                 break
 
             with db_update_lock:
+                # Insert blog names into BLOGS table
                 for blogname in blogslist:
                     try:
                         db_handler.insert_blogname_gathered(con, blogname, 'new')
                     except:
                         pass
+                # Update all remote IDs with this count of notes
                 try:
                     db_handler.update_remote_ids_with_notes_count(db, con,
                     row[1], row[-1], notes_count)
                 except:
                     raise
+        # Cleaning up crawling status in BLOGS/CRAWLING tables
+        db_handler.update_crawling(con, blog=targeted_dead_blog)
+
         logging.warning(f"{BColors.GREENOK}{BColors.GREEN}Done scraping reblogs \
-for {posts_rows[0][-1]}{BColors.ENDC}")
+for {targeted_dead_blog}{BColors.ENDC}")
 
 
 
-def post_get_wrapper(requester, db_update_lock, update, deep_scrape, post_id):
+def post_get_wrapper(requester, update, deep_scrape, post_id):
     """Handle exceptions"""
 
     update.__init__()
@@ -268,7 +282,7 @@ def post_get_wrapper(requester, db_update_lock, update, deep_scrape, post_id):
     while not update.valid and attempts < 3:
         attempts += 1
         try:
-            requester.api_get_request(db_update_lock, update, deep_scrape,
+            requester.api_get_request(update, deep_scrape,
             post_id=post_id)
             if update.valid:
                 return
@@ -318,7 +332,7 @@ def process(db, lock, db_update_lock, pill2kill):
             logging.debug(f"{BColors.FAIL}Exception occured in blog_generator:\
  {e}{BColors.ENDC}")
             pill2kill.set()
-            # traceback.print_exc()
+            traceback.print_exc()
             break
 
         if blog.name is None:
@@ -720,16 +734,21 @@ blog.posts_scraped, blog.last_checked, blog.last_updated = db_handler.fetch_rand
         raise
     logging.info(BColors.CYAN + "{0} Got blog from DB."\
     .format(blog.name) + BColors.ENDC)
-    logging.debug(f"{BColors.CYAN}blog fields: {blog.__slots__}{BColors.ENDC}")
+
+    debug_slots = ''
+    for slot in blog.__slots__:
+        debug_slots = f'{debug_slots} {slot}= {str(getattr(blog, slot))}'
+    logging.debug(f"{BColors.CYAN}blog fields: {debug_slots}{BColors.ENDC}")
+
 
 
 class TumblrBlog:
     """blog object, holding retrieved values to pass along"""
 
-    __slots__ = ['name', 'total_posts', 'posts_scraped', 'offset', 'health',
+    __slots__ = ('name', 'total_posts', 'posts_scraped', 'offset', 'health',
     'crawl_status', 'crawling', 'last_checked', 'last_updated', 'proxy_object',
     'api_key_object_ref', 'requests_session', 'current_json', 'update',
-    'new_posts', 'temp_disabled', 'eof', 'pill2kill', 'lock', 'db_response']
+    'new_posts', 'temp_disabled', 'eof', 'pill2kill', 'lock', 'db_response')
 
     def __init__(self, *args, **kwargs):
         self.name = None
@@ -890,7 +909,7 @@ is disabled, trying to get a new one{BColors.ENDC}")
             if deep_scrape:
                 params.update(deep_scrape)
 
-        instances.sleep_here(0, 10)
+        instances.sleep_here(0, THREADS + 3)
         attempt = 0
         response = requests.Response()
         response_json = {'meta': {'status': 500, 'msg': 'Server Error'},
@@ -1155,7 +1174,7 @@ def thread_good_cleanup(db, con, blog):
     .format(blog.name) + BColors.ENDC )
 
     blog.crawling = 0
-    # db_handler.update_crawling(con, blog)
+    # db_handler.update_crawling(con, blog.name)
     db_handler.update_blog_info(db, con, blog, ignore_response=True)
 
 
@@ -1222,6 +1241,7 @@ def init_global_proxies(THREADS, pill2kill):
 
 
 def main(args):
+    global THREADS
     THREADS = instances.config.getint('tumblrmapper', 'threads')
 
     if args.create_blank_db or args.update_blogs or args.update_archives or args.create_archive_list:
@@ -1315,6 +1335,8 @@ def main(args):
     thread_args = (db, lock, db_update_lock, pill2kill)
 
     if instances.my_args.scrape_notes:
+        # forcing deep scrape to get notes
+        instances.my_args.deep_scrape = True
         tgt = process_notes
         thread_args = thread_args + (args.scrape_notes,)
     else:
