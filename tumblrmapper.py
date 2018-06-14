@@ -272,6 +272,8 @@ bloglist: {blogslist} notes_count {notes_count}")
         logging.warning(f"{BColors.GREENOK}{BColors.GREEN}Done scraping reblogs \
 for {targeted_dead_blog}{BColors.ENDC}")
 
+        if pill2kill.is_set(): # probably useless here
+            break
 
 
 def post_get_wrapper(requester, update, deep_scrape, post_id):

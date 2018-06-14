@@ -1002,6 +1002,7 @@ def fetch_all_blog_s_posts(database, con, priority='dead'):
 
 def update_remote_ids_with_notes_count(db, con, rid, name, count):
     """Update all remote_ids with the same notes count"""
+    logging.debug(f"Updating all remote_id {rid} with notes count {count}...")
     cur = con.cursor()
     try:
         cur.execute(r'update POSTS set notes = ' + str(count) + r' where remote_id ='
@@ -1016,7 +1017,7 @@ def update_remote_ids_with_notes_count(db, con, rid, name, count):
 def insert_blogname_gathered(con, name, crawling_status=None):
     """Inserting a gathered blog with crawling status (default null), or
     updating an existing blog with crawling status"""
-    logging.debug(f"insert_blogname_gathered({name})")
+    # logging.debug(f"insert_blogname_gathered({name})")
     cur = con.cursor()
     try:
         cur.callproc('insert_blogname_gathered', (name, crawling_status))
