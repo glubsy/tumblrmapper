@@ -344,7 +344,7 @@ def fetch_actual_origin(result_json, **kwargs):
 
     deep_scrape = dict(reblog_info=True)
 
-    requester = tumblrmapper.Requester(kwargs.get('pill2kill'))
+    requester = tumblrmapper.Requester(pill2kill=kwargs.get('pill2kill'), lock=kwargs.get('lock'))
     update = tumblrmapper.UpdatePayload()
     count = 0
     con = kwargs.get('db').connect()
@@ -357,7 +357,7 @@ def fetch_actual_origin(result_json, **kwargs):
                 for row in get_blog_name_from_reversed_lookup_in_urls(con, key, numrows=5):
                     update.__init__()
                     requester.name = row[-3]
-                    tumblrmapper.post_get_wrapper(requester, kwargs.get('lock'), update, deep_scrape, row[-5]) #post_id to fetch
+                    tumblrmapper.post_get_wrapper(requester, update, deep_scrape, row[-5]) #post_id to fetch
                     try:
                         cur_bloglist.extend(parse_update(update))
                     except:

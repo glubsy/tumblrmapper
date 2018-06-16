@@ -179,9 +179,12 @@ POST_DATE           D_EPOCH,
 NOTES               integer,
 FOREIGN KEY(ORIGIN_BLOGNAME) REFERENCES BLOGS(AUTO_ID),
 FOREIGN KEY(REBLOGGED_BLOGNAME) REFERENCES BLOGS(AUTO_ID)
+CONSTRAINT remote_ids_ix 
 );""")
-            #BLOG_ORIGIN is the blog of the post_id (TID)
-            #BLOG_REBLOGGED is name of blog in trail
+
+        # Create index for faster bulk updating and reading
+        con.execute_immediate(
+"""create index ix_remote_ids on posts (remote_id);""")
 
         con.execute_immediate(\
 """

@@ -188,6 +188,7 @@ def process_notes(db, lock, db_update_lock, pill2kill, priority):
 
         requester = Requester(pill2kill=pill2kill, lock=lock)
         update = UpdatePayload()
+        blog_404_cache = set()
 
         while not pill2kill.is_set():
             with db_update_lock:
@@ -230,13 +231,45 @@ reblogs for {targeted_dead_blog}{BColors.ENDC}')
                 continue
             rid_cache.add(row[1])
             requester.name = row[-1]
+            requester.health = '' # hacky partial reset
+
+            if requester.name in blog_404_cache:
+                logging.debug(f"{requester.name} is 404 in cache, skipping.")
+                rid_cache.remove(row[1])
+                continue
 
             logging.warning(f'{BColors.YELLOW}Fetching reblogged post for {row[-3]}:\
  {posts_rows.index(row) + 1}/{len(posts_rows)}{BColors.ENDC}')
 
+            db_health = []
+            try:
+                cur = con.cursor()
+                cur.execute(r"""select HEALTH from blogs where blog_name = '"""
+                + requester.name + r"""';""")
+                db_health = cur.fetchone()
+            except BaseException as e:
+                logging.debug(f"{BColors.FAIL}Exception while looking for health\
+ for {requester.name}: {e}{BColors.ENDC}")
+            finally:
+                con.rollback()
+
+            requester.health = db_health[0]
+
+            if requester.health == 'DEAD':
+                logging.debug(f"{requester.name} is DEAD in DB, writing to cache.")
+                blog_404_cache.add(requester.name)
+                rid_cache.remove(row[1])
+                continue
+
             try:
                 post_get_wrapper(requester, update, deep_scrape, post_id=row[0])
             except:
+                rid_cache.remove(row[1])
+                continue
+
+            if requester.health == 'DEAD':
+                logging.debug(f"{requester.name} is 404, writing to cache.")
+                blog_404_cache.add(requester.name)
                 rid_cache.remove(row[1])
                 continue
 
@@ -245,7 +278,7 @@ reblogs for {targeted_dead_blog}{BColors.ENDC}')
                 logging.debug(f"PostID {row[0]} blog {row[-1]} yielded \
 bloglist: {blogslist} notes_count {notes_count}")
             except BaseException as e:
-                traceback.print_exc()
+                #traceback.print_exc()
                 rid_cache.remove(row[1])
                 logging.debug(f'{BColors.FAIL}Error getting notes: {e}{BColors.ENDC}')
                 continue
@@ -266,8 +299,6 @@ bloglist: {blogslist} notes_count {notes_count}")
                     row[1], row[-1], notes_count)
                 except:
                     raise
-        # Cleaning up crawling status in BLOGS/CRAWLING tables
-        db_handler.update_crawling(con, blog=targeted_dead_blog)
 
         logging.warning(f"{BColors.GREENOK}{BColors.GREEN}Done scraping reblogs \
 for {targeted_dead_blog}{BColors.ENDC}")
@@ -304,7 +335,15 @@ def parse_post_json(update):
     """count the number of notes, returns blog_names listed"""
     if not update.posts_response:
         raise BaseException("Response list was empty!")
-    noteslist = update.posts_response[0].get('notes')
+    try:
+        noteslist = update.posts_response[0].get('notes')
+    except BaseException as e:
+        logging.debug(f"Exception trying to get update.post_response[0][notes]")
+        raise
+
+    if noteslist is None:
+        raise BaseException('There was no notes returned for this post.')
+
     blogslist = set()
     notes_count = 0
     for note in noteslist:
@@ -911,7 +950,7 @@ is disabled, trying to get a new one{BColors.ENDC}")
             if deep_scrape:
                 params.update(deep_scrape)
 
-        instances.sleep_here(0, THREADS + 3)
+        instances.sleep_here(0, THREADS)
         attempt = 0
         response = requests.Response()
         response_json = {'meta': {'status': 500, 'msg': 'Server Error'},
@@ -1049,7 +1088,6 @@ response_json msg {response_json.get('meta').get('msg')}{BColors.ENDC}")
             update.valid = True
             return
 
-        # BIG PARSE (REMOVE?)
         resp_json = response_json.get('response')
         if resp_json is not None and resp_json != []:
             update.blogname = resp_json.get('blog', {}).get('name')

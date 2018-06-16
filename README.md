@@ -54,7 +54,7 @@ lxml
 
 [re2](https://github.com/andreasvc/pyre2) otherwise falls back to re, but can lead to a runaway process
 
-[requests-oauthlib](https://pypi.org/project/requests-oauthlib/) in order to get followers/likes for each blog (need manual setup of API keys first)
+~~[requests-oauthlib](https://pypi.org/project/requests-oauthlib/) to get followers/likes for each blog (doesn't work)~~
 
 ## TODO:
 
