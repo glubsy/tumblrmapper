@@ -213,7 +213,7 @@ Done fetching reblogs and populating blogs from notes.{BColors.ENDC}')
             targeted_dead_blog = posts_rows[0][-1]
 
         logging.warning(f'{BColors.GREENOK}Got {len(posts_rows)} \
-reblogs for {targeted_dead_blog}{BColors.ENDC}')
+posts and/or reblogs for {targeted_dead_blog}{BColors.ENDC}')
 
         if pill2kill.is_set():
             break
@@ -293,10 +293,21 @@ bloglist: {blogslist} notes_count {notes_count}")
                         db_handler.insert_blogname_gathered(con, blogname, 'new')
                     except:
                         pass
+
+                # Update the Post_ID if we were missing the reblogged blogname
+                if row[-3] is None:
+                    try:
+                        origin_blogname = db_handler.update_or_insert_post(
+                            con, update, notes_count)
+                        logging.warning(f"{BColors.GREEN}Origin blogname for \
+post_id {row[0]} -> remote_id {row[1]} was actually {origin_blogname}{BColors.ENDC}")
+                    except BaseException as e:
+                        logging.debug(f"Exception in update_or_insert_post: {e}")
+
                 # Update all remote IDs with this count of notes
                 try:
                     db_handler.update_remote_ids_with_notes_count(db, con,
-                    row[1], row[-1], notes_count)
+                    row[1], requester.name, notes_count)
                 except:
                     raise
 
@@ -338,14 +349,16 @@ def parse_post_json(update):
     try:
         noteslist = update.posts_response[0].get('notes')
     except BaseException as e:
-        logging.debug(f"Exception trying to get update.post_response[0][notes]")
+        logging.debug(f"Exception trying to get update.post_response[0][notes]: {e}")
         raise
-
-    if noteslist is None:
-        raise BaseException('There was no notes returned for this post.')
 
     blogslist = set()
     notes_count = 0
+
+    if noteslist is None:
+        logging.warning(f"There was no notes returned post {update.posts_response[0].get('id')}")
+        return blogslist, notes_count
+
     for note in noteslist:
         name = note.get('blog_name')
         if name is not None:
@@ -949,6 +962,9 @@ is disabled, trying to get a new one{BColors.ENDC}")
             params['id'] = post_id
             if deep_scrape:
                 params.update(deep_scrape)
+            else:
+                #HACK forcing here to get proper info, as it's unreliable otherwise
+                params['reblog_info'] = True
 
         instances.sleep_here(0, THREADS)
         attempt = 0

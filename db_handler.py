@@ -179,7 +179,7 @@ POST_DATE           D_EPOCH,
 NOTES               integer,
 FOREIGN KEY(ORIGIN_BLOGNAME) REFERENCES BLOGS(AUTO_ID),
 FOREIGN KEY(REBLOGGED_BLOGNAME) REFERENCES BLOGS(AUTO_ID)
-CONSTRAINT remote_ids_ix 
+CONSTRAINT remote_ids_ix
 );""")
 
         # Create index for faster bulk updating and reading
@@ -350,10 +350,11 @@ THEN
 select O_GENERATED_AUTO_ID from INSERT_BLOGNAME_GATHERED(:i_reblogged_blog_name)
 into :v_fetched_reblogged_blog_id;
 
-INSERT into POSTS (POST_ID, POST_URL, POST_DATE, REMOTE_ID,
+update or insert into posts (POST_ID, POST_URL, POST_DATE, REMOTE_ID,
 ORIGIN_BLOGNAME, REBLOGGED_BLOGNAME, NOTES)
 values (:i_postid, :i_post_url, :i_post_date, :i_remoteid,
-:v_blog_origin_id, :v_fetched_reblogged_blog_id, :i_notes);
+:v_blog_origin_id, :v_fetched_reblogged_blog_id, :i_notes)
+matching (post_id, ORIGIN_BLOGNAME);
 END
 """)
 
@@ -1126,6 +1127,31 @@ def update_crawling(con, blog=None):
             con.commit()
 
 
+def update_or_insert_post(con, update, note_count):
+    """Update or insert only one post, used to fix a missing reblogged blogname"""
+    cur = con.cursor()
+    post = update.posts_response[0]
+    if post is None:
+        return
+    get_post_details(post)
+
+    try:
+        cur.callproc('insert_post', (
+            post.get('id'),                 # post_id
+            post.get('blog_name'),          # blog_name
+            post.get('post_url'),           # post_url
+            post.get('timestamp'),          # timestamp
+            post.get('remote_id'),          # remote_id
+            post.get('reblogged_name'),     # reblogged_blog_name
+            note_count                      # number or notes is any
+            ))
+    except BaseException as e:
+        logging.error(f"{BColors.FAIL}DB ERROR{BColors.BLUE} post\t{post.get('id')} : {e}{BColors.ENDC}")
+    finally:
+        con.commit()
+
+    return post.get('reblogged_name')
+
 
 def insert_posts(database, con, blog, update):
     """ Returns a tuple of number of posts processed, and dupe errors.
@@ -1549,7 +1575,7 @@ def inserted_post(cur, post):
         logging.error(f"{BColors.FAIL}DB ERROR{BColors.BLUE} post\t{post.get('id')} : {e}{BColors.ENDC}")
         errors += 1
         success = False
-    except Exception as e:
+    except BaseException as e:
         logging.debug(f"{BColors.FAIL}ERROR post\t{post.get('id')} : {e}{BColors.ENDC}")
         errors += 1
         success = False
