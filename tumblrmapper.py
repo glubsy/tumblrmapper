@@ -59,7 +59,9 @@ def parse_args():
     parser.add_argument('-f', '--ignore_duplicates', action="store_true", default=False,
                 help="Ignore duplicate posts, keep scraping away")
     parser.add_argument('-m', '--record_context', action="store_true", default=False,
-                help="Don't skip recording context of posts in DB.")
+                help="Do not skip recording context of posts in DB.")
+    parser.add_argument('-t', '--ignore_non_tumblr_urls', action="store_true", default=False,
+                help="Do not record URLS if they do not hold 'tumblr' in them.")
     parser.add_argument('-i', '--scrape_notes', action="store", default=None,
                 help="Try to populate BLOGS table with new blogs: all\
 blogs which have appeared in the notes of posts that belonged to either dead blogs (reblogs) \
@@ -962,9 +964,7 @@ is disabled, trying to get a new one{BColors.ENDC}")
             params['id'] = post_id
             if deep_scrape:
                 params.update(deep_scrape)
-            else:
-                #HACK forcing here to get proper info, as it's unreliable otherwise
-                params['reblog_info'] = True
+            params['reblog_info'] = True
 
         instances.sleep_here(0, THREADS)
         attempt = 0

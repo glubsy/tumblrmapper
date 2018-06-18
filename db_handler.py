@@ -1177,7 +1177,7 @@ def insert_posts(database, con, blog, update):
 
         added += 1
 
-        if post.get('content_raw') is not None:
+        if post.get('content_raw') is not None and instances.my_args.record_context:
             results = inserted_context(cur, post)
             errors += results[1]
 
@@ -1286,7 +1286,7 @@ def get_post_details(post):
             item_name = item.get('blog').get('name')
 
             if post.get('id') != item_remote_id:           # we know it's a reblog, not a self reblog, precious
-                if item_name != post.get('blog_name') :    # indeed a foreign reblog
+                if item_name != post.get('blog_name') and item_name is not None:    # indeed a foreign reblog
                     if item.get('is_root_item'):            # actual original foreign post
                         found_reblog = True
                         reblogged_name          = item_name
@@ -1312,7 +1312,7 @@ with more recently updated version is_current_item: {4}\n{5}\n----------\n{6}"
                         remote_id               = item_remote_id
 
             elif post.get('id') == item_remote_id:      # either a self reblog, or just a blog, + blog name is same
-                if item_name == post.get('blog_name'):  # it's just a normal blog, nothing fancy not a reblog but can be part of a reblog (comment added)
+                if item_name == post.get('blog_name') and item_name is not None:  # it's just a normal blog, nothing fancy not a reblog but can be part of a reblog (comment added)
                     if item.get('is_current_item'):     # self reblog that was updated! we keep all to update the context explicitly
 
                         logging.info(BColors.YELLOW + "{0} Replacing {1} (id = rid) content_raw of:{2} \
@@ -1406,6 +1406,8 @@ def extract_urls(content, parsehtml=False):
         for capped in item:
             if capped in cache or capped is '':
                 # http_walk += capped.count('http')
+                continue
+            if instances.my_args.ignore_non_tumblr_urls and 'tumblr' not in capped:
                 continue
             # logging.warning('captured: {0}'.format(capped))
             cache.add(capped)
@@ -1750,7 +1752,7 @@ def look_for_lost_urls(con, write_path):
     logging.warning("Getting lost urls")
     counter = 0
     t0 = time.time()
-    with open(os.sep + write_path + "found_urls_in_db" + time.strftime('%Y%m%d_%H%M%S'), 'w') as f:
+    with open(write_path + os.sep + "found_urls_in_db" + time.strftime('%Y%m%d_%H%M%S'), 'w') as f:
         try:
             cur.execute(r"""select a.filebasename, b.file_url from OLD_1280 a join urls b on b.FILE_URL like '%'||a.FILEBASENAME||'%'""")
             while True:
