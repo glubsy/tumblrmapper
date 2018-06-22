@@ -16,8 +16,6 @@ try:
 except ImportError:
     OAUTHLIB_AVAIL = False
 
-
-
 # logging = logging.getLogger()
 
 
@@ -33,7 +31,7 @@ class APIKeyDepleted(Exception):
         """Read all api key fields for the closest date in which an API is available again"""
         date_set = set()
         for key in instances.api_keys:
-            if key.is_disabled: # not really necessary
+            if key.disabled or key.blacklisted: # not really necessary
                 date_set.add(max(key.disabled_until, key.blacklisted_until))
         return min(date_set)
 
@@ -93,7 +91,8 @@ class ListCycle(list):
             pass
         except BaseException as e:
             traceback.print_exc()
-            logging.debug(f"{BColors.RED}Exception in cycle of ListCycle() cursor={self.cur} length={len(iterable)}: {e}{BColors.ENDC}")
+            logging.debug(f"{BColors.RED}Exception in cycle of ListCycle() \
+cursor={self.cur} length={len(iterable)}: {e}{BColors.ENDC}")
 
 
 def get_api_key_object_list(api_keys_filepath):
@@ -211,8 +210,8 @@ def get_random_api_key(apikey_list=None):
         attempt += 1
         # if attempt >= len(apikey_list):
         #     break
-        if keycheck.is_disabled():
-            if keycheck.enable():
+        if keycheck.disabled:
+            if keycheck.check_enable():
                 return keycheck
         else:
             return keycheck
@@ -230,14 +229,6 @@ def remove_key(api_key_object):
     except Exception as e:
         logging.error(f'{BColors.FAIL}Error trying to remove API key {e}{BColors.ENDC}')
         pass
-
-
-def inc_key_request(api_key):
-    api_key.use_once()
-    api_key.print_count += 1
-    if (api_key.print_count % 10) == 0: # every 10 times, display it
-        logging.warning(BColors.MAGENTA + "API key used: {0}. Number of request left: {1}/{2}"\
-        .format(api_key.api_key, api_key.bucket_hour, api_key.bucket_day) + BColors.ENDC)
 
 
 class APIKey:
@@ -277,7 +268,7 @@ class APIKey:
             resource_owner_key=self.oauth_token,
             resource_owner_secret=self.oauth_secret
             )
-        logging.debug(f"requests_oauth was not found, no oauth member available.")
+        logging.debug(f"requests_oauth was not found, no oauth field available.")
         return None
 
     def disable_until(self, duration=3600):
@@ -300,18 +291,14 @@ disabled until {self.disabled_until_h}{BColors.ENDC}")
 {self.blacklisted_until_h}{BColors.ENDC}")
 
 
-    def is_disabled(self):
-        if self.disabled or self.blacklisted:
-            return True
-        return False
-
-
-    def enable(self):
+    def check_enable(self):
         """If not disabled or blacklisted, returns True,
         if disabled_until is overdue, enable and returns True, else returns False"""
-        now = int(time.time())
+
         if not self.disabled and not self.blacklisted:
             return True
+
+        now = int(time.time())
         if (now >= self.disabled_until) and (now >= self.blacklisted_until):
             self.disabled = False
             self.blacklisted = False
@@ -323,23 +310,63 @@ disabled until {self.disabled_until_h}{BColors.ENDC}")
         return False
 
 
-    def use_once(self):
-        """Decrements bucket of tocken by one, disable if reaches 0"""
-        now = int(time.time())
+    def enable(self):
+        """Just force enable"""
+        if self.disabled:
+            self.disabled = False
+            self.disabled_until = 0
+            self.disable_until_h = None
 
-        if (now - self.last_used_hour) < 3600: # not too early
-            self.bucket_hour -= 1
+
+    def is_disabled(self, check_type=None):
+        """Check if the key use tokens are depleted and disable if necessary"""
+        if check_type == "hour" or check_type == "both":
             if self.bucket_hour <= 0:
-                self.disable_until(3600) # an hour s #FIXME can be rolled in sooner
-        else:
-            self.last_used_hour = now
+                self.disable_until(3600) # an hour #FIXME can be rolled in sooner
 
-        if (now - self.last_used_day) < 86400: # not too early
-            self.bucket_day -= 1
+        if check_type == "day" or check_type == "both":
             if self.bucket_day <= 0:
                 self.disable_until(86400) # 24 hours #FIXME can be rolled in sooner
-        else:
+
+        if self.disabled or self.blacklisted:
+            return True
+        return False
+
+
+    def use(self, use_count=1):
+        """Decrements bucket of token by one, disable if reaches 0"""
+        now = int(time.time())
+
+        self.bucket_hour -= use_count
+        if (now - self.last_used_hour) > 3600: #LU was > 1 hour, update checkpoint
+            self.last_used_hour = now
+        self.is_disabled("hour")
+
+        self.bucket_day -= use_count
+        if (now - self.last_used_day) > 86400: #LU was > 1 day, update checkpoint
             self.last_used_day = now
+        self.is_disabled("day")
+
+        self.inc_print_usage()
+
+
+    def refund(self, amount=1):
+        """Increments back buckets of tokens by amount"""
+        self.bucket_hour += amount
+        self.bucket_day += amount
+
+        if self.disabled:
+            if self.bucket_hour > 1 and self.bucket_day > 1:
+                self.enable()
+
+
+    def inc_print_usage(self):
+        """Increment the use count and print status every 10 uses"""
+        self.print_count += 1
+        if (self.print_count % 10) == 0: # every 10 times, display it
+            logging.warning(f"{BColors.MAGENTA} API key used: {self.api_key}. \
+Number of request left: {self.bucket_hour}/{self.bucket_day}{BColors.ENDC}")
+
 
 
 def threaded_buckets():

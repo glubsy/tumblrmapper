@@ -738,7 +738,7 @@ def check_header_change(database, con, blog, update):
     """Check if the header changed, update info in DB if needed"""
 
     if update.total_posts > blog.total_posts:
-        # FIXME we have new posts
+        # FIXME we have new posts, increment current offset
         logging.warning("{0}{1.name} just got new posts in header! Updating DB.{2}"
         .format(BColors.BOLD, blog, BColors.ENDC))
         blog.db_response = db_handler.update_blog_info(database, con, blog)
@@ -947,13 +947,17 @@ seconds until {time.ctime(e.next_date_avail)}{BColors.ENDC}")
         """Returns requests.response object, reqype=[posts|info]"""
         if not api_key:
             api_key = self.api_key_object_ref
-        if api_key.is_disabled(): # FIXME: key should use_once() here, decrement if network error
-            logging.debug(f"{BColors.MAGENTA}Before requests, API key {api_key.api_key} \
-is disabled, trying to get a new one{BColors.ENDC}")
+
+        if api_key.is_disabled():
+            logging.debug(f"{BColors.MAGENTA}Before requests, \
+API key {api_key.api_key} is disabled, trying to get a new one{BColors.ENDC}")
             try:
                 self.attach_random_api_key()
             except:
                 raise
+
+        api_key.use()
+        used_key = 0
 
         params = {}
         if self.offset is not None and self.offset != 0:
@@ -986,6 +990,7 @@ is disabled, trying to get a new one{BColors.ENDC}")
 
         while attempt < 10:
             attempt += 1
+            used_key += 1
             try:
                 logging.info(BColors.GREEN + BColors.BOLD +
                 "{0} GET ip: {1} url: {2}".format(self.name,
@@ -996,8 +1001,6 @@ is disabled, trying to get a new one{BColors.ENDC}")
                 else: # need OAuth for "likes" or "followers"
                     response = self.requests_session.get(url=url, oauth=api_key.oauth, timeout=10)
 
-                api_keys.inc_key_request(api_key)
-
                 try:
                     response_json = self.parse_json(response)
                 except:
@@ -1006,6 +1009,7 @@ is disabled, trying to get a new one{BColors.ENDC}")
             except (requests.exceptions.ProxyError, requests.exceptions.Timeout) as e:
                 logging.info(BColors.FAIL + "{0} Proxy {1} error: {2}"\
                 .format(self.name, self.proxy_object.get('ip_address'), e.__repr__()) + BColors.ENDC)
+                used_key -= 1
                 try:
                     self.get_new_proxy()
                 except:
@@ -1015,29 +1019,39 @@ is disabled, trying to get a new one{BColors.ENDC}")
             except (ConnectionError, requests.exceptions.RequestException) as e:
                 logging.info(BColors.FAIL + "{0} Connection error Proxy {1}: {2}"
                 .format(self.name, self.proxy_object.get('ip_address'), e.__repr__()) + BColors.ENDC)
+                used_key -= 1
                 try:
                     self.get_new_proxy()
                 except:
                     continue
                 continue
+
             except (json.decoder.JSONDecodeError) as e:
-                logging.info(f"{BColors.FAIL}Fatal error decoding json, should be \
-removing proxy {self.proxy_object.get('ip_address')} (continue){BColors.ENDC}")
+                logging.info(f"{BColors.FAIL}Fatal error decoding json, maybe we should be \
+removing proxy {self.proxy_object.get('ip_address')}? (continue){BColors.ENDC}")
 
                 if response.text.find('Service is temporarily unavailable') != -1:
                     self.temp_disabled = True # HACK: will only be reset next script start
                     raise BaseException("Server on hold!")
                 #else: self.get_new_proxy()
                 continue
+
             except:
                 logging.debug(f"{BColors.FAIL}Uncaught exception in request! (continue){BColors.ENDC}")
                 continue
+
             break
+
+        if used_key <= 0:
+            api_key.refund()
+        elif used_key > 1:
+            api_key.use(use_count=used_key - 1)
 
         try:
             self.check_response_validate_update(response_json, updateobj, self.lock)
         except:
             raise
+
 
 
     def parse_json(self, response):
@@ -1444,7 +1458,7 @@ def main(args):
     #         executor.submit(insert_into_db, response)
 
     # exit
-    # db.close_connection()
+    db.close_connection()
     final_cleanup(instances.proxy_scanner)
     return
 

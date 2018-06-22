@@ -88,11 +88,12 @@ class Database():
 
     def close_connection(self, con=None):
         if not con:
-            for item in self.con:
-                item.close()
-                self.con.remove(item)
-        self.con.remove(con)
-        return con.close()
+            for connection in self.con:
+                connection.close()
+                self.con.remove(connection)
+        else:
+            self.con.remove(con)
+            return con.close()
 
 
 
@@ -1407,7 +1408,7 @@ def extract_urls(content, parsehtml=False):
             if capped in cache or capped is '':
                 # http_walk += capped.count('http')
                 continue
-            if instances.my_args.ignore_non_tumblr_urls and 'tumblr' not in capped:
+            if instances.my_args.ignore_non_tumblr_urls and 'tumblr_' not in capped:
                 continue
             # logging.warning('captured: {0}'.format(capped))
             cache.add(capped)

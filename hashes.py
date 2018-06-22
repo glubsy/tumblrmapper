@@ -188,6 +188,7 @@ def compute_hashes(db):
         update_hash_in_db(con, blog, normal_hashes, inline_hashes)
 
     logging.warning(f'{BColors.GREEN}Done generating hashes for blogs.{BColors.ENDC}')
+    db.close_connection()
 
 def get_posts_for_blog(blog, con):
     """sets of urls. DEPRECATED"""

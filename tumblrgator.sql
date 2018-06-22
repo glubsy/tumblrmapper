@@ -22,6 +22,12 @@ CREATE DOMAIN D_BOOLEAN
 CREATE DOMAIN D_EPOCH
  AS BIGINT
 ;
+CREATE DOMAIN D_HASH
+ AS VARCHAR(25)
+ COLLATE NONE;
+CREATE DOMAIN D_INLINE_HASH
+ AS VARCHAR(45)
+ COLLATE NONE;
 CREATE DOMAIN D_LONG_TEXT
  AS VARCHAR(500)
  COLLATE NONE;
@@ -40,7 +46,57 @@ CREATE DOMAIN D_URL
 /******************* PROCEDURES ******************/
 
 SET TERM ^ ;
-CREATE PROCEDURE FETCH_ONE_BLOGNAME
+CREATE PROCEDURE FETCH_ALL_BLOG_S_POSTS (
+    I_PARAM VARCHAR(10) )
+RETURNS (
+    O_POST_ID D_POST_NO,
+    O_REMOTE_ID D_POST_NO,
+    O_ORIGIN_ID D_AUTO_ID,
+    O_REBLOGGED_ID D_AUTO_ID,
+    O_NOTES INTEGER,
+    O_ORIGIN_ID2 D_AUTO_ID,
+    O_ORIGIN_NAME D_BLOG_NAME,
+    O_REBLOGGED_ID2 D_AUTO_ID,
+    O_REBLOGGED_NAME2 D_BLOG_NAME )
+AS
+BEGIN SUSPEND; END^
+SET TERM ; ^
+
+SET TERM ^ ;
+CREATE PROCEDURE FETCH_DEAD_POSTS (
+    I_NAME D_BLOG_NAME )
+RETURNS (
+    O_POST_ID D_POST_NO,
+    O_REMOTE_ID D_POST_NO,
+    O_ORIGIN_ID D_AUTO_ID,
+    O_REBLOGGED_ID D_AUTO_ID,
+    O_NOTES INTEGER,
+    O_ORIGIN_ID2 D_AUTO_ID,
+    O_ORIGIN_NAME D_BLOG_NAME,
+    O_REBLOGGED_ID2 D_AUTO_ID,
+    O_REBLOGGED_NAME2 D_BLOG_NAME )
+AS
+BEGIN SUSPEND; END^
+SET TERM ; ^
+
+SET TERM ^ ;
+CREATE PROCEDURE FETCH_ONE_BLOGNAME (
+    I_STATUS_TYPE VARCHAR(10) DEFAULT 'resume' )
+RETURNS (
+    O_NAME D_BLOG_NAME,
+    O_OFFSET INTEGER,
+    O_HEALTH VARCHAR(5),
+    O_STATUS VARCHAR(10),
+    O_TOTAL INTEGER,
+    O_SCRAPED INTEGER,
+    O_CHECKED D_EPOCH,
+    O_UPDATED D_EPOCH )
+AS
+BEGIN SUSPEND; END^
+SET TERM ; ^
+
+SET TERM ^ ;
+CREATE PROCEDURE FETCH_ONE_DONE_BLOGNAME
 RETURNS (
     O_NAME D_BLOG_NAME,
     O_OFFSET INTEGER,
@@ -76,19 +132,11 @@ SET TERM ; ^
 
 SET TERM ^ ;
 CREATE PROCEDURE INSERT_BLOGNAME_GATHERED (
-    I_BLOGNAME D_BLOG_NAME )
+    I_BLOGNAME D_BLOG_NAME,
+    I_NEW VARCHAR(10) DEFAULT NULL )
 RETURNS (
-    O_GENERATED_AUTO_ID D_AUTO_ID )
-AS
-BEGIN SUSPEND; END^
-SET TERM ; ^
-
-SET TERM ^ ;
-CREATE PROCEDURE INSERT_CONTEXT (
-    I_POST_ID D_POST_NO NOT NULL,
-    I_TIMESTAMP D_EPOCH,
-    I_REMOTE_ID D_POST_NO DEFAULT null,
-    I_CONTEXT D_SUPER_LONG_TEXT DEFAULT null )
+    O_GENERATED_AUTO_ID D_AUTO_ID,
+    O_CRAWL_STATUS VARCHAR(10) )
 AS
 BEGIN SUSPEND; END^
 SET TERM ; ^
@@ -100,7 +148,8 @@ CREATE PROCEDURE INSERT_POST (
     I_POST_URL D_POSTURL,
     I_POST_DATE D_EPOCH,
     I_REMOTEID D_POST_NO DEFAULT null,
-    I_REBLOGGED_BLOG_NAME D_BLOG_NAME DEFAULT null )
+    I_REBLOGGED_BLOG_NAME D_BLOG_NAME DEFAULT null,
+    I_NOTES INTEGER DEFAULT null )
 AS
 BEGIN SUSPEND; END^
 SET TERM ; ^
@@ -115,9 +164,22 @@ BEGIN SUSPEND; END^
 SET TERM ; ^
 
 SET TERM ^ ;
+CREATE PROCEDURE RESET_BLOG_CRAWLING_STATUS (
+    I_NAME D_BLOG_NAME )
+AS
+BEGIN SUSPEND; END^
+SET TERM ; ^
+
+SET TERM ^ ;
 CREATE PROCEDURE RESET_CRAWL_STATUS (
     I_BLOG_NAME D_BLOG_NAME,
     I_RESET_TYPE VARCHAR(10) )
+AS
+BEGIN SUSPEND; END^
+SET TERM ; ^
+
+SET TERM ^ ;
+CREATE PROCEDURE RESET_CRAWL_STATUS_ALL
 AS
 BEGIN SUSPEND; END^
 SET TERM ; ^
@@ -162,14 +224,6 @@ AS
 BEGIN SUSPEND; END^
 SET TERM ; ^
 
-SET TERM ^ ;
-CREATE PROCEDURE UPDATE_CRAWLING_BLOG_STATUS (
-    I_NAME D_BLOG_NAME,
-    I_INPUT D_BOOLEAN )
-AS
-BEGIN SUSPEND; END^
-SET TERM ; ^
-
 /******************** TABLES **********************/
 
 CREATE TABLE BLOGS
@@ -185,26 +239,23 @@ CREATE TABLE BLOGS
   LAST_CHECKED D_EPOCH,
   LAST_UPDATE D_EPOCH,
   PRIORITY SMALLINT,
+  HASH D_HASH,
+  INLINE_HASH D_INLINE_HASH,
   CONSTRAINT INTEG_2 PRIMARY KEY (AUTO_ID),
   CONSTRAINT BLOGNAMES_UNIQUE UNIQUE (BLOG_NAME)
   USING INDEX IX_BLOGNAMES
 );
-CREATE TABLE CONTEXTS
+CREATE TABLE CRAWLING
 (
-  POST_ID D_POST_NO NOT NULL,
-  REMOTE_ID D_POST_NO,
-  TTIMESTAMP D_EPOCH,
-  LATEST_REBLOG D_POST_NO,
-  CONTEXT D_SUPER_LONG_TEXT,
-  CONSTRAINT INTEG_10 PRIMARY KEY (POST_ID),
-  CONSTRAINT INTEG_9 UNIQUE (REMOTE_ID)
+  BLOG_NAME D_BLOG_NAME NOT NULL,
+  CRAWL_STATUS VARCHAR(20),
+  CONSTRAINT INTEG_21 PRIMARY KEY (BLOG_NAME)
 );
 CREATE TABLE OLD_1280
 (
   FILENAME VARCHAR(60) NOT NULL,
   FILEBASENAME VARCHAR(60),
   PATH VARCHAR(10000),
-  DL D_BOOLEAN,
   CONSTRAINT INTEG_17 PRIMARY KEY (FILENAME)
 );
 CREATE TABLE POSTS
@@ -215,6 +266,7 @@ CREATE TABLE POSTS
   REBLOGGED_BLOGNAME D_AUTO_ID,
   POST_URL D_POSTURL NOT NULL,
   POST_DATE D_EPOCH,
+  NOTES INTEGER,
   CONSTRAINT INTEG_4 PRIMARY KEY (POST_ID)
 );
 CREATE TABLE URLS
@@ -226,13 +278,119 @@ CREATE TABLE URLS
 );
 /********************* VIEWS **********************/
 
+CREATE VIEW POSTS_WITH_NAMES (POST_ID, ORIGIN_BLOGNAME, REBLOGGED_BLOGNAME, 
+    AUTO_ID, BLOG_NAME)
+AS 
+select p.post_id, p.ORIGIN_BLOGNAME, p.REBLOGGED_BLOGNAME, b.auto_id, b.BLOG_NAME
+from posts as p
+inner join blogs as b on b.auto_id = p.REBLOGGED_BLOGNAME;
+CREATE VIEW POSTS_WITH_REBLOGGED_NAME (POST_ID, ORIGIN_BLOGNAME, 
+    REBLOGGED_BLOGNAME, AUTO_ID, BLOG_NAME)
+AS 
+select p.post_id, p.ORIGIN_BLOGNAME, p.REBLOGGED_BLOGNAME, b.auto_id, b.BLOG_NAME
+from posts as p
+inner join blogs as b on b.auto_id = p.REBLOGGED_BLOGNAME;
 /******************* EXCEPTIONS *******************/
 
 /******************** TRIGGERS ********************/
 
 
 SET TERM ^ ;
-ALTER PROCEDURE FETCH_ONE_BLOGNAME
+ALTER PROCEDURE FETCH_ALL_BLOG_S_POSTS (
+    I_PARAM VARCHAR(10) )
+RETURNS (
+    O_POST_ID D_POST_NO,
+    O_REMOTE_ID D_POST_NO,
+    O_ORIGIN_ID D_AUTO_ID,
+    O_REBLOGGED_ID D_AUTO_ID,
+    O_NOTES INTEGER,
+    O_ORIGIN_ID2 D_AUTO_ID,
+    O_ORIGIN_NAME D_BLOG_NAME,
+    O_REBLOGGED_ID2 D_AUTO_ID,
+    O_REBLOGGED_NAME2 D_BLOG_NAME )
+AS
+declare variable v_blog D_BLOG_NAME;
+BEGIN
+    if (:i_param = 'dead') then
+    begin
+        for select first 1 (BLOG_NAME) from BLOGS where (((HEALTH = 'DEAD') and (CRAWLING != 1))
+        or ((HEALTH = 'WIPED' and TOTAL_POSTS <= 2) and (CRAWLING != 1))) into :v_blog do
+        begin
+            update blogs set CRAWLING = 1 where blogs.blog_name = :v_blog; --avoid rerolling it
+            insert into CRAWLING (BLOG_NAME, CRAWL_STATUS) values (:v_blog, 'progress');
+            if (exists (select first 1 * from FETCH_DEAD_POSTS(:v_blog) where o_notes is null)) THEN
+            begin
+                for select * from FETCH_DEAD_POSTS(:v_blog) where o_notes is null
+                into :o_post_id, :o_remote_id, :o_origin_id, :o_reblogged_id, :o_notes,
+                :o_origin_id2, :o_origin_name, :o_reblogged_id2, :o_reblogged_name2
+                do
+                suspend;
+                exit;
+            end
+            else
+            O_REBLOGGED_NAME2 = :v_blog;
+            O_post_id = 0; -- no reblogs found found
+            suspend;
+        end
+    end
+    else if (:i_param = 'priority') then
+    begin
+        for select first 1 (BLOG_NAME) from BLOGS where ((PRIORITY is not null) and (CRAWLING != 1))
+        order by PRIORITY desc nulls last into :v_blog do
+        begin
+            update blogs set CRAWLING = 1 where blogs.blog_name = :v_blog; --avoid rerolling it
+            insert into CRAWLING (BLOG_NAME, CRAWL_STATUS) values (:v_blog, 'progress');
+            if (exists (select first 1 * from FETCH_DEAD_POSTS(:v_blog) where o_notes is null)) THEN
+            begin
+                for select * from FETCH_DEAD_POSTS(:v_blog) where o_notes is null
+                into :o_post_id, :o_remote_id, :o_origin_id, :o_reblogged_id, :o_notes,
+                :o_origin_id2, :o_origin_name, :o_reblogged_id2, :o_reblogged_name2
+                do
+                suspend;
+                exit;
+            end
+            else
+            O_REBLOGGED_NAME2 = :v_blog;
+            O_post_id = 0; -- no reblogs found found
+            suspend;
+        end
+    end
+end^
+SET TERM ; ^
+
+
+SET TERM ^ ;
+ALTER PROCEDURE FETCH_DEAD_POSTS (
+    I_NAME D_BLOG_NAME )
+RETURNS (
+    O_POST_ID D_POST_NO,
+    O_REMOTE_ID D_POST_NO,
+    O_ORIGIN_ID D_AUTO_ID,
+    O_REBLOGGED_ID D_AUTO_ID,
+    O_NOTES INTEGER,
+    O_ORIGIN_ID2 D_AUTO_ID,
+    O_ORIGIN_NAME D_BLOG_NAME,
+    O_REBLOGGED_ID2 D_AUTO_ID,
+    O_REBLOGGED_NAME2 D_BLOG_NAME )
+AS
+begin
+    for select p.post_id, p.remote_id, p.ORIGIN_BLOGNAME, p.REBLOGGED_BLOGNAME, p.notes, c1.auto_id, c1.BLOG_NAME, c2.auto_id, c2.BLOG_NAME
+    from posts as p
+    left join blogs as c1 on c1.auto_id = p.reblogged_blogname or (c1.auto_id = p.ORIGIN_BLOGNAME and c1.auto_id = p.REBLOGGED_BLOGNAME)
+    left join blogs as c2 on c2.auto_id = p.origin_blogname or (c2.auto_id = p.REBLOGGED_BLOGNAME and c2.auto_id = p.ORIGIN_BLOGNAME)
+    where (p.reblogged_blogname = (select auto_id from blogs where blogs.blog_name = :i_name))
+    or (p.ORIGIN_BLOGNAME = (select auto_id from blogs where blogs.blog_name = :i_name))
+    into :o_post_id, :o_remote_id, :o_origin_id, :o_reblogged_id, :o_notes,
+    :o_origin_id2, :o_origin_name, :o_reblogged_id2, :o_reblogged_name2
+    do
+    suspend;
+end^
+SET TERM ; ^
+
+
+SET TERM ^ ;
+ALTER PROCEDURE FETCH_ONE_BLOGNAME (
+    I_STATUS_TYPE VARCHAR(10) DEFAULT 'resume' )
 RETURNS (
     O_NAME D_BLOG_NAME,
     O_OFFSET INTEGER,
@@ -244,36 +402,52 @@ RETURNS (
     O_UPDATED D_EPOCH )
 AS
 BEGIN
-if (exists (select (BLOG_NAME) from BLOGS where ((CRAWL_STATUS = 'resume') and (CRAWLING = 0)))) then
+if (exists (select BLOG_NAME from BLOGS where ((CRAWL_STATUS = :i_status_type) and (CRAWLING = 0)))) then
     begin
     for select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED, LAST_UPDATE
-    from BLOGS where ((CRAWL_STATUS = 'resume') and (CRAWLING = 0)) order by PRIORITY desc nulls last ROWS 1
-    with lock
+    from BLOGS where ((CRAWL_STATUS = :i_status_type) and (CRAWLING = 0)) order by PRIORITY desc nulls last ROWS 1 with lock
     into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated
     as cursor cur do
-        update BLOGS set CRAWLING = 1 where current of cur;
+        if (:o_status = 'resume') THEN
+        begin
+            update BLOGS set CRAWLING = 1 where current of cur;
+            insert into CRAWLING (BLOG_NAME, CRAWL_STATUS) values (:o_name, 'progress'); 
+        end
+        else if (:o_status = 'new') THEN
+        begin
+            update BLOGS set CRAWL_STATUS = 'init', CRAWLING = 1 where current of cur;
+            insert into CRAWLING (BLOG_NAME, CRAWL_STATUS) values (:o_name, 'init');
+        end
     exit;
     end
-else
-if (exists (select (BLOG_NAME) from BLOGS where (CRAWL_STATUS = 'new'))) then
-    begin
-    for select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED, LAST_UPDATE
-            from BLOGS where (CRAWL_STATUS = 'new')
-        order by PRIORITY desc nulls last ROWS 1 with lock
-        into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated
-        as cursor tcur do
-            update BLOGS set CRAWL_STATUS = 'init', CRAWLING = 1 where current of tcur;
-    exit;
-    end
-ELSE /*fetch the oldest last checked blog*/
+END^
+SET TERM ; ^
+
+
+SET TERM ^ ;
+ALTER PROCEDURE FETCH_ONE_DONE_BLOGNAME
+RETURNS (
+    O_NAME D_BLOG_NAME,
+    O_OFFSET INTEGER,
+    O_HEALTH VARCHAR(5),
+    O_STATUS VARCHAR(10),
+    O_TOTAL INTEGER,
+    O_SCRAPED INTEGER,
+    O_CHECKED D_EPOCH,
+    O_UPDATED D_EPOCH )
+AS
+BEGIN
 if (exists (select BLOG_NAME from BLOGS where (CRAWL_STATUS = 'DONE'))) then
     BEGIN
     for select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED, LAST_UPDATE
-        from BLOGS where ((CRAWL_STATUS = 'DONE') and (POSTS_SCRAPED != TOTAL_POSTS))
+        from BLOGS where (CRAWL_STATUS = 'DONE')
         order by (LAST_CHECKED) asc nulls last ROWS 1 with lock
         into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated
         as cursor tcur do
+        begin
             update BLOGS set CRAWL_STATUS = 'resume', CRAWLING = 1 where current of tcur;
+            insert into CRAWLING (BLOG_NAME, CRAWL_STATUS) values (:o_name, 'progress');
+        end
         exit;
     END
 END^
@@ -348,64 +522,36 @@ SET TERM ; ^
 
 SET TERM ^ ;
 ALTER PROCEDURE INSERT_BLOGNAME_GATHERED (
-    I_BLOGNAME D_BLOG_NAME )
+    I_BLOGNAME D_BLOG_NAME,
+    I_NEW VARCHAR(10) DEFAULT NULL )
 RETURNS (
-    O_GENERATED_AUTO_ID D_AUTO_ID )
+    O_GENERATED_AUTO_ID D_AUTO_ID,
+    O_CRAWL_STATUS VARCHAR(10) )
 AS
 BEGIN
 if (not exists (select AUTO_ID from BLOGS where (BLOGS.BLOG_NAME = :i_blogname)))
 THEN begin
     o_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence2, 1);
-    INSERT into BLOGS (AUTO_ID, BLOG_NAME) values (:o_generated_auto_id, :i_blogname);
+    INSERT into BLOGS (AUTO_ID, BLOG_NAME, CRAWL_STATUS) values (:o_generated_auto_id, :i_blogname, :i_new);
+    suspend;
+    exit;
     end
 ELSE
 BEGIN
-    select AUTO_ID from BLOGS where BLOGS.BLOG_NAME = :i_blogname into :o_generated_auto_id;
-    exit;
+    select AUTO_ID, CRAWL_STATUS from BLOGS where BLOGS.BLOG_NAME = :i_blogname into :o_generated_auto_id, o_crawl_status;
+    if ((:i_new is not NULL ) and (:o_crawl_status is NULL)) then
+        begin
+            update BLOGS set CRAWL_STATUS = :i_new where BLOG_NAME = :i_blogname;
+            suspend;
+            exit;
+        end
+    else
+        suspend;
+        exit;
 END
 WHEN GDSCODE unique_key_violation
 DO
 o_generated_auto_id = GEN_ID(tBLOGS_autoid_sequence2, -1);
-END^
-SET TERM ; ^
-
-
-SET TERM ^ ;
-ALTER PROCEDURE INSERT_CONTEXT (
-    I_POST_ID D_POST_NO NOT NULL,
-    I_TIMESTAMP D_EPOCH,
-    I_REMOTE_ID D_POST_NO DEFAULT null,
-    I_CONTEXT D_SUPER_LONG_TEXT DEFAULT null )
-AS
-BEGIN
-if (:i_remote_id is null) then
-    begin /* we store everything, it's an original post*/
-        insert into CONTEXTS (POST_ID, TTIMESTAMP, REMOTE_ID, CONTEXT)
-        values (:i_post_id, :i_timestamp, :i_remote_id, :i_context);
-    end
-else
-    begin /* we might not want to keep it*/
-        if (exists (select (REMOTE_ID) from CONTEXTS where (REMOTE_ID = :i_remote_id))) then /*if remote_id already in remote_id col*/
-            begin                                                                           /*keep the latest one, update if newer*/
-                if (:i_timestamp > (select (TTIMESTAMP) from CONTEXTS where (REMOTE_ID = :i_remote_id))) then
-                begin
-                    update CONTEXTS
-                    set CONTEXT = :i_context,
-                        TTIMESTAMP = :i_timestamp,
-                        LATEST_REBLOG = :i_post_id
-                        where (REMOTE_ID = :i_remote_id);
-                    exit;
-                end
-            end
-        else
-            begin
-                insert into CONTEXTS (POST_ID, TTIMESTAMP, REMOTE_ID, CONTEXT)
-                values (:i_post_id, :i_timestamp, :i_remote_id, :i_context);
-                exit;
-            end
-        end
---when any do
---exit;
 END^
 SET TERM ; ^
 
@@ -417,7 +563,8 @@ ALTER PROCEDURE INSERT_POST (
     I_POST_URL D_POSTURL,
     I_POST_DATE D_EPOCH,
     I_REMOTEID D_POST_NO DEFAULT null,
-    I_REBLOGGED_BLOG_NAME D_BLOG_NAME DEFAULT null )
+    I_REBLOGGED_BLOG_NAME D_BLOG_NAME DEFAULT null,
+    I_NOTES INTEGER DEFAULT null )
 AS
 declare variable v_blog_origin_id d_auto_id;
 declare variable v_fetched_reblogged_blog_id d_auto_id default null;
@@ -425,18 +572,23 @@ declare variable v_b_update_gathered d_boolean default 0;
 BEGIN
 
 select AUTO_ID from BLOGS where BLOG_NAME = :i_blog_origin into :v_blog_origin_id;
+if (:v_blog_origin_id is null) THEN 
+begin
+    select O_GENERATED_AUTO_ID from INSERT_BLOGNAME_GATHERED(:i_blog_origin)
+    into :v_blog_origin_id;
+END
 
 if (:i_reblogged_blog_name is not null)
 THEN
-execute procedure INSERT_BLOGNAME_GATHERED(:i_reblogged_blog_name)
-returning_values :v_fetched_reblogged_blog_id;
+select O_GENERATED_AUTO_ID from INSERT_BLOGNAME_GATHERED(:i_reblogged_blog_name)
+into :v_fetched_reblogged_blog_id;
 
-INSERT into POSTS (POST_ID, POST_URL, POST_DATE, REMOTE_ID,
-ORIGIN_BLOGNAME, REBLOGGED_BLOGNAME)
+update or insert into posts (POST_ID, POST_URL, POST_DATE, REMOTE_ID,
+ORIGIN_BLOGNAME, REBLOGGED_BLOGNAME, NOTES)
 values (:i_postid, :i_post_url, :i_post_date, :i_remoteid,
-:v_blog_origin_id, :v_fetched_reblogged_blog_id);
-END
-^
+:v_blog_origin_id, :v_fetched_reblogged_blog_id, :i_notes)
+matching (post_id, ORIGIN_BLOGNAME);
+END^
 SET TERM ; ^
 
 
@@ -478,6 +630,17 @@ SET TERM ; ^
 
 
 SET TERM ^ ;
+ALTER PROCEDURE RESET_BLOG_CRAWLING_STATUS (
+    I_NAME D_BLOG_NAME )
+AS
+BEGIN
+delete from CRAWLING where BLOG_NAME = :i_name;
+update BLOGS set CRAWLING = 0 where BLOG_NAME = :i_name;
+END^
+SET TERM ; ^
+
+
+SET TERM ^ ;
 ALTER PROCEDURE RESET_CRAWL_STATUS (
     I_BLOG_NAME D_BLOG_NAME,
     I_RESET_TYPE VARCHAR(10) )
@@ -487,6 +650,26 @@ BEGIN
 select (CRAWL_STATUS) from BLOGS where (BLOG_NAME = :i_blog_name) into :v_crawl;
 if (v_crawl is not null) THEN
 update BLOGS set CRAWL_STATUS = :i_reset_type where (BLOG_NAME = :i_blog_name);
+END^
+SET TERM ; ^
+
+
+SET TERM ^ ;
+ALTER PROCEDURE RESET_CRAWL_STATUS_ALL
+AS
+declare variable v_status varchar(10);
+declare variable v_blog d_blog_name;
+BEGIN
+for select BLOG_NAME, CRAWL_STATUS from CRAWLING into :v_blog, :v_status
+do
+BEGIN
+    if (:v_status = 'init') THEN
+        update BLOGS set CRAWL_STATUS = 'new', CRAWLING = NULL where blog_name = :v_blog;
+    else if (:v_status = 'progress') THEN
+        update BLOGS set CRAWLING = 0 where blog_name = :v_blog;
+END
+delete from CRAWLING;
+
 END^
 SET TERM ; ^
 
@@ -525,6 +708,11 @@ BEGIN
     where BLOG_NAME = :i_name
     returning old.HEALTH, old.TOTAL_POSTS, old.LAST_UPDATE, old.LAST_CHECKED, old.POST_OFFSET, old.POSTS_SCRAPED
     into O_health, O_total_posts, O_updated, O_last_checked, O_offset, O_scraped;
+    if (:i_crawling != 0) then 
+        update or insert into CRAWLING (BLOG_NAME, CRAWL_STATUS)
+        values (:i_name, 'progress') MATCHING (BLOG_NAME);
+    else if (:i_crawling = 0) THEN
+        delete from CRAWLING where BLOG_NAME = :i_name;
 END^
 SET TERM ; ^
 
@@ -559,31 +747,31 @@ LAST_CHECKED = :v_checked
 where BLOG_NAME = :i_name
 returning old.HEALTH, old.total_posts, old.LAST_UPDATE, old.LAST_CHECKED, POST_OFFSET, POSTS_SCRAPED
 into O_health, O_total_posts, O_updated, O_last_checked, O_offset, O_scraped;
+if (:i_crawling != 0) then 
+update or insert into CRAWLING (BLOG_NAME, CRAWL_STATUS)
+    values (:i_name, 'progress') MATCHING (BLOG_NAME);
 END^
 SET TERM ; ^
 
 
-SET TERM ^ ;
-ALTER PROCEDURE UPDATE_CRAWLING_BLOG_STATUS (
-    I_NAME D_BLOG_NAME,
-    I_INPUT D_BOOLEAN )
-AS
-BEGIN
-update BLOGS set CRAWLING = 0 where BLOG_NAME = :i_name;
-END^
-SET TERM ; ^
-
-
-ALTER TABLE CONTEXTS ADD CONSTRAINT INTEG_11
-  FOREIGN KEY (POST_ID) REFERENCES POSTS (POST_ID);
 ALTER TABLE POSTS ADD CONSTRAINT INTEG_7
   FOREIGN KEY (ORIGIN_BLOGNAME) REFERENCES BLOGS (AUTO_ID);
 ALTER TABLE POSTS ADD CONSTRAINT INTEG_8
   FOREIGN KEY (REBLOGGED_BLOGNAME) REFERENCES BLOGS (AUTO_ID);
+CREATE INDEX IX_REMOTE_IDS ON POSTS (REMOTE_ID);
 ALTER TABLE URLS ADD CONSTRAINT INTEG_15
   FOREIGN KEY (POST_ID) REFERENCES POSTS (POST_ID);
 GRANT EXECUTE
+ ON PROCEDURE FETCH_ALL_BLOG_S_POSTS TO  SYSDBA;
+
+GRANT EXECUTE
+ ON PROCEDURE FETCH_DEAD_POSTS TO  SYSDBA;
+
+GRANT EXECUTE
  ON PROCEDURE FETCH_ONE_BLOGNAME TO  SYSDBA;
+
+GRANT EXECUTE
+ ON PROCEDURE FETCH_ONE_DONE_BLOGNAME TO  SYSDBA;
 
 GRANT EXECUTE
  ON PROCEDURE INSERT_ARCHIVE TO  SYSDBA;
@@ -595,16 +783,19 @@ GRANT EXECUTE
  ON PROCEDURE INSERT_BLOGNAME_GATHERED TO  SYSDBA;
 
 GRANT EXECUTE
- ON PROCEDURE INSERT_CONTEXT TO  SYSDBA;
-
-GRANT EXECUTE
  ON PROCEDURE INSERT_POST TO  SYSDBA;
 
 GRANT EXECUTE
  ON PROCEDURE INSERT_URL TO  SYSDBA;
 
 GRANT EXECUTE
+ ON PROCEDURE RESET_BLOG_CRAWLING_STATUS TO  SYSDBA;
+
+GRANT EXECUTE
  ON PROCEDURE RESET_CRAWL_STATUS TO  SYSDBA;
+
+GRANT EXECUTE
+ ON PROCEDURE RESET_CRAWL_STATUS_ALL TO  SYSDBA;
 
 GRANT EXECUTE
  ON PROCEDURE UPDATE_BLOG_INFO TO  SYSDBA;
@@ -612,14 +803,11 @@ GRANT EXECUTE
 GRANT EXECUTE
  ON PROCEDURE UPDATE_BLOG_INFO_INIT TO  SYSDBA;
 
-GRANT EXECUTE
- ON PROCEDURE UPDATE_CRAWLING_BLOG_STATUS TO  SYSDBA;
-
 GRANT DELETE, INSERT, REFERENCES, SELECT, UPDATE
  ON BLOGS TO  SYSDBA WITH GRANT OPTION;
 
 GRANT DELETE, INSERT, REFERENCES, SELECT, UPDATE
- ON CONTEXTS TO  SYSDBA WITH GRANT OPTION;
+ ON CRAWLING TO  SYSDBA WITH GRANT OPTION;
 
 GRANT DELETE, INSERT, REFERENCES, SELECT, UPDATE
  ON OLD_1280 TO  SYSDBA WITH GRANT OPTION;
@@ -629,4 +817,10 @@ GRANT DELETE, INSERT, REFERENCES, SELECT, UPDATE
 
 GRANT DELETE, INSERT, REFERENCES, SELECT, UPDATE
  ON URLS TO  SYSDBA WITH GRANT OPTION;
+
+GRANT DELETE, INSERT, REFERENCES, SELECT, UPDATE
+ ON POSTS_WITH_NAMES TO  SYSDBA WITH GRANT OPTION;
+
+GRANT DELETE, INSERT, REFERENCES, SELECT, UPDATE
+ ON POSTS_WITH_REBLOGGED_NAME TO  SYSDBA WITH GRANT OPTION;
 
