@@ -490,7 +490,7 @@ more to process?{BColors.ENDC}")
                 # update_pbar(pbar, blog)
 
                 if blog.posts_scraped >= blog.total_posts or blog.offset >= blog.total_posts :
-                    logging.debug("{0} else loop: total_posts >= posts_scraped or >= offset, breaking loop!"
+                    logging.info("{0} else loop: total_posts <= posts_scraped or >= offset, breaking loop!"
                     .format(blog.name))
                     break
 
@@ -765,7 +765,8 @@ def blog_generator(db, con, lock, blog, pill2kill):
     blog.__init__(pill2kill=pill2kill, lock=lock)
     with lock:
         blog.name, blog.offset, blog.health, blog.crawl_status, blog.total_posts, \
-blog.posts_scraped, blog.last_checked, blog.last_updated = db_handler.fetch_random_blog(db, con)
+blog.posts_scraped, blog.last_checked, blog.last_updated = db_handler.fetch_random_blog(
+            db, con, status_req=None)
 
     if not blog.name:
         logging.debug(f"{BColors.RED}No blog fetched in blog_generator(){BColors.ENDC}")
@@ -953,6 +954,7 @@ seconds until {time.ctime(e.next_date_avail)}{BColors.ENDC}")
 API key {api_key.api_key} is disabled, trying to get a new one{BColors.ENDC}")
             try:
                 self.attach_random_api_key()
+                api_key = self.api_key_object_ref
             except:
                 raise
 
@@ -1032,6 +1034,7 @@ removing proxy {self.proxy_object.get('ip_address')}? (continue){BColors.ENDC}")
 
                 if response.text.find('Service is temporarily unavailable') != -1:
                     self.temp_disabled = True # HACK: will only be reset next script start
+                    logging.warning(f"{BColors.BOLD}Api error from:{url}{BColors.ENDC}")
                     raise BaseException("Server on hold!")
                 #else: self.get_new_proxy()
                 continue
@@ -1153,7 +1156,7 @@ Rolling for a new API key.\n{response_json}{BColors.ENDC}")
 
             if update.meta_status == 429 or update.meta_msg.find("Limit Exceeded") != -1:
                 # 'meta_status': 429, 'meta_msg': Limit Exceeded'
-                logging.critical(f"{BColors.RED}{self.name} Limit Exceeded 429 error{BColors.ENDC}")
+                logging.critical(f"{BColors.RED}{BColors.BLINKING}{self.name} Limit Exceeded 429 error{BColors.ENDC}")
 
                 # Renew API key
                 logging.critical(f"Renewing API key {self.api_key_object_ref.api_key}")

@@ -507,6 +507,43 @@ if (exists (select BLOG_NAME from BLOGS where (CRAWL_STATUS = 'DONE'))) then
 END
 """)
 
+        # Fetch DONE blogs ordered by last scraped
+        con.execute_immediate(\
+"""
+CREATE OR ALTER PROCEDURE RESET_INCOMPLETE_BLOGNAMES
+RETURNS (
+    O_COUNT integer)
+AS
+declare variable O_NAME D_BLOG_NAME;
+declare variable O_OFFSET INTEGER;
+declare variable O_HEALTH VARCHAR(5);
+declare variable O_STATUS VARCHAR(10);
+declare variable O_TOTAL INTEGER;
+declare variable O_SCRAPED INTEGER;
+declare variable O_CHECKED D_EPOCH;
+declare variable O_UPDATED D_EPOCH;
+declare variable O_actual integer;
+BEGIN
+o_count = 0;
+    for select BLOG_NAME, HEALTH, TOTAL_POSTS, CRAWL_STATUS, POST_OFFSET, POSTS_SCRAPED, LAST_CHECKED, LAST_UPDATE
+        from BLOGS where ((CRAWL_STATUS = 'DONE') and (POSTS_SCRAPED < TOTAL_POSTS and TOTAL_POSTS - POSTS_SCRAPED > 100))
+        into :o_name, :o_health, :o_total, :o_status, :o_offset, :o_scraped, :o_checked, :o_updated
+        as cursor tcur do
+        begin
+            select count(*) from (select POST_ID from POSTS where ORIGIN_BLOGNAME =
+ (select auto_id from BLOGS where BLOG_NAME = :o_name)) into :o_actual;
+            if (:o_total - :o_actual > 50) then
+            begin
+                o_count = :o_count + 1;
+                update BLOGS set CRAWL_STATUS = 'resume', POST_OFFSET = :o_scraped, posts_scraped = :o_actual where current of tcur;
+            end
+        end
+suspend;
+exit;
+END
+""")
+
+
 #         # Testing method with CRAWLING table (not used, ugly code)
 #         con.execute_immediate(
 # """
@@ -958,6 +995,7 @@ def fetch_random_blog(database, con, status_req=None):
     [new|resume|DONE]
     By default, looks for any "resume", then "new", then "DONE".
     If status_req is new or resume, DONE blogs will be skipped.
+    If status_req is "DONE", will look for DONE first, then "resume" then "new".
     returns: name, offset, health, status, total posts,
     scraped posts, last checked, last updated
     """
@@ -965,7 +1003,7 @@ def fetch_random_blog(database, con, status_req=None):
     if status_req is None:
         status_try_order = ["resume", "new", "DONE"]
     elif status_req == "DONE":
-        status_try_order = ["DONE"]
+        status_try_order = ["DONE", "resume", "new"]
     else: # only asked for new/resume, not DONE
         status_try_order = ["resume", "new"]
     # with fdb.TransactionContext(con):
@@ -1178,6 +1216,9 @@ def insert_posts(database, con, blog, update):
 
         added += 1
 
+        if post.get('notes'): # only if deep-scrape
+            scrape_post_notes(cur, post)
+
         if post.get('content_raw') is not None and instances.my_args.record_context:
             results = inserted_context(cur, post)
             errors += results[1]
@@ -1205,9 +1246,12 @@ Failed adding {errors} other items.{BColors.ENDC}")
 def get_scraped_post_num(database, con, blog):
     """Queries database for total number of post_id linked to blog.name"""
     cur = con.cursor()
-    cur.execute("select count(*) from (select POST_ID from POSTS where ORIGIN_BLOGNAME =\
+    try:
+        cur.execute("select count(*) from (select POST_ID from POSTS where ORIGIN_BLOGNAME =\
  (select auto_id from BLOGS where BLOG_NAME = '" + blog.name + "'));")
-    return cur.fetchone()[0]
+        return cur.fetchone()[0]
+    finally:
+        con.commit()
 
 
 def get_post_details(post):
@@ -1573,49 +1617,52 @@ def inserted_post(cur, post):
             note_count                      # number or notes is any
             ))
     except fdb.DatabaseError as e:
-        # if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != -1:
-        #     e = "duplicate"
+        if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != -1:
+            e = "duplicate"
         logging.error(f"{BColors.FAIL}DB ERROR{BColors.BLUE} post\t{post.get('id')} : {e}{BColors.ENDC}")
         errors += 1
-        success = False
+        success = True
     except BaseException as e:
         logging.debug(f"{BColors.FAIL}ERROR post\t{post.get('id')} : {e}{BColors.ENDC}")
         errors += 1
         success = False
 
-    if post.get('notes'): # only if deep-scrape
-        for note in post.get('notes'):
-            if note.get('post_id') is not None: # only when "type": "reblog"
-                # logging.debug(f"{BColors.LIGHTPINK}Note: {note.get('post_id')} {note.get('blog_name')}{BColors.ENDC}")
-                try:
-                    cur.callproc('insert_post', (
-                        note.get('post_id'),                                # post_id
-                        note.get('blog_name'),                              # blog_name (not null)
-                        note.get('blog_url') + "post/" + note.get('post_id'),# post_url (not null)
-                        note.get('timestamp'),                              # timestamp
-                        post.get('remote_id'),                              # remote_id
-                        post.get('reblogged_name')                          # reblogged_blog_name
-                        ))
-                except fdb.DatabaseError as e:
-                    # if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != -1:
-                    #     e = "duplicate"
-                    logging.info(f"{BColors.FAIL}DB ERROR{BColors.BLUE} \
+    # con.commit()
+    return success, errors
+
+
+def scrape_post_notes(cur, post):
+    """Get blognames from notes and insert them into BLOGS table"""
+
+    for note in post.get('notes'):
+        if note.get('post_id') is not None: # only when "type": "reblog"
+            # logging.debug(f"{BColors.LIGHTPINK}Note: {note.get('post_id')} {note.get('blog_name')}{BColors.ENDC}")
+            try:
+                cur.callproc('insert_post', (
+                    note.get('post_id'),                                # post_id
+                    note.get('blog_name'),                              # blog_name (not null)
+                    note.get('blog_url') + "post/" + note.get('post_id'),# post_url (not null)
+                    note.get('timestamp'),                              # timestamp
+                    post.get('remote_id'),                              # remote_id
+                    post.get('reblogged_name')                          # reblogged_blog_name
+                    ))
+            except fdb.DatabaseError as e:
+                # if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != -1:
+                #     e = "duplicate"
+                logging.info(f"{BColors.FAIL}DB ERROR{BColors.BLUE} \
 post note\t{post.get('id')}: {e}{BColors.ENDC}")
-                except BaseException as e:
-                    logging.debug(f"{BColors.FAIL}ERROR post note\t\
+            except BaseException as e:
+                logging.debug(f"{BColors.FAIL}ERROR post note\t\
 {post.get('id')} : {e}{BColors.ENDC}")
 
 
-            elif note.get('blog_name') is not None: # otherwise, just a "type": "like"
-                try:
-                    cur.callproc('insert_blogname_gathered',
-                                (note.get('blog_name'), 'new'))
-                except BaseException as e:
-                    logging.debug(f"{BColors.FAIL}error while inserting \
+        elif note.get('blog_name') is not None: # otherwise, just a "type": "like"
+            try:
+                cur.callproc('insert_blogname_gathered',
+                            (note.get('blog_name'), 'new'))
+            except BaseException as e:
+                logging.debug(f"{BColors.FAIL}error while inserting \
 {note.get('blog_name')} crawling_status: new. {e}{BColors.ENDC}")
-
-    # con.commit()
-    return success, errors
 
 
 def inserted_context(cur, post):
