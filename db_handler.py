@@ -1196,8 +1196,9 @@ def insert_posts(database, con, blog, update):
     """ Returns a tuple of number of posts processed, and dupe errors.
     CALL ONLY WITH A LOCK!"""
     cur = con.cursor()
-    t0 = time.time()
+    # t0 = time.time()
     added = 0
+    dupes = 0
     errors = 0
     post_errors = 0
     # with fdb.TransactionContext(con):
@@ -1213,6 +1214,7 @@ def insert_posts(database, con, blog, update):
         if not results[0]: # skip the rest because we need post entry in POSTS table
             post_errors += results[1]
             # continue
+        dupes += results[2]
 
         added += 1
 
@@ -1231,16 +1233,17 @@ def insert_posts(database, con, blog, update):
         logging.debug(BColors.BLUE + "COMMITTING" + BColors.ENDC)
         con.commit()
 
-    t1 = time.time()
-    logging.debug(f"{BColors.BLUE}Procedures to insert took {1000*(t1-t0):.2f} ms{BColors.ENDC}")
+    # t1 = time.time()
+    # logging.debug(f"{BColors.BLUE}Procedures to insert took {1000*(t1-t0):.2f} ms{BColors.ENDC}")
 
     logging.info(f"{BColors.BLUE}{BColors.BOLD}{blog.name} Successfully \
 attempted to insert {added} posts. Failed adding {post_errors} posts. \
+{dupes} duplicate posts. \
 Failed adding {errors} other items.{BColors.ENDC}")
 
     update.posts_response = [] #reset
 
-    return added, post_errors
+    return added, post_errors, dupes
 
 
 def get_scraped_post_num(database, con, blog):
@@ -1600,12 +1603,11 @@ def inserted_post(cur, post):
     """Returns True to ignore error"""
     # cur = con.cursor()
     errors = 0
+    dupes = 0
     success = True
     note_count = None
     if post.get('notes'):
-        note_count = 0
-        for note in post.get('notes'):
-            note_count += 1
+        note_count = len(post.get('notes'))
     try:
         cur.callproc('insert_post', (
             post.get('id'),                 # post_id
@@ -1618,17 +1620,22 @@ def inserted_post(cur, post):
             ))
     except fdb.DatabaseError as e:
         if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != -1:
-            e = "duplicate"
-        logging.error(f"{BColors.FAIL}DB ERROR{BColors.BLUE} post\t{post.get('id')} : {e}{BColors.ENDC}")
-        errors += 1
-        success = True
+            logging.error(f"{BColors.FAIL}DB ERROR{BColors.BLUE} post\t\
+{post.get('id')} : duplicate{BColors.ENDC}")
+            dupes += 1
+            success = True
+        else:
+            logging.error(f"{BColors.FAIL}{BColors.BOLD}DB ERROR{BColors.BLUE} post\t\
+{post.get('id')} : {e}{BColors.ENDC}")
+            errors += 1
+            success = False
     except BaseException as e:
         logging.debug(f"{BColors.FAIL}ERROR post\t{post.get('id')} : {e}{BColors.ENDC}")
         errors += 1
         success = False
 
     # con.commit()
-    return success, errors
+    return success, errors, dupes
 
 
 def scrape_post_notes(cur, post):

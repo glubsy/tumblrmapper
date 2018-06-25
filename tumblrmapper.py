@@ -449,35 +449,35 @@ more to process?{BColors.ENDC}")
 
         while not pill2kill.is_set() and not blog.eof:
             if blog.posts_scraped >= blog.total_posts or blog.offset >= blog.total_posts:
-                logging.debug(
-                "{0.name} before loop: posts_scraped {0.posts_scraped} or offset \
-{0.offset} >= total_posts {0.total_posts}, breaking loop!".format(blog))
+                logging.debug(f"{blog.name} before loop: \
+posts_scraped {blog.posts_scraped} or offset {blog.offset} >= total_posts \
+{blog.total_posts}, breaking loop!")
                 break
 
-            if not update.posts_response:  # could be some other field attached to blog
-                logging.warning(BColors.LIGHTYELLOW \
-                + "{0} Getting at offset {1} / {2}"
-                .format(blog.name, blog.offset, blog.total_posts) + BColors.ENDC)
+            if not update.posts_response:  #FIXME could be some other field attached to blog
+
+                logging.warning(f"{BColors.LIGHTYELLOW}{blog.name} \
+Getting at offset {blog.offset} / {blog.total_posts}{BColors.ENDC}")
 
                 try:
-                    api_get_request_wrapper(db, con, blog,
-                    update, deep_scrape, blog.crawl_status)
+                    api_get_request_wrapper(
+                        db, con, blog, update, deep_scrape, blog.crawl_status)
                 except BaseException as e:
-                    logging.debug(BColors.FAIL
-                     + "{0} Exception in api_get_request_wrapper from loop! {1!r}"
-                    .format(blog.name, e) + BColors.ENDC)
+                    logging.debug(f"{BColors.FAIL}{blog.name} \
+Exception in api_get_request_wrapper from loop! {e}{BColors.ENDC}")
                     break
 
                 try:
                     check_header_change(db, con, blog, update)
                 except:
-                    logging.debug("{0}{1}Error checking header change! Breaking.{2}"
-                    .format(BColors.FAIL, blog.name, BColors.ENDC))
+                    logging.debug(f"{BColors.FAIL}{blog.name}\
+Error checking header change! Breaking.{BColors.ENDC}")
                     break
 
-                if not update.posts_response: # nothing more
-                    blog.eof = True
-                    logging.debug("update.posts_response is {0.posts_response!r}! break".format(update))
+                if not update.posts_response:
+                    if blog.posts_scraped >= blog.total_posts or blog.offset >= blog.total_posts:
+                        blog.eof = True
+                    logging.debug(f"update.posts_response is {update.posts_response}! break")
                     break
             else:
                 logging.debug(f"{blog.name} inserting new posts")
@@ -487,11 +487,8 @@ more to process?{BColors.ENDC}")
                 except:
                     raise
 
-                # update_pbar(pbar, blog)
-
                 if blog.posts_scraped >= blog.total_posts or blog.offset >= blog.total_posts :
-                    logging.info("{0} else loop: total_posts <= posts_scraped or >= offset, breaking loop!"
-                    .format(blog.name))
+                    logging.info(f"{blog.name} else loop: total_posts <= posts_scraped or >= offset, breaking loop!")
                     break
 
         # We're done, no more found
@@ -526,27 +523,38 @@ more to process?{BColors.ENDC}")
 
 def insert_posts(db, con, db_update_lock, blog, update):
     with db_update_lock:
-        processed_posts, errors = db_handler.insert_posts(db, con, blog, update)
+        processed_posts, errors, dupes = db_handler.insert_posts(db, con, blog, update)
+    blog.db_dupes += dupes
     posts_added = processed_posts - errors # added - errors
+    if posts_added < 0:
+        posts_added = 0
     blog.posts_scraped += posts_added
     blog.offset += processed_posts
 
-    if posts_added == 0: # all posts were duplicates, we assume we are redoing previously done posts
-        logging.debug("{0}{1} posts_added were == {2}.{3}"
-        .format(BColors.RED + BColors.BOLD, blog.name, posts_added, BColors.ENDC))
-        if not instances.my_args.ignore_duplicates:
-            logging.debug("{0}{1} marking EOF for blog.{2}"
-            .format(BColors.RED + BColors.BOLD, blog.name, BColors.ENDC))
-            blog.eof = True
+    if posts_added == 0: # too many DB errors
+        logging.debug(f"{BColors.RED}{BColors.BOLD}{blog.name} \
+{posts_added} posts_added due to many BD errors{BColors.ENDC}")
 
-    logging.warning(f"{BColors.LIGHTYELLOW}{blog.name} Posts just scraped \
+        if not instances.my_args.ignore_duplicates:
+            logging.warning(f"{BColors.RED}{BColors.BOLD}{blog.name} setting crawling 2 \
+because {posts_added} post added this round, too many errors?{BColors.ENDC}")
+            blog.crawling = 2
+
+    # We assume we are redoing previously done posts
+    if blog.db_dupes >= 200 and not instances.my_args.ignore_duplicates: #FIXME arbitrarily
+        logging.warning(f"{BColors.RED}{BColors.BOLD}{blog.name} marking EOF \
+because {blog.db_dupes} dupes accumulated.{BColors.ENDC}")
+        blog.eof = True
+
+    logging.warning(f"{BColors.LIGHTYELLOW}{blog.name} current posts scraped \
 {blog.posts_scraped} Offset is now: {blog.offset}{BColors.ENDC}")
 
     db_handler.update_blog_info(db, con, blog, ignore_response=True)
+
     # we may have 0 due to dupes causing errors to negate our processed_posts count
     if blog.posts_scraped == 0:
         blog.posts_scraped = db_handler.get_scraped_post_num(db, con, blog)
-        logging.info(f"{blog.name} Adjusting back total post from Database\
+        logging.warning(f"{blog.name} Adjusting back total post from Database\
  due to counting errors: {blog.posts_scraped}")
 
 
@@ -590,6 +598,7 @@ def api_get_request_wrapper(db, con, blog, update, deep_scrape, crawl_status, po
     # Retry getting /posts until either 404 or success
     update.__init__()
     attempts = 0
+    offset_attempts = 0
     while not update.valid and attempts < 3:
         attempts += 1
         try:
@@ -599,6 +608,21 @@ def api_get_request_wrapper(db, con, blog, update, deep_scrape, crawl_status, po
                 return
             else:
                 continue
+
+        except APIServerError as e:
+            logging.warning(f"{BColors.LIGHTRED}{blog.name} Server on hold, \
+skipping offset {blog.offset}.{BColors.ENDC}")
+
+            attempts = 0 # HACK force infinite attempts
+            blog.offset += 1
+            offset_attempts += 1
+            if offset_attempts > 50:
+                # will only be reset next script start
+                # FIXME: might need to revert offset there if it's only a temporary error
+                blog.temp_disabled = True 
+                break
+            continue
+
         except BaseException as e:
             traceback.print_exc()
             logging.error(f"{BColors.RED}{blog.name} Exception during request: {e}{BColors.ENDC}")
@@ -616,9 +640,10 @@ def discrepancy_check(db, con, blog):
     """Gets actual posts_scraped from DB in case it differs from total/offset"""
 
     if blog.offset != blog.posts_scraped or blog.total_posts < blog.posts_scraped:
-        logging.debug(BColors.DARKGRAY + "{0} Error: blog.offset={1} blog.posts_scraped={2}.\
-Getting actual posts_scraped from DB"
-        .format(blog.name, blog.offset, blog.posts_scraped) + BColors.ENDC)
+
+        logging.debug(f"{BColors.DARKGRAY}{blog.name} Error: \
+blog.offset={blog.offset} blog.posts_scraped={blog.posts_scraped}. \
+Getting actual posts_scraped from DB{BColors.ENDC}")
 
         # getting actual posts_scraped
         blog.posts_scraped = db_handler.get_scraped_post_num(db, con, blog)
@@ -655,16 +680,15 @@ def blog_status_check(db, con, blog, update, deep_scrape):
 
         db_response = db_handler.update_blog_info(db, con, blog)
 
-        logging.debug(BColors.BLUE + "{0} Got DB response: {1}"\
-        .format(blog.name, db_response) + BColors.ENDC)
+        logging.debug(f"{BColors.BLUE}{blog.name} Got DB response: {db_response}{BColors.ENDC}")
 
         if not check_db_init_response(db_response, blog, isnew=isnew):
             logging.debug("{} check_db_init_response: False".format(blog.name))
             return False
 
     if not update.valid:
-        logging.error(BColors.RED + "{} Too many invalid request attempts! Aborting for now."\
-        .format(blog.name) + BColors.ENDC)
+        logging.error(f"{BColors.RED}{blog.name} Too many invalid request \
+attempts! Aborting for now.{BColors.ENDC}")
         if isnew:
             thread_premature_cleanup(db, con, blog, 'new')
         return False
@@ -753,8 +777,8 @@ def update_offset_if_new_posts(blog):
     # to avoid re-inserting previously inserted posts
     if blog.new_posts > 0:
         blog.offset += blog.new_posts
-        logging.info(BColors.RED + \
-        "{0} Offset incremented because of new posts by +{1}: {2}".format(blog.name, blog.new_posts, blog.offset) + BColors.ENDC)
+        logging.info(f"{BColors.RED}{blog.name} Offset incremented because of \
+new posts by +{blog.new_posts}: {blog.offset}{BColors.ENDC}")
         blog.new_posts = 0
 
 
@@ -805,7 +829,7 @@ class TumblrBlog:
     __slots__ = ('name', 'total_posts', 'posts_scraped', 'offset', 'health',
     'crawl_status', 'crawling', 'last_checked', 'last_updated', 'proxy_object',
     'api_key_object_ref', 'requests_session', 'current_json', 'update',
-    'new_posts', 'temp_disabled', 'eof', 'pill2kill', 'lock', 'db_response')
+    'new_posts', 'temp_disabled', 'eof', 'pill2kill', 'lock', 'db_response', 'db_dupes')
 
     def __init__(self, *args, **kwargs):
         self.name = None
@@ -828,6 +852,7 @@ class TumblrBlog:
         self.pill2kill = kwargs.get('pill2kill')
         self.lock = kwargs.get('lock')
         self.db_response = None
+        self.db_dupes = 0
 
     def init_session(self):
         if not self.requests_session: # first time
@@ -999,9 +1024,9 @@ API key {api_key.api_key} is disabled, trying to get a new one{BColors.ENDC}")
                 self.proxy_object.get('ip_address'), url) + BColors.ENDC)
 
                 if reqtype == "posts": # no need OAuth
-                    response = self.requests_session.get(url=url, timeout=10)
+                    response = self.requests_session.get(url=url, timeout=20)
                 else: # need OAuth for "likes" or "followers"
-                    response = self.requests_session.get(url=url, oauth=api_key.oauth, timeout=10)
+                    response = self.requests_session.get(url=url, oauth=api_key.oauth, timeout=20)
 
                 try:
                     response_json = self.parse_json(response)
@@ -1033,9 +1058,8 @@ API key {api_key.api_key} is disabled, trying to get a new one{BColors.ENDC}")
 removing proxy {self.proxy_object.get('ip_address')}? (continue){BColors.ENDC}")
 
                 if response.text.find('Service is temporarily unavailable') != -1:
-                    self.temp_disabled = True # HACK: will only be reset next script start
-                    logging.warning(f"{BColors.BOLD}Api error from:{url}{BColors.ENDC}")
-                    raise BaseException("Server on hold!")
+                    logging.warning(f"{BColors.BOLD}Api error from: {url}{BColors.ENDC}")
+                    raise APIServerError()
                 #else: self.get_new_proxy()
                 continue
 
@@ -1062,9 +1086,9 @@ removing proxy {self.proxy_object.get('ip_address')}? (continue){BColors.ENDC}")
         try:
             response_json = response.json()
         except (ValueError, json.decoder.JSONDecodeError):
-            logging.warning(BColors.YELLOW
-            + "{0} Error trying to parse response into json. Exerpt: {1}"
-            .format(self.name, response.text[:5000]) + BColors.ENDC)
+            logging.warning(
+                f"{BColors.YELLOW}{self.name} Error trying to parse response into \
+json. Exerpt: {response.text[:5000]}{BColors.ENDC}")
 
             if response.text.find('Service is temporarily unavailable. \
 Our engineers are working quickly to resolve the issue') != -1:
@@ -1076,8 +1100,7 @@ Our engineers are working quickly to resolve the issue') != -1:
                     # for some reason, sometimes it fails there?
                     response_json = r'{"meta": \
 {"status": 200,"msg": "OK","x_tumblr_content_rating": "adult"},' + response_json[:-1]
-                    logging.debug(BColors.YELLOW + "split: {0}"
-                    .format(response_json[:5000]) + BColors.ENDC)
+                    logging.debug(f"{BColors.YELLOW}split: {response_json[:5000]}{BColors.ENDC}")
                     try:
                         response_json = response.json()
                     except:
@@ -1088,9 +1111,8 @@ Our engineers are working quickly to resolve the issue') != -1:
                     response_json = {'meta': {'status': 500, 'msg': 'Server Error'},
                     'response': [], 'errors': [{"title": "Malformed JSON or HTML was returned."}]}
         except:
-            logging.exception(BColors.YELLOW +
-            "{0}Uncaught fatal error trying to parse json from response: {1}"
-            .format(self.name, response.text) + BColors.ENDC)
+            logging.exception(f"{BColors.YELLOW}{self.name}Uncaught fatal error \
+trying to parse json from response: {response.text}{BColors.ENDC}")
             raise
         return response_json
 
@@ -1122,7 +1144,7 @@ response_json msg {response_json.get('meta').get('msg')}{BColors.ENDC}")
             return
 
         resp_json = response_json.get('response')
-        if resp_json is not None and resp_json != []:
+        if resp_json is not None and resp_json != [] and isinstance(dict(), type(resp_json)):
             update.blogname = resp_json.get('blog', {}).get('name')
             update.total_posts = resp_json.get('blog', {}).get('total_posts')
             update.updated = resp_json.get('blog', {}).get('updated')
@@ -1190,6 +1212,12 @@ Rolling for a new API key.\n{response_json}{BColors.ENDC}")
         .format(self.name) + BColors.ENDC)
 
 
+class APIServerError(Exception):
+    """We assume we have checked that all API keys are now disabled"""
+    def __init__(self, message=None):
+        if not message:
+            message = "API error from server"
+        super().__init__(message)
 
 
 class Requester(TumblrBlog):
@@ -1254,9 +1282,8 @@ def thread_good_cleanup(db, con, blog):
 def thread_premature_cleanup(db, con, blog, reset_type):
     """Blog has not been updated in any way, just reset STATUS to NEW if was INIT"""
 
-    logging.debug(BColors.LIGHTGRAY +
-    "{0} thread_premature_cleanup, reset_to_brand_new '{1}'"
-    .format(blog.name, reset_type) + BColors.ENDC )
+    logging.debug(f"{BColors.LIGHTGRAY}{blog.name} thread_premature_cleanup, \
+reset_to_brand_new '{reset_type}'{BColors.ENDC}")
 
     # only resets CRAWL_STATUS to 'new', not CRAWLING which stays 1 to avoid repicking it straight away
     db_handler.reset_to_brand_new(db, con, blog, reset_type=reset_type)
