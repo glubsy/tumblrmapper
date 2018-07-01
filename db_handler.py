@@ -507,7 +507,8 @@ if (exists (select BLOG_NAME from BLOGS where (CRAWL_STATUS = 'DONE'))) then
 END
 """)
 
-        # Fetch DONE blogs ordered by last scraped
+        # Reset DONE blogs to "resume" for which number of posts scraped is more than 100
+        # less then the total
         con.execute_immediate(\
 """
 CREATE OR ALTER PROCEDURE RESET_INCOMPLETE_BLOGNAMES
@@ -1756,10 +1757,8 @@ def inserted_urls(cur, post):
             except fdb.DatabaseError as e:
                 # if str(e).find("violation of PRIMARY or UNIQUE KEY constraint") != -1:
                 #     e = "duplicate"
-                logging.debug(BColors.FAIL + "DB ERROR" + BColors.BLUE
-                            + " url\t{0} : {1}".format(
-                            photo.get('original_size').get('url'),
-                            e) + BColors.ENDC)
+                logging.debug(f"{BColors.FAIL}DB ERROR{BColors.BLUE} url\t\
+{photo.get('original_size').get('url')} : {e}{BColors.ENDC}")
                 errors += 1
                 continue
     # con.commit()

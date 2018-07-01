@@ -446,8 +446,9 @@ more to process?{BColors.ENDC}")
 
         # pbar = init_pbar(blog, position=threading.current_thread().name)
         update_offset_if_new_posts(blog)
+        response_error = 0
 
-        while not pill2kill.is_set() and not blog.eof:
+        while not pill2kill.is_set() and not blog.eof and response_error < 10:
             if blog.posts_scraped >= blog.total_posts or blog.offset >= blog.total_posts:
                 logging.debug(f"{blog.name} before loop: \
 posts_scraped {blog.posts_scraped} or offset {blog.offset} >= total_posts \
@@ -477,6 +478,12 @@ Error checking header change! Breaking.{BColors.ENDC}")
                 if not update.posts_response:
                     if blog.posts_scraped >= blog.total_posts or blog.offset >= blog.total_posts:
                         blog.eof = True
+                    elif blog.posts_scraped < blog.total_posts and blog.offset < blog.total_posts:
+                        blog.offset += 1
+                        response_error += 1
+                        logging.debug(f"{BColors.BOLD}Inc offset by one because \
+nothing in response but not end of total_posts!{BColors.ENDC}")
+                        continue
                     logging.debug(f"update.posts_response is {update.posts_response}! break")
                     break
             else:
@@ -566,7 +573,19 @@ def check_blog_end_of_posts(db, con, blog):
 
     discrepancy_check(db, con, blog)
 
-    if blog.posts_scraped >= blog.total_posts or blog.offset >= blog.total_posts:
+    if blog.offset >= blog.total_posts:
+        # HACK get actual post count... but not pretty afterwards
+        if blog.posts_scraped < blog.total_posts:
+            blog.posts_scraped = db_handler.get_scraped_post_num(db, con, blog)
+            if blog.posts_scraped < blog.total_posts:
+                blog.crawl_status = 'resume'
+                blog.offset = blog.posts_scraped
+                return
+
+        logging.info("Marking {0} as DONE".format(blog.name))
+        blog.crawl_status = 'DONE'
+        blog.offset = 0
+    elif blog.posts_scraped >= blog.total_posts:
         logging.info("Marking {0} as DONE".format(blog.name))
         blog.crawl_status = 'DONE'
         blog.offset = 0
@@ -618,7 +637,8 @@ skipping offset {blog.offset}.{BColors.ENDC}")
             offset_attempts += 1
             if offset_attempts > 50:
                 # will only be reset next script start
-                # FIXME: might need to revert offset there if it's only a temporary error
+                # HACK skipping one to avoid getting stuck on subsequent restarts
+                blog.offset -= 49
                 blog.temp_disabled = True 
                 break
             continue
@@ -1149,6 +1169,8 @@ response_json msg {response_json.get('meta').get('msg')}{BColors.ENDC}")
             update.total_posts = resp_json.get('blog', {}).get('total_posts')
             update.updated = resp_json.get('blog', {}).get('updated')
             update.posts_response = resp_json.get('posts', []) #list of dicts
+        elif isinstance(str(), type(resp_json)) and resp_json.find("Service is temporarily unavailable") != -1:
+            raise APIServerError()
 
 
         logging.debug(f"{BColors.LIGHTCYAN}{self.name} After parsing reponse, \
