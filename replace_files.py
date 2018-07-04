@@ -9,6 +9,7 @@ import sys
 import argparse
 import re
 import shutil
+import pickle
 from constants import BColors
 
 tumblr_base_noext_re = re.compile(r'(tumblr_(?:inline_|messaging_)?.*?(?:_r\d)?)_(\d{3,4})\..*') # tumblr_xxx_r1_1280
@@ -55,6 +56,19 @@ def read_deletion_list(filepath):
     return _set
 
 
+def write_pickle(thelist, filepath):
+    """Write object to file on disk (caching)"""
+    with open(filepath, 'wb') as fp:
+        pickle.dump(thelist, fp)
+
+
+def read_pickle(filepath):
+    """Returns the object written as a pickle in a file"""
+    with open (filepath, 'rb') as fp:
+        data = pickle.load(fp)
+    return data
+
+
 def find(name, path):
     """Returns the first occurence of name in path"""
     print(f"find({name})")
@@ -81,37 +95,47 @@ def walk_directory(_dir, suffix_filter=None):
 
 def main():
     args = parse_args()
-
     input_dir = args.input_dir
     if args.output_dir is not None:
         output_dir = args.output_dir
+    raw_cache_path = "/tmp/" + "tumblrmapper_raw_file_cache_pickle"
+
 
     if args.to_delete_list is not None:
         to_delete_list =  read_deletion_list(args.to_delete_list)
         # print(f"to_delete_list:\n{to_delete_list}")
         print(f"to_delete_list length: {len(to_delete_list)}")
 
+    # Set up list of the _raw files we want to compare against
     if os.path.isdir(args.ref_dir):
-        raw_file_list = walk_directory(args.ref_dir, suffix_filter="raw")
-        print(f"raw_file_list: {raw_file_list}")
+        if not os.path.isfile(raw_cache_path):
+            raw_file_list = walk_directory(args.ref_dir, suffix_filter="raw")
+            write_pickle(raw_file_list, raw_cache_path)
+        else:
+            raw_file_list = read_pickle(raw_cache_path)
+    print(f"raw_file_list: {raw_file_list}")
 
+    # Make list of directories to scan for 1280 files
     subdir_list = []
     for root, dirs, files in os.walk(input_dir):
         for directory in dirs:
             subdir_list.append(os.path.join(root, directory))
     print(f"subdir_list is {subdir_list}")
 
+    # Scan each directory and make a list of files in them
     for subdir in subdir_list:
         subdir_files = walk_directory(subdir)
         print(f"subdir_files: {subdir_files}")
 
         for triple in subdir_files:
-            # test if to_delete
+            # test if file is present in the to_delete list
             if to_delete_list is not None:
                 if triple[2].split('.')[0] in to_delete_list:
                     # print(f"File {triple[2]} is marked for deletion.")
                     if args.delete_mode:
-                        print(f"{BColors.LIGHTYELLOW}Moving {triple[2]} to trash:{BColors.ENDC} {args.output_dir}")
+                        print(f"{BColors.LIGHTYELLOW}Moving {triple[2]} \
+to trash:{BColors.ENDC} {args.output_dir}")
+                        # TODO: make symlink to _raw file in the same directory as 1280 file for comparison
 
 
             # test if tumblr 1280/500/250 etc.
