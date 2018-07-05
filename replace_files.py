@@ -21,7 +21,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Replace files from archives.')
     parser.add_argument('-i', '--input_dir', action="store", type=str,
     help="Input directory to scan")
-    parser.add_argument('-o', '--output_dir', action="store", type=str, default=os.path.expanduser("~/test/CGI_output/"),
+    parser.add_argument('-o', '--output_dir', action="store", type=str, default=os.path.expanduser("~/test/CGI_output"),
     help="Directory where files will be moved to temporarily for double check.")
 
     parser.add_argument('-s', '--ref_dir', action="store", type=str, default=os.path.expanduser("~/test/CGI"),
@@ -127,18 +127,25 @@ def main():
     # Scan each directory and make a list of files in them
     for subdir in subdir_list:
         subdir_files = walk_directory(subdir)
-        print(f"subdir_files: {subdir_files}")
+        print(f"subdir_files for {subdir}: {subdir_files}")
 
         for old_file_tuple in subdir_files:
 
             # test if file is present in the to_delete list
-            if to_delete_list is not None:
+            if args.delete_mode and to_delete_list is not None:
                 if old_file_tuple[2].split('.')[0] in to_delete_list:
                     # print(f"File {old_file_tuple[2]} is marked for deletion.")
-                    if args.delete_mode:
-                        print(f"{BColors.LIGHTYELLOW}Moving {old_file_tuple[2]} \
+                    print(f"{BColors.LIGHTYELLOW}Moving {old_file_tuple[2]} \
 to output_dir:{BColors.ENDC} {args.output_dir}")
-                        # TODO: make symlink to _raw file in the same directory as 1280 file for comparison
+                    output_path = output_dir + os.sep + old_file_tuple[1]
+                    os.makedirs(name=output_path, exist_ok=True)
+                    print(f"made output_path: {output_path}")
+                    try:
+                        shutil.move(os.path.join(old_file_tuple[0], old_file_tuple[2]),
+                                os.path.join(output_path, old_file_tuple[2]))
+                    except FileExistsError as e:
+                        print(f"{BColors.FAIL}Error moving file \
+{os.path.join(old_file_tuple[0], old_file_tuple[2])}:{BColors.ENDC} {e}\n")
 
             # test if tumblr 1280/500/250
             match = tumblr_base_noext_re.match(old_file_tuple[2])
@@ -163,10 +170,14 @@ to output_dir:{BColors.ENDC} {args.output_dir}")
                         output_subdir + os.sep + old_file_tuple[2])
 
                     # symlinks raw where old has been moved
-                    os.symlink(
-                        raw_file_cache[corresponding_raw_index][0] + os.sep \
-                        + raw_file_cache[corresponding_raw_index][2],
-                        output_subdir + os.sep + raw_file_cache[corresponding_raw_index][2])
+                    try:
+                        os.symlink(
+                            raw_file_cache[corresponding_raw_index][0] + os.sep \
+                            + raw_file_cache[corresponding_raw_index][2],
+                            output_subdir + os.sep + raw_file_cache[corresponding_raw_index][2])
+                    except FileExistsError as e:
+                        print(f"{BColors.FAIL}Error creating symlink \
+{output_subdir + os.sep + raw_file_cache[corresponding_raw_index][2]}:{BColors.ENDC} {e}\n")
 
 
 def find_in_cache(name, list_of_tuples):
