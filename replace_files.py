@@ -21,7 +21,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Replace files from archives.')
     parser.add_argument('-i', '--input_dir', action="store", type=str,
     help="Input directory to scan")
-    parser.add_argument('-o', '--output_dir', action="store", type=str, default=os.getcwd(),
+    parser.add_argument('-o', '--output_dir', action="store", type=str, default=os.path.expanduser("~/test/CGI_output/"),
     help="Directory where files will be moved to temporarily for double check.")
 
     parser.add_argument('-s', '--ref_dir', action="store", type=str, default=os.path.expanduser("~/test/CGI"),
@@ -79,17 +79,19 @@ def find(name, path):
                 return os.path.join(root, name)
 
 
-def walk_directory(_dir, suffix_filter=None):
-    """Returns list of tuples [(file's dir path, file's parent dir name, filename)]"""
+def walk_directory(path, suffix_filter=None):
+    """Returns list of tuples
+    [(file's dir path, file's parent dir name, filename, basename), ...]
+    where basename is either the file with no ext, or tumblr_xxxx"""
     filelist = []
-    for root, dirs, files in os.walk(_dir):
+    for root, dirs, files in os.walk(path):
         for _file in files:
             if suffix_filter == "raw":
                 match = tumblr_base_noext_raw_re.match(_file)
                 if match:
-                    filelist.append((root, os.path.basename(root), _file))
+                    filelist.append((root, os.path.basename(root), _file, match.group(1)))
             else:
-                filelist.append((root, os.path.basename(root), _file))
+                filelist.append((root, os.path.basename(root), _file, _file.split('.')[0]))
     return filelist
 
 
@@ -109,11 +111,11 @@ def main():
     # Set up list of the _raw files we want to compare against
     if os.path.isdir(args.ref_dir):
         if not os.path.isfile(raw_cache_path):
-            raw_file_list = walk_directory(args.ref_dir, suffix_filter="raw")
-            write_pickle(raw_file_list, raw_cache_path)
+            raw_file_cache = walk_directory(args.ref_dir, suffix_filter="raw")
+            write_pickle(raw_file_cache, raw_cache_path)
         else:
-            raw_file_list = read_pickle(raw_cache_path)
-    print(f"raw_file_list: {raw_file_list}")
+            raw_file_cache = read_pickle(raw_cache_path)
+    print(f"raw_file_cache: {raw_file_cache}")
 
     # Make list of directories to scan for 1280 files
     subdir_list = []
@@ -127,31 +129,53 @@ def main():
         subdir_files = walk_directory(subdir)
         print(f"subdir_files: {subdir_files}")
 
-        for triple in subdir_files:
+        for old_file_tuple in subdir_files:
+
             # test if file is present in the to_delete list
             if to_delete_list is not None:
-                if triple[2].split('.')[0] in to_delete_list:
-                    # print(f"File {triple[2]} is marked for deletion.")
+                if old_file_tuple[2].split('.')[0] in to_delete_list:
+                    # print(f"File {old_file_tuple[2]} is marked for deletion.")
                     if args.delete_mode:
-                        print(f"{BColors.LIGHTYELLOW}Moving {triple[2]} \
-to trash:{BColors.ENDC} {args.output_dir}")
+                        print(f"{BColors.LIGHTYELLOW}Moving {old_file_tuple[2]} \
+to output_dir:{BColors.ENDC} {args.output_dir}")
                         # TODO: make symlink to _raw file in the same directory as 1280 file for comparison
 
-
-            # test if tumblr 1280/500/250 etc.
-            match = tumblr_base_noext_re.match(triple[2])
+            # test if tumblr 1280/500/250
+            match = tumblr_base_noext_re.match(old_file_tuple[2])
             if match:
-                print(f"Found resized: {triple[2]}")
+                print(f"Found resized: {old_file_tuple[2]}")
                 # look for corresponding _raw in _raw file list
                 # removing extension, and resized suffix from name
-                filename = triple[2].split('.')[0]
-                filename = re.split(match.group(2), filename)[0]
-                filename = filename + 'raw'
-                found_corresponding_raw = find(filename, args.ref_dir)
-                if found_corresponding_raw:
-                    print(f"{BColors.GREENOK}Found {found_corresponding_raw} corresponding to {triple[2]}{BColors.ENDC}")
+                filename = old_file_tuple[2].split('.')[0]
+                filename = re.split("_" + match.group(2), filename)[0]
+                # filename = filename + 'raw'
+                print(f"Looking for corresponding _raw in cache: {filename}")
+                corresponding_raw_index = find_in_cache(filename, raw_file_cache)
+
+                if corresponding_raw_index is not None:
+                    print(f"{BColors.GREENOK}Found {raw_file_cache[corresponding_raw_index]} corresponding to {old_file_tuple[2]}{BColors.ENDC}")
+
+                    # copy old into output_dir
+                    output_subdir = output_dir + os.sep + old_file_tuple[1]
+                    print(f"output_sudbir = {output_subdir}")
+                    os.makedirs(name=output_subdir, exist_ok=True)
+                    shutil.copy(old_file_tuple[0] + os.sep + old_file_tuple[2],
+                        output_subdir + os.sep + old_file_tuple[2])
+
+                    # symlinks raw where old has been moved
+                    os.symlink(
+                        raw_file_cache[corresponding_raw_index][0] + os.sep \
+                        + raw_file_cache[corresponding_raw_index][2],
+                        output_subdir + os.sep + raw_file_cache[corresponding_raw_index][2])
 
 
+def find_in_cache(name, list_of_tuples):
+    """scan the list of tuples for name, returns index of name in list_of_tuples"""
+
+    for item in list_of_tuples:
+        if item[3] == name:
+            print(f"Found _raw for {name}: {item[2]}")
+            return list_of_tuples.index(item)
 
 
 if __name__ == "__main__":
