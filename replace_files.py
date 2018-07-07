@@ -98,15 +98,27 @@ def walk_directory(path, suffix_filter=None):
 def main():
     args = parse_args()
     input_dir = args.input_dir
+
     if args.output_dir is not None:
         output_dir = args.output_dir
+        if output_dir == input_dir:
+            print(f"{BColors.FAIL}Error: output directory cannot be the same as input directory!")
+            exit(1)
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+
+    # cache for _raw file list on disk
     raw_cache_path = "/tmp/" + "tumblrmapper_raw_file_cache_pickle"
 
+    # make temp trash dir to move to_delete_files in it
+    trash_dir = output_dir + os.sep + "TRASH_TO_DELETE"
+    os.makedirs(trash_dir, exist_ok=True)
 
     if args.to_delete_list is not None:
         to_delete_list =  read_deletion_list(args.to_delete_list)
         # print(f"to_delete_list:\n{to_delete_list}")
-        print(f"to_delete_list length: {len(to_delete_list)}")
+        print(f"{BColors.BOLD}{BColors.BLUE} Number of unique file names to be delete: \
+{len(to_delete_list)}{BColors.ENDC}")
 
     # Set up list of the _raw files we want to compare against
     if os.path.isdir(args.ref_dir):
@@ -136,16 +148,21 @@ def main():
                 if old_file_tuple[2].split('.')[0] in to_delete_list:
                     # print(f"File {old_file_tuple[2]} is marked for deletion.")
                     print(f"{BColors.LIGHTYELLOW}Moving {old_file_tuple[2]} \
-to output_dir:{BColors.ENDC} {args.output_dir}")
-                    output_path = output_dir + os.sep + old_file_tuple[1]
+to output_dir:{BColors.ENDC} {trash_dir}")
+                    output_path = trash_dir + os.sep + old_file_tuple[1]
                     os.makedirs(name=output_path, exist_ok=True)
-                    print(f"made output_path: {output_path}")
                     try:
-                        shutil.move(os.path.join(old_file_tuple[0], old_file_tuple[2]),
+                        #FIXME DEBUG, should be move here 
+                        shutil.copy(os.path.join(old_file_tuple[0], old_file_tuple[2]),
                                 os.path.join(output_path, old_file_tuple[2]))
+                        # shutil.move(os.path.join(old_file_tuple[0], old_file_tuple[2]),
+                        #         os.path.join(output_path, old_file_tuple[2]))
+                        print(f"{BColors.RED}Moved file to be deleted \
+{old_file_tuple[2]} to {output_path}{BColors.ENDC}")
                     except FileExistsError as e:
                         print(f"{BColors.FAIL}Error moving file \
 {os.path.join(old_file_tuple[0], old_file_tuple[2])}:{BColors.ENDC} {e}\n")
+                    continue
 
             # test if tumblr 1280/500/250
             match = tumblr_base_noext_re.match(old_file_tuple[2])
@@ -160,16 +177,18 @@ to output_dir:{BColors.ENDC} {args.output_dir}")
                 corresponding_raw_index = find_in_cache(filename, raw_file_cache)
 
                 if corresponding_raw_index is not None:
-                    print(f"{BColors.GREENOK}Found {raw_file_cache[corresponding_raw_index]} corresponding to {old_file_tuple[2]}{BColors.ENDC}")
+                    print(f"{BColors.GREENOK}Found {raw_file_cache[corresponding_raw_index]} \
+corresponding to {old_file_tuple[2]}{BColors.ENDC}")
 
-                    # copy old into output_dir
+                    # copy old _1280 into output_dir
                     output_subdir = output_dir + os.sep + old_file_tuple[1]
                     print(f"output_sudbir = {output_subdir}")
                     os.makedirs(name=output_subdir, exist_ok=True)
-                    shutil.copy(old_file_tuple[0] + os.sep + old_file_tuple[2],
+                    # copy2 preserve metadata whenever possible
+                    shutil.copy2(old_file_tuple[0] + os.sep + old_file_tuple[2],
                         output_subdir + os.sep + old_file_tuple[2])
 
-                    # symlinks raw where old has been moved
+                    # symlink _raw where old has been moved
                     try:
                         os.symlink(
                             raw_file_cache[corresponding_raw_index][0] + os.sep \
@@ -179,6 +198,8 @@ to output_dir:{BColors.ENDC} {args.output_dir}")
                         print(f"{BColors.FAIL}Error creating symlink \
 {output_subdir + os.sep + raw_file_cache[corresponding_raw_index][2]}:{BColors.ENDC} {e}\n")
 
+    count_number_of_unique_files(trash_dir)
+
 
 def find_in_cache(name, list_of_tuples):
     """scan the list of tuples for name, returns index of name in list_of_tuples"""
@@ -187,6 +208,16 @@ def find_in_cache(name, list_of_tuples):
         if item[3] == name:
             print(f"Found _raw for {name}: {item[2]}")
             return list_of_tuples.index(item)
+
+
+def count_number_of_unique_files(path):
+    """Counts the number of unique files in path"""
+    _set = set()
+    for _, _, files in os.walk(path):
+        for _file in files:
+            _set.add(_file)
+    print(f"{BColors.BOLD}{BColors.BLUE}There are {len(_set)} unique filenames \
+in {path}{BColors.ENDC}")
 
 
 if __name__ == "__main__":
