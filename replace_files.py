@@ -34,6 +34,9 @@ def parse_args():
     parser.add_argument('-m', '--move_raw_temp_dir', action="store_true", default=False,
     help="Move _raw files into a temporary directory under their original parent dir to keep track of them.\
 The symlink alongside the corresponding _1280 will be made against the moved files. Useful to avoid duplicate backups.")
+    parser.add_argument('-u', '--update_raw_xattr', action="store", default=False,
+    help="Update extended file attributes for _raw files wherever their original urls appears in lists.\
+The list should be named 'successful_downloads.txt' and the path should point to a directory holding them.")
 
 
     parser.add_argument('-t', '--to_delete_list', action="store",
@@ -75,11 +78,12 @@ def read_pickle(filepath):
 def find(name, path):
     """Returns the first occurence of name in path"""
     print(f"find({name})")
-    for root, dirs, files in os.walk(path):
+    for root, _, files in os.walk(path):
         for _file in files:
             _file = _file.split('.')[0]
             if name in _file:
                 return os.path.join(root, name)
+
 
 def get_relative_path(root, path):
     """Return paths between root and path, returns root if same directory"""
@@ -88,23 +92,59 @@ def get_relative_path(root, path):
         return root
     return _ret
 
-def walk_directory(path, suffix_filter=None):
+
+def get_list_of_raw_url(path):
+    """Make a set of url from the successful raw downloads"""
+    if not os.path.isdir:
+        print(f"{BColors.FAIL}Path {path} is not a valid directory! Aborting.{BColors.ENDC}")
+        return
+    _set = set()
+    for root, _, files in os.walk(path):
+        for _file in files:
+            if "successful_downloads" in _file:
+                with open(os.path.abspath(os.path.join(root, _file)), 'r') as f:
+                    for line in f:
+                        _set.add((line.split('\t')[0], line.split('\t')[1]))
+    return _set
+
+
+def had_url(basename):
+    """If the first item in each tuple has the same basename as basename, return the
+    second item with its original url"""
+    global list_of_raw_urls
+    for item in list_of_raw_urls:
+        if item[0] == basename:
+            return item[1]
+
+
+def apply_xattr(path_to_file, url):
+    existing_attr = os.listxattr(path_to_file)
+    if not existing_attr:
+        print(f"{BColors.LIGHTGRAY}Setting {url} as origin.url for \
+{path_to_file}{BColors.ENDC}")
+        os.setxattr(path_to_file, "user.xdg.origin.url", url)
+
+
+def generate_raw_list(path, xattr=False):
     """Returns list of tuples
     [(file's dir path, file's parent dir name, subdirs from root, filename, basename), ...]
     where basename is either the file with no ext, or tumblr_xxxx"""
     filelist = []
     os.chdir(path)
-    for root, dirs, files in os.walk(path):
+    for root, _, files in os.walk(path):
         for _file in files:
-            print(f"{BColors.BOLD}DEBUG: root: {root} path: {path}{BColors.ENDC}")
+            # print(f"{BColors.BOLD}DEBUG: root: {root} path: {path}{BColors.ENDC}")
             subdirs = get_relative_path(root, path) # dirs between root and file
-            print(f"{BColors.BOLD}DEBUG: subdirs: {subdirs}{BColors.ENDC}")
-            if suffix_filter == "raw":
-                match = tumblr_base_noext_raw_re.match(_file)
-                if match:
-                    filelist.append((root, os.path.basename(root), subdirs ,_file, match.group(1)))
-            else:
-                filelist.append((root, os.path.basename(root), subdirs ,_file, _file.split('.')[0]))
+            # print(f"{BColors.BOLD}DEBUG: subdirs: {subdirs}{BColors.ENDC}")
+            match = tumblr_base_noext_raw_re.match(_file)
+            if match:
+                if xattr:
+                    origin_url = had_url(match.group(1))
+                    if origin_url:
+                        print(f"{BColors.CYAN}File {_file} had url {origin_url}.\
+    Applying as xattr.{BColors.ENDC}")
+                        apply_xattr(os.path.join(root, _file), origin_url)
+                filelist.append((root, os.path.basename(root), subdirs ,_file, match.group(1)))
     return filelist
 
 
@@ -133,28 +173,26 @@ def main():
         print(f"{BColors.BOLD}{BColors.BLUE} Number of unique file names to be delete: \
 {len(to_delete_list)}{BColors.ENDC}")
 
+    if args.update_raw_xattr:
+        global list_of_raw_urls
+        # list_of_raw_urls = get_list_of_raw_url(os.path.join(os.getcwd(), "tools"))
+        list_of_raw_urls = get_list_of_raw_url(args.update_raw_xattr)
+
     # Set up list of the _raw files we want to compare against
     if os.path.isdir(args.ref_dir):
         if not os.path.isfile(raw_cache_path):
-            raw_file_cache = walk_directory(args.ref_dir, suffix_filter="raw")
+            if args.update_raw_xattr and list_of_raw_urls:
+                xattr = True
+            else
+                xattr = False
+            raw_file_cache = generate_raw_list(args.ref_dir, xattr=xattr)
             write_pickle(raw_file_cache, raw_cache_path)
         else:
             raw_file_cache = read_pickle(raw_cache_path)
     print(f"raw_file_cache: {raw_file_cache}")
 
     # Make list of directories to scan for 1280 files
-    for root, dirs, files in os.walk(input_dir):
-        # Useless?
-        for directory in dirs:
-            subdir = (os.path.join(root, directory))
-            # print(f"Current subdir is {subdir}...")
-
-
-    # Scan each directory and make a list of files in them
-    # for subdir in subdir_list:
-    #     subdir_files = walk_directory(subdir)
-    #     print(f"subdir_files for {subdir}: {subdir_files}")
-
+    for root, _, files in os.walk(input_dir):
         for _file in files:
             subdirs = get_relative_path(root, input_dir) # dirs between root and file
             old_file_tuple = (root, os.path.basename(root), subdirs ,_file, _file.split('.')[0])
