@@ -2,6 +2,7 @@
 # scan op_dir,
 # for each _1280 look for a _raw in raw_dir (can be same as op_dir)
 # take into acount delete_file_from_archives.txt
+# Typical use: % ./replace_files.py -i ~/test/CGI -d -m -u $(pwd)/tools
 
 import shutil
 import os
@@ -86,10 +87,10 @@ def find(name, path):
 
 
 def get_relative_path(root, path):
-    """Return paths between root and path, returns root if same directory"""
+    """Return paths between root and path, returns the parent dir if same directory"""
     _ret = os.path.relpath(root, path)
     if _ret == '.':
-        return root
+        return ''
     return _ret
 
 
@@ -114,15 +115,18 @@ def had_url(basename):
     global list_of_raw_urls
     for item in list_of_raw_urls:
         if item[0] == basename:
-            return item[1]
+            return item[1].rstrip()
 
 
 def apply_xattr(path_to_file, url):
     existing_attr = os.listxattr(path_to_file)
     if not existing_attr:
-        print(f"{BColors.LIGHTGRAY}Setting {url} as origin.url for \
+        print(f"{BColors.LIGHTGRAY}Setting {url} as user.xdg.origin.url for \
 {path_to_file}{BColors.ENDC}")
-        os.setxattr(path_to_file, "user.xdg.origin.url", url)
+        try:
+            os.setxattr(path_to_file, r"user.xdg.origin.url", url.encode(), flags=os.XATTR_CREATE)
+        except BaseException as e:
+            print(f"{BColors.FAIL}Exception setting xattr for {path_to_file}: {e}{BColors.ENDC}")
 
 
 def generate_raw_list(path, xattr=False):
@@ -140,9 +144,9 @@ def generate_raw_list(path, xattr=False):
             if match:
                 if xattr:
                     origin_url = had_url(match.group(1))
-                    if origin_url:
-                        print(f"{BColors.CYAN}File {_file} had url {origin_url}.\
-    Applying as xattr.{BColors.ENDC}")
+                    if origin_url is not None:
+                        print(f"{BColors.CYAN}File {_file} had url {origin_url}. \
+Applying new xattr.{BColors.ENDC}")
                         apply_xattr(os.path.join(root, _file), origin_url)
                 filelist.append((root, os.path.basename(root), subdirs ,_file, match.group(1)))
     return filelist
@@ -183,7 +187,7 @@ def main():
         if not os.path.isfile(raw_cache_path):
             if args.update_raw_xattr and list_of_raw_urls:
                 xattr = True
-            else
+            else:
                 xattr = False
             raw_file_cache = generate_raw_list(args.ref_dir, xattr=xattr)
             write_pickle(raw_file_cache, raw_cache_path)
@@ -196,7 +200,7 @@ def main():
         for _file in files:
             subdirs = get_relative_path(root, input_dir) # dirs between root and file
             old_file_tuple = (root, os.path.basename(root), subdirs ,_file, _file.split('.')[0])
-            print(f"Processing file: {old_file_tuple}")
+            print(f"Checking file from input_dir: {old_file_tuple}")
 
             # test if file is present in the to_delete list
             if args.delete_mode and to_delete_list is not None:
@@ -244,7 +248,7 @@ def replace_by_raw(old_file_tuple, raw_file_tuple, output_dir, args):
     """Replace the old file with the raw file, make symlink in the trash dir"""
 
     # copy old _1280 into output_dir
-    output_subdir = output_dir + os.sep + old_file_tuple[2]
+    output_subdir = os.path.join(output_dir, old_file_tuple[2])
     print(f"output_sudbir = {output_subdir}")
     os.makedirs(name=output_subdir, exist_ok=True)
 
