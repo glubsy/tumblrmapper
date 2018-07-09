@@ -19,13 +19,14 @@ tumblr_base_noext_raw_re = re.compile(r'(tumblr_(?:inline_|messaging_)?.*?(?:_r\
 def parse_args():
     """Parse command-line arguments."""
 
+    default_input_dir = os.path.expanduser("~/test/CGI")
     parser = argparse.ArgumentParser(description='Replace files from archives.')
-    parser.add_argument('-i', '--input_dir', action="store", type=str, default=os.getcwd(),
+    parser.add_argument('-i', '--input_dir', action="store", type=str, default=default_input_dir,
     help="Input directory to scan")
-    parser.add_argument('-o', '--output_dir', action="store", type=str, default=os.path.expanduser("~/test/CGI_output"),
-    help="Directory where files will be moved to temporarily for double check.")
+    parser.add_argument('-o', '--output_dir', action="store", type=str, default=os.path.expanduser("~/test/CGI_output"), # can't be default_input_dir
+    help="Directory where 1280 files will be moved to temporarily, for double check against symlinks to corresponing _raw.")
 
-    parser.add_argument('-s', '--ref_dir', action="store", type=str, default=os.path.expanduser("~/test/CGI"),
+    parser.add_argument('-s', '--ref_dir', action="store", type=str, default=default_input_dir,
     help="Directory where _raw files are stored. Can be set as same as input_dir.")
 
     parser.add_argument('-d', '--delete_mode', action="store_true", default=False,
@@ -184,7 +185,7 @@ def main():
 
     # Set up list of the _raw files we want to compare against
     if os.path.isdir(args.ref_dir):
-        if not os.path.isfile(raw_cache_path):
+        if not os.path.exists(raw_cache_path):
             if args.update_raw_xattr and list_of_raw_urls:
                 xattr = True
             else:
@@ -226,13 +227,13 @@ to output_dir:{BColors.ENDC} {trash_dir}")
             # test if tumblr 1280/500/250
             match = tumblr_base_noext_re.match(old_file_tuple[3])
             if match:
-                print(f"Found resized: {old_file_tuple[3]}")
+                print(f"Found _1280: {old_file_tuple[3]}")
                 # Look for corresponding _raw in _raw file list,
                 # Removing extension, and resized suffix from name
                 base_name = old_file_tuple[4]
                 # Eliminate whatever is after _1280
                 base_name = re.split("_" + match.group(2), base_name)[0]
-                print(f"Looking for corresponding _raw in cache: {base_name}")
+                print(f"Looking for corresponding _raw in cache as: {base_name}")
                 corresponding_raw_index = find_in_cache(base_name, raw_file_cache)
 
                 if corresponding_raw_index is not None:
@@ -253,17 +254,16 @@ def replace_by_raw(old_file_tuple, raw_file_tuple, output_dir, args):
     os.makedirs(name=output_subdir, exist_ok=True)
 
     # copy2 preserve metadata whenever possible
-    shutil.copy2(old_file_tuple[0] + os.sep + old_file_tuple[3],
-        output_subdir + os.sep + old_file_tuple[3])
+    shutil.copy2(os.path.join(old_file_tuple[0], old_file_tuple[3]),
+        os.path.join(output_subdir, old_file_tuple[3]))
 
     # move _raw into subdir to keep track of them between backups
     if args.move_raw_temp_dir:
-        raw_temp_dir = raw_file_tuple[0] + os.sep \
-            + "temp_moved_raw"
+        raw_temp_dir = os.path.join(raw_file_tuple[0], "temp_moved_raw")
         os.makedirs(name=raw_temp_dir, exist_ok=True)
 
         ref_raw_path = shutil.move(os.path.join(raw_file_tuple[0], raw_file_tuple[3]),
-            raw_temp_dir + raw_file_tuple[3])
+            os.path.join(raw_temp_dir, raw_file_tuple[3]))
 
         print(f"{BColors.GREEN}Moved {raw_file_tuple[3]} \
 to {ref_raw_path}{BColors.ENDC}")
@@ -276,7 +276,7 @@ to {ref_raw_path}{BColors.ENDC}")
         os.symlink(
             ref_raw_path,
             os.path.join(output_subdir, raw_file_tuple[3]))
-    except FileExistsError as e:
+    except (FileExistsError, FileNotFoundError) as e:
         print(f"{BColors.FAIL}Error creating symlink \
 {os.path.join(output_subdir, raw_file_tuple[3])}:{BColors.ENDC} {e}\n")
 
