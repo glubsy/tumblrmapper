@@ -250,7 +250,7 @@ def replace_by_raw(old_file_tuple, raw_file_tuple, output_dir, args):
 
     # copy old _1280 into output_dir
     output_subdir = os.path.join(output_dir, old_file_tuple[2])
-    print(f"output_sudbir = {output_subdir}")
+    # print(f"output_sudbir for the _1280 = {output_subdir}")
     os.makedirs(name=output_subdir, exist_ok=True)
 
     # copy2 preserve metadata whenever possible
@@ -272,13 +272,18 @@ to {ref_raw_path}{BColors.ENDC}")
         ref_raw_path = os.path.join(raw_file_tuple[0], raw_file_tuple[3])
 
     # symlink _raw where old has been moved
+    target_symlink_file = os.path.join(output_subdir, raw_file_tuple[3])
     try:
-        os.symlink(
-            ref_raw_path,
-            os.path.join(output_subdir, raw_file_tuple[3]))
-    except (FileExistsError, FileNotFoundError) as e:
+        os.symlink(ref_raw_path, target_symlink_file)
+    except FileNotFoundError as e:
         print(f"{BColors.FAIL}Error creating symlink \
 {os.path.join(output_subdir, raw_file_tuple[3])}:{BColors.ENDC} {e}\n")
+    except FileExistsError as e:
+        # if symlink is broken, recreate it with updated pointer
+        if os.path.islink(target_symlink_file) and not os.path.exists(target_symlink_file):
+            # print(f"{BColors.BOLD}Replacing link {target_symlink_file}{BColors.ENDC}")
+            os.unlink(target_symlink_file)
+            os.symlink(ref_raw_path, target_symlink_file)
 
 
 def find_in_cache(name, list_of_tuples):
