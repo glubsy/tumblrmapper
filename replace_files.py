@@ -2,7 +2,7 @@
 # scan op_dir,
 # for each _1280 look for a _raw in raw_dir (can be same as op_dir)
 # take into acount delete_file_from_archives.txt
-# Typical use: % ./replace_files.py -i ~/test/CGI -d -m -u $(pwd)/tools
+# Typical use: % ./replace_files.py -i ~/test/CGI -d -m -r -u $(pwd)/tools
 
 import shutil
 import os
@@ -31,7 +31,7 @@ def parse_args():
 
     parser.add_argument('-d', '--delete_mode', action="store_true", default=False,
     help="Move out files found in to_delete_list")
-    parser.add_argument('-r', '--replace_files', action="store_false", default=True,
+    parser.add_argument('-r', '--replace_files', action="store_true", default=False,
     help="Move _raw files in place of _1280")
     parser.add_argument('-m', '--move_raw_temp_dir', action="store_true", default=False,
     help="Move _raw files into a temporary directory under their original parent dir to keep track of them.\
@@ -246,29 +246,43 @@ corresponding to {old_file_tuple[3]}{BColors.ENDC}")
 
 
 def replace_by_raw(old_file_tuple, raw_file_tuple, output_dir, args):
-    """Replace the old file with the raw file, make symlink in the trash dir"""
+    """Move the raw file in place of the 1280, copy raw file into temp subdir if asked for it,
+    move old file to trash dir, make symlink to _raw in the trash dir"""
 
-    # copy old _1280 into output_dir
+    # Create subdirs into output_dir
     output_subdir = os.path.join(output_dir, old_file_tuple[2])
     # print(f"output_sudbir for the _1280 = {output_subdir}")
     os.makedirs(name=output_subdir, exist_ok=True)
 
-    # copy2 preserve metadata whenever possible
+    # Move old 1280 into its subdir
+    # FIXME DEBUG should be move in real case
+    # shutil.move(os.path.join(old_file_tuple[0], old_file_tuple[3]),
+    #     os.path.join(output_subdir, old_file_tuple[3]))
     shutil.copy2(os.path.join(old_file_tuple[0], old_file_tuple[3]),
         os.path.join(output_subdir, old_file_tuple[3]))
 
-    # move _raw into subdir to keep track of them between backups
+    # move _raw in place of the 1280, unless same parent directory
+    if args.replace_files:
+        if args.input_dir != args.ref_dir and raw_file_tuple[0] != old_file_tuple[0]:
+            ref_raw_path = shutil.move(os.path.join(raw_file_tuple[0], raw_file_tuple[3]), 
+                os.path.join(old_file_tuple[0], raw_file_tuple[3]))
+        else: # not moved
+            ref_raw_path = os.path.join(raw_file_tuple[0], raw_file_tuple[3])
+
+    # move _raw into subdir to keep track of them between backups, rarely used
     if args.move_raw_temp_dir:
+        # Create temp dir
         raw_temp_dir = os.path.join(raw_file_tuple[0], "temp_moved_raw")
         os.makedirs(name=raw_temp_dir, exist_ok=True)
 
+        # Move raw into temp dir
         ref_raw_path = shutil.move(os.path.join(raw_file_tuple[0], raw_file_tuple[3]),
             os.path.join(raw_temp_dir, raw_file_tuple[3]))
 
         print(f"{BColors.GREEN}Moved {raw_file_tuple[3]} \
 to {ref_raw_path}{BColors.ENDC}")
 
-    else: # not moved
+    elif not args.replace_files: # not moved
         ref_raw_path = os.path.join(raw_file_tuple[0], raw_file_tuple[3])
 
     # symlink _raw where old has been moved

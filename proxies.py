@@ -224,7 +224,17 @@ already have it in http_proxies_set.{BColors.ENDC}")
         if https_strict, only retains https capable proxies
         header_strict=[0-2], 0=all types accepted, 1=no Transparent, 2=only Elite Proxies"""
         response = requests.get(url)
-        parser = fromstring(response.text)
+        while True:
+            try:
+                parser = fromstring(response.text)
+                break
+            except lxml.etree.ParserError as e:
+                logging.debug(f"Parser error getting xml for proxies: {e}")
+                continue
+            except BaseException as e:
+                logging.debug(f"Exception getting xml for proxies: {e}")
+                continue
+
         proxies = set()
         not_transparent = ''
         if "socks-proxy.net" in url:
@@ -282,7 +292,7 @@ already have it in http_proxies_set.{BColors.ENDC}")
             logging.debug("Testing proxy {0} / UA {1}:"
             .format(proxy_ip, proxy_ua))
         try:
-            response = requests.get(url, proxies={"http": proxy_ip, 
+            response = requests.get(url, proxies={"http": proxy_ip,
             "https": proxy_ip}, headers=headers, timeout=11)
         # except (requests.exceptions.ProxyError, requests.exceptions.Timeout,\
         #     requests.exceptions.ReadTimeout, requests.exceptions.ConnectTimeout,
@@ -311,7 +321,7 @@ already have it in http_proxies_set.{BColors.ENDC}")
                 json_data = response.json()
                 with self.print_lock:
                     logging.debug("{0}{1}Origin: {2} -- UA: {3}{4}"
-                    .format(BColors.BLUEOK, BColors.GREEN, json_data.get('origin'), 
+                    .format(BColors.BLUEOK, BColors.GREEN, json_data.get('origin'),
                     json_data.get('headers').get('User-Agent'), BColors.ENDC))
             else:
                 logging.debug("{0}Proxy {1} test response: {2}{3}"
