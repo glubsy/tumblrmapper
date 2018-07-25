@@ -223,19 +223,22 @@ already have it in http_proxies_set.{BColors.ENDC}")
         from free-proxy-list.net or socks-proxy.net
         if https_strict, only retains https capable proxies
         header_strict=[0-2], 0=all types accepted, 1=no Transparent, 2=only Elite Proxies"""
-        response = requests.get(url)
-        while True:
+        proxies = set()
+        attempt = 0
+        while attempt <= 6:
+            attempt += 1
             try:
+                response = requests.get(url)
                 parser = fromstring(response.text)
                 break
             except lxml.etree.ParserError as e:
                 logging.debug(f"Parser error getting xml for proxies: {e}")
+                time.sleep(5)
                 continue
             except BaseException as e:
                 logging.debug(f"Exception getting xml for proxies: {e}")
-                continue
+                return proxies
 
-        proxies = set()
         not_transparent = ''
         if "socks-proxy.net" in url:
             if header_strict >= 1:

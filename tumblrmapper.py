@@ -1321,7 +1321,7 @@ def setup_config(args):
 
     sh = logging.StreamHandler(sys.stdout)
     sh.setLevel(getattr(logging, args.log_level.upper()))
-    sh.setFormatter(logging.Formatter('{asctime} {levelname:<9}:\t{message}', '%y/%m/%d %H:%M:%S', '{'))
+    sh.setFormatter(logging.Formatter('{asctime} {levelname:<9}:{threadName:>5}\t{message}', '%y/%m/%d %H:%M:%S', '{'))
     rootLogger.addHandler(sh)
 
     instances.config = parse_config(args.config_path, args.data_path)

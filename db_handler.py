@@ -1347,12 +1347,13 @@ def get_post_details(post):
 
                     if item.get('is_current_item') and not item.get('is_root_item'):     # update / reblog -> update DB context
 
-                        logging.info(BColors.YELLOW + "{0} Would have replaced id {1} != rid {2} content_raw of:{3} \
-with more recently updated version is_current_item: {4}\n{5}\n----------\n{6}"
-                        .format(post.get('blog_name'), post.get('id'), item_remote_id, len(attr.get('content_raw')),
-                        len(item.get('content_raw')), attr.get('content_raw')[:1000], item.get('content_raw')[:1000]) + BColors.ENDC)
+                        if instances.my_args.record_context:
+                            logging.info(f"{BColors.YELLOW}{post.get('blog_name')} \
+Would have replaced id {post.get('id')} != rid {item_remote_id} content_raw of length {len(attr.get('content_raw'))} \
+with more recently updated version is_current_item: {len(item.get('content_raw'))}\n{attr.get('content_raw')[:1000]}\
+\n----------\n{item.get('content_raw')[:1000]}{BColors.ENDC}")
+                            # attr['content_raw']     = item.get('content_raw')
 
-                        # attr['content_raw']     = item.get('content_raw')
                         reblogged_name          = item_name
 
                     if item.get('is_root_item') and not item.get('is_current_item'):            # just self reblog! normal update name and remote_id, don't update context
@@ -1364,12 +1365,13 @@ with more recently updated version is_current_item: {4}\n{5}\n----------\n{6}"
                 if item_name == post.get('blog_name') and item_name is not None:  # it's just a normal blog, nothing fancy not a reblog but can be part of a reblog (comment added)
                     if item.get('is_current_item'):     # self reblog that was updated! we keep all to update the context explicitly
 
-                        logging.info(BColors.YELLOW + "{0} Replacing {1} (id = rid) content_raw of:{2} \
-with more recently updated version is_current_item: {3}\n{4}\n----------\n{5}"
-                        .format(post.get('blog_name'), post.get('id'), len(attr.get('content_raw')),
-                        len(item.get('content_raw')), attr.get('content_raw')[:1000], item.get('content_raw')[:1000]) + BColors.ENDC)
+                        if instances.my_args.record_context:
+                            logging.info(f"{BColors.YELLOW}{post.get('blog_name')} \
+Replacing {post.get('id')} (id = rid) content_raw of length {len(attr.get('content_raw'))} \
+with more recently updated version is_current_item: {len(item.get('content_raw'))}\n\
+{attr.get('content_raw')[:1000]}\n----------\n{item.get('content_raw')[:1000]}{BColors.ENDC}")
 
-                        attr['content_raw']     = item.get('content_raw')
+                            attr['content_raw'] = item.get('content_raw')
 
                     elif item.get('is_root_item'):      # just self reblog!
                         found_reblog = True
@@ -1389,7 +1391,7 @@ with more recently updated version is_current_item: {3}\n{4}\n----------\n{5}"
     # longest_strings = [s for s in stringset if len(s) == maxlength]
     # attr['content_raw'] = longest_strings[0]
 
-    attr['content_raw'] = attr.get('content_raw').replace('\n', '')
+    attr['content_raw'] = attr.get('content_raw', '').replace('\n', '')
     if attr.get('content_raw') == '' or instances.my_args.record_context:
         attr['content_raw'] = None
 
