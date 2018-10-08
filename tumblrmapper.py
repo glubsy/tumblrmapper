@@ -749,12 +749,10 @@ Offset will be pushed by {3}"\
 
         elif db_response.get('last_total_posts', 0) > blog.total_posts:
 
-            logging.error(BColors.FAIL + BColors.BOLD + \
-            "{0} WARNING: number of posts has decreased from {1} to {2}!\
-    Blog was recently updated {3}, previously checked on {4}\n\
-    Check what happened, did the author remove posts!?"\
-            .format(blog.name, db_response.get('last_total_posts'), \
-            blog.total_posts, db_response.get('last_updated'), db_response.get('last_checked')))
+            logging.error(f"{BColors.FAIL}{BColors.BOLD}{blog.name} \
+WARNING: number of posts has decreased from {db_response.get('last_total_posts')} to {blog.total_posts}!\n\
+Blog was recently updated {db_response.get('last_updated')}, previously checked on {db_response.get('last_checked')}\n\
+Did the author remove posts {int(db_response.get('last_total_posts', 0)) - blog.total_posts}!?{BColors.ENDC}")
             return False
 
 

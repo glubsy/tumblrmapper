@@ -4,7 +4,9 @@
 
 Tumblr serves compressed and downsized files by default (with suffix \_1280 for example).
 
-Fortunately for us, they also keep \_raw original files on their CDN.
+~~Fortunately for us, they also keep \_raw original files on their CDN.~~
+
+**__Update 2018-08-14__: tumblr now denies access to _raw files stored on their Amazon S3 buckets. This tools is currently useless.**
 
 Unfortunately, they do not document this anywhere, it's essentially hidden from the public eye and knowledge.
 
@@ -62,4 +64,4 @@ lxml
 
 ## License:
 
-This is just a personal project, the code is horrendously messy. Therefore, the license is MIT.
+This is just a personal project, the code is horrendous and messy. Therefore, the license is MIT.

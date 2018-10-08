@@ -233,6 +233,8 @@ already have it in http_proxies_set.{BColors.ENDC}")
                 break
             except lxml.etree.ParserError as e:
                 logging.debug(f"Parser error getting xml for proxies: {e}")
+                if attempt == 6:
+                    return proxies
                 time.sleep(5)
                 continue
             except BaseException as e:
