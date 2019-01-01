@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.6
+#!/usr/bin/env python3
 # scan op_dir,
 # for each _1280 look for a _raw in raw_dir (can be same as op_dir)
 # take into acount delete_file_from_archives.txt
@@ -22,20 +22,20 @@ def parse_args():
     default_input_dir = os.path.expanduser("~/test/CGI")
     parser = argparse.ArgumentParser(description='Replace files from archives.')
     parser.add_argument('-i', '--input_dir', action="store", type=str, default=default_input_dir,
-    help="Input directory to scan")
+    help="Input directory to scan, holding potential 1280 files.")
     parser.add_argument('-o', '--output_dir', action="store", type=str, default=os.path.expanduser("~/test/CGI_output"), # can't be default_input_dir
-    help="Directory where 1280 files will be moved to temporarily, for double check against symlinks to corresponing _raw.")
+    help="Directory where 1280 files will be moved to temporarily, for double check against symlinks to corresponing _raw before deleting manually.")
 
     parser.add_argument('-s', '--ref_dir', action="store", type=str, default=default_input_dir,
-    help="Directory where _raw files are stored. Can be set as same as input_dir.")
+    help="Directory where _raw files to be checked against are stored. Can be set as same as input_dir.")
 
     parser.add_argument('-d', '--delete_mode', action="store_true", default=False,
     help="Move out files found in to_delete_list")
     parser.add_argument('-r', '--replace_files', action="store_true", default=False,
-    help="Move _raw files in place of _1280")
+    help="Move _raw files in place of _1280. That's the mode we use to make a blu ray backup, in a container")
     parser.add_argument('-m', '--move_raw_temp_dir', action="store_true", default=False,
     help="Move _raw files into a temporary directory under their original parent dir to keep track of them.\
-The symlink alongside the corresponding _1280 will be made against the moved files. Useful to avoid duplicate backups.")
+The symlink alongside the corresponding _1280 will be made against these moved files. Useful to avoid duplicate backups.")
     parser.add_argument('-u', '--update_raw_xattr', action="store", default=False,
     help="Update extended file attributes for _raw files wherever their original urls appears in lists.\
 The list should be named 'successful_downloads.txt' and the path should point to a directory holding them.")
@@ -165,7 +165,7 @@ def main():
         if not os.path.exists(output_dir):
             os.makedirs(output_dir, exist_ok=True)
 
-    # cache for _raw file list on disk
+    # cache for _raw file list on disk to be created
     raw_cache_path = "/tmp/" + "tumblrmapper_raw_file_cache_pickle"
 
     # make temp trash dir to move to_delete_files in it
@@ -175,8 +175,8 @@ def main():
     if args.to_delete_list is not None:
         to_delete_list =  read_deletion_list(args.to_delete_list)
         # print(f"to_delete_list:\n{to_delete_list}")
-        print(f"{BColors.BOLD}{BColors.BLUE} Number of unique file names to be delete: \
-{len(to_delete_list)}{BColors.ENDC}")
+        print(f"{BColors.BOLD}{BColors.BLUE} Number of unique file names \
+to be deleted from {args.to_delete_list}: {len(to_delete_list)}{BColors.ENDC}")
 
     if args.update_raw_xattr:
         global list_of_raw_urls
@@ -227,7 +227,7 @@ to output_dir:{BColors.ENDC} {trash_dir}")
             # test if tumblr 1280/500/250
             match = tumblr_base_noext_re.match(old_file_tuple[3])
             if match:
-                print(f"Found _1280: {old_file_tuple[3]}")
+                print(f"Found _1280/500/250: {old_file_tuple[3]}")
                 # Look for corresponding _raw in _raw file list,
                 # Removing extension, and resized suffix from name
                 base_name = old_file_tuple[4]
@@ -240,8 +240,10 @@ to output_dir:{BColors.ENDC} {trash_dir}")
                     print(f"{BColors.GREENOK}Found {raw_file_cache[corresponding_raw_index]} \
 corresponding to {old_file_tuple[3]}{BColors.ENDC}")
 
+                    print(f"[DEBUG] Calling replace_by_raw()")
                     replace_by_raw(old_file_tuple, raw_file_cache[corresponding_raw_index], output_dir, args)
 
+    print(f"Counting the number of files deleted according to to_delete_list (obsolete files):")
     count_number_of_unique_files(trash_dir)
 
 
@@ -249,27 +251,39 @@ def replace_by_raw(old_file_tuple, raw_file_tuple, output_dir, args):
     """Move the raw file in place of the 1280, copy raw file into temp subdir if asked for it,
     move old file to trash dir, make symlink to _raw in the trash dir"""
 
+    # Debug
+    print(f"[DEBUG] replace_by_raw({old_file_tuple}, {raw_file_tuple}, {output_dir}, {args})")
+
     # Create subdirs into output_dir
     output_subdir = os.path.join(output_dir, old_file_tuple[2])
-    # print(f"output_sudbir for the _1280 = {output_subdir}")
+    print(f"Creating output_sudbir for the _1280 = {output_subdir}")
     os.makedirs(name=output_subdir, exist_ok=True)
 
     # Move old 1280 into its subdir
     # FIXME DEBUG should be move in real case
-    # shutil.move(os.path.join(old_file_tuple[0], old_file_tuple[3]),
-    #     os.path.join(output_subdir, old_file_tuple[3]))
-    shutil.copy2(os.path.join(old_file_tuple[0], old_file_tuple[3]),
+    shutil.move(os.path.join(old_file_tuple[0], old_file_tuple[3]),
         os.path.join(output_subdir, old_file_tuple[3]))
+    # for DEBUG: copy instead of move
+    # shutil.copy2(os.path.join(old_file_tuple[0], old_file_tuple[3]),
+    #     os.path.join(output_subdir, old_file_tuple[3]))
 
-    # move _raw in place of the 1280, unless same parent directory
+    # copy the _raw in base dir of the 1280, unless same parent directory
     if args.replace_files:
         if args.input_dir != args.ref_dir and raw_file_tuple[0] != old_file_tuple[0]:
-            ref_raw_path = shutil.move(os.path.join(raw_file_tuple[0], raw_file_tuple[3]), 
-                os.path.join(old_file_tuple[0], raw_file_tuple[3]))
-        else: # not moved
+            try:
+                ref_raw_path = shutil.copy2(os.path.join(raw_file_tuple[0], raw_file_tuple[3]), 
+                    os.path.join(old_file_tuple[0], raw_file_tuple[3]))
+            except FileNotFoundError as e:
+                print(f"{BColors.FAIL}[ERROR]{BColors.ENDC} copying \
+{os.path.join(raw_file_tuple[0], raw_file_tuple[3])} \
+into {os.path.join(old_file_tuple[0], raw_file_tuple[3])}: {e}")
+                print(f"We probably had two 1280: one jpg and one png, or a 500 and a 1280, etc. \
+hence two matches for one file that was already moved out")
+                return
+        else: # not moved, because 1280 and raw are in the same directory
             ref_raw_path = os.path.join(raw_file_tuple[0], raw_file_tuple[3])
 
-    # move _raw into subdir to keep track of them between backups, rarely used
+    # move _raw into a subdir to keep track of them between backups (only used for backups on optical media)
     if args.move_raw_temp_dir:
         # Create temp dir
         raw_temp_dir = os.path.join(raw_file_tuple[0], "temp_moved_raw")
@@ -282,10 +296,10 @@ def replace_by_raw(old_file_tuple, raw_file_tuple, output_dir, args):
         print(f"{BColors.GREEN}Moved {raw_file_tuple[3]} \
 to {ref_raw_path}{BColors.ENDC}")
 
-    elif not args.replace_files: # not moved
+    elif not args.replace_files: # not moved, we assume 1280 and raw are in same directories now
         ref_raw_path = os.path.join(raw_file_tuple[0], raw_file_tuple[3])
 
-    # symlink _raw where old has been moved
+    # create symlink to _raw where the 1280 has been moved
     target_symlink_file = os.path.join(output_subdir, raw_file_tuple[3])
     try:
         os.symlink(ref_raw_path, target_symlink_file)

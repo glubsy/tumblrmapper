@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.6
+#!/usr/bin/env python3
 import json
 import os
 # import json
@@ -19,9 +19,11 @@ import instances
 # import tumblrmapper
 from constants import BColors
 
-
-
 SCRIPTDIR = os.path.dirname(__file__)
+if SCRIPTDIR == "":
+    print(f"DEBUG: no proxies path set, falling back to cwd")
+    SCRIPTDIR = os.getcwd()
+
 
 class ProxyScanner():
     """Gets proxies, associates UA"""
