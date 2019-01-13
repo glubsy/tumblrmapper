@@ -3,6 +3,7 @@
 # for each _1280 look for a _raw in raw_dir (can be same as op_dir)
 # take into acount delete_file_from_archives.txt
 # Typical use: % ./replace_files.py -i ~/test/CGI -d -m -r -u $(pwd)/tools
+# run against database: replace_files.py -i /run/media/CGI/ -d -u /path/to/tools/ -c -o /run/media/triage_CGI
 
 import shutil
 import os
@@ -19,14 +20,16 @@ tumblr_base_noext_raw_re = re.compile(r'(tumblr_(?:inline_|messaging_)?.*?(?:_r\
 def parse_args():
     """Parse command-line arguments."""
 
+    # FOR DEBUG
     default_input_dir = os.path.expanduser("~/test/CGI")
+    
     parser = argparse.ArgumentParser(description='Replace files from archives.')
     parser.add_argument('-i', '--input_dir', action="store", type=str, default=default_input_dir,
     help="Input directory to scan, holding potential 1280 files.")
-    parser.add_argument('-o', '--output_dir', action="store", type=str, default=os.path.expanduser("~/test/CGI_output"), # can't be default_input_dir
+    parser.add_argument('-o', '--output_dir', action="store", type=str, default=os.path.expanduser("../sorting_output"), # can't be default_input_dir
     help="Directory where 1280 files will be moved to temporarily, for double check against symlinks to corresponing _raw before deleting manually.")
 
-    parser.add_argument('-s', '--ref_dir', action="store", type=str, default=default_input_dir,
+    parser.add_argument('-s', '--ref_dir', action="store", type=str, default=None,
     help="Directory where _raw files to be checked against are stored. Can be set as same as input_dir.")
 
     parser.add_argument('-d', '--delete_mode', action="store_true", default=False,
@@ -36,10 +39,13 @@ def parse_args():
     parser.add_argument('-m', '--move_raw_temp_dir', action="store_true", default=False,
     help="Move _raw files into a temporary directory under their original parent dir to keep track of them.\
 The symlink alongside the corresponding _1280 will be made against these moved files. Useful to avoid duplicate backups.")
+
+    parser.add_argument('-c', '--clear_cache', action="store_true", default=False,
+    help="Remove pickle cache file from /tmp therefore recreating it during this run.")
+
     parser.add_argument('-u', '--update_raw_xattr', action="store", default=False,
     help="Update extended file attributes for _raw files wherever their original urls appears in lists.\
 The list should be named 'successful_downloads.txt' and the path should point to a directory holding them.")
-
 
     parser.add_argument('-t', '--to_delete_list', action="store",
     default="/home/nupupun/Documents/DOCUMENTS/tumblr_archives/archive_files_to_delete.txt",
@@ -97,8 +103,8 @@ def get_relative_path(root, path):
 
 def get_list_of_raw_url(path):
     """Make a set of url from the successful raw downloads"""
-    if not os.path.isdir:
-        print(f"{BColors.FAIL}Path {path} is not a valid directory! Aborting.{BColors.ENDC}")
+    if not os.path.isdir(path):
+        print(f"{BColors.FAIL}Path '{path}' is not a valid directory! Aborting.{BColors.ENDC}")
         return
     _set = set()
     for root, _, files in os.walk(path):
@@ -168,6 +174,10 @@ def main():
     # cache for _raw file list on disk to be created
     raw_cache_path = "/tmp/" + "tumblrmapper_raw_file_cache_pickle"
 
+    if args.clear_cache and os.path.exists(raw_cache_path):
+        print(f"Removing {raw_cache_path}")
+        os.unlink(raw_cache_path)
+
     # make temp trash dir to move to_delete_files in it
     trash_dir = output_dir + os.sep + "TRASH_TO_DELETE"
     os.makedirs(trash_dir, exist_ok=True)
@@ -177,23 +187,34 @@ def main():
         # print(f"to_delete_list:\n{to_delete_list}")
         print(f"{BColors.BOLD}{BColors.BLUE} Number of unique file names \
 to be deleted from {args.to_delete_list}: {len(to_delete_list)}{BColors.ENDC}")
-
-    if args.update_raw_xattr:
-        global list_of_raw_urls
+    
+    global list_of_raw_urls
+    list_of_raw_urls = None
+    if args.update_raw_xattr is not False:
         # list_of_raw_urls = get_list_of_raw_url(os.path.join(os.getcwd(), "tools"))
+        print(f"Update raw_xattr was set, generating list of raw urls")
         list_of_raw_urls = get_list_of_raw_url(args.update_raw_xattr)
 
     # Set up list of the _raw files we want to compare against
+    if args.ref_dir is None:
+        # if not set, we assume same directory for both raw and 1280 files
+        args.ref_dir = args.input_dir
+
     if os.path.isdir(args.ref_dir):
         if not os.path.exists(raw_cache_path):
-            if args.update_raw_xattr and list_of_raw_urls:
+            print(f"Raw cache didn't exist, creating it in /tmp/")
+            if args.update_raw_xattr is not False and list_of_raw_urls is not None:
                 xattr = True
             else:
                 xattr = False
             raw_file_cache = generate_raw_list(args.ref_dir, xattr=xattr)
             write_pickle(raw_file_cache, raw_cache_path)
         else:
+            print(f"raw_cache_path existed, reading it")
             raw_file_cache = read_pickle(raw_cache_path)
+    else:
+        print(f"{BColors.CYAN}Error{BColors.ENDC}: ref-dir was set to {args.ref_dir}")
+        exit(1)
     print(f"raw_file_cache: {raw_file_cache}")
 
     # Make list of directories to scan for 1280 files
@@ -201,11 +222,11 @@ to be deleted from {args.to_delete_list}: {len(to_delete_list)}{BColors.ENDC}")
         for _file in files:
             subdirs = get_relative_path(root, input_dir) # dirs between root and file
             old_file_tuple = (root, os.path.basename(root), subdirs ,_file, _file.split('.')[0])
-            print(f"Checking file from input_dir: {old_file_tuple}")
+            # print(f"Checking file from input_dir: {old_file_tuple}")
 
             # test if file is present in the to_delete list
             if args.delete_mode and to_delete_list is not None:
-                if old_file_tuple[4] in to_delete_list:
+                if old_file_tuple[4] in to_delete_list or old_file_tuple[3] in to_delete_list:
                     # print(f"File {old_file_tuple[2]} is marked for deletion.")
                     print(f"{BColors.LIGHTYELLOW}Moving {old_file_tuple[3]} \
 to output_dir:{BColors.ENDC} {trash_dir}")
@@ -213,10 +234,10 @@ to output_dir:{BColors.ENDC} {trash_dir}")
                     os.makedirs(name=sub_trash_dir, exist_ok=True)
                     try:
                         #FIXME DEBUG, should be move here
-                        shutil.copy(os.path.join(old_file_tuple[0], old_file_tuple[3]),
-                                os.path.join(sub_trash_dir, old_file_tuple[3]))
-                        # shutil.move(os.path.join(old_file_tuple[0], old_file_tuple[3]),
-                        #         os.path.join(sub_trash_dir, old_file_tuple[3]))
+                        #shutil.copy(os.path.join(old_file_tuple[0], old_file_tuple[3]),
+                        #        os.path.join(sub_trash_dir, old_file_tuple[3]))
+                        shutil.move(os.path.join(old_file_tuple[0], old_file_tuple[3]),
+                                 os.path.join(sub_trash_dir, old_file_tuple[3]))
                         print(f"{BColors.RED}Moved file to be deleted \
 {old_file_tuple[3]} to {sub_trash_dir}{BColors.ENDC}")
                     except FileExistsError as e:
